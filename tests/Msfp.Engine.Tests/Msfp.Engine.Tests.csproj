@@ -12,6 +12,7 @@
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../../src/Msfp.Engine/Msfp.Engine.csproj" />
     <None Include="../Msfp.Protocol.Tests/testdata/**" LinkBase="testdata" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
