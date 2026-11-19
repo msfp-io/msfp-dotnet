@@ -1,0 +1,36 @@
+# Checks every push and pull request: the build (warnings are errors, the
+# analyzers included), the tests, and the packages. It runs in the .NET 10
+# SDK's own image, the same one used locally (README, Testing).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/dotnet/sdk:10.0.404
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Restore
+        run: dotnet restore Msfp.slnx
+
+      - name: Build
+        run: dotnet build Msfp.slnx --no-restore -c Release
+
+      - name: Tests
+        run: dotnet test Msfp.slnx --no-build -c Release
+
+      - name: Packages
+        run: |
+          dotnet pack src/Msfp.Protocol --no-build -c Release -o artifacts
+          dotnet pack src/Msfp.Engine --no-build -c Release -o artifacts
