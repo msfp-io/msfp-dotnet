@@ -424,7 +424,7 @@ public sealed partial class MsfpEngine
     // Peer id knowing us by current now. Kept only if current is still our
     // current key during a change. The last peer to move ends the change, in
     // the same Update.
-    private async Task<bool> PeerMovedAsync(string id, byte[] current, CancellationToken ct)
+    internal async Task<bool> PeerMovedAsync(string id, byte[] current, CancellationToken ct)
     {
         var events = new List<MsfpEvent>();
         var moved = false;
@@ -464,13 +464,16 @@ public sealed partial class MsfpEngine
     }
 
     // Ends the change of key away from old: the old key deleted, the peers
-    // that didn't move lost. Only that change.
-    private async Task FinishRotationAsync(byte[] old, CancellationToken ct)
+    // that didn't move lost. Only that change: one that ended meanwhile, or
+    // the next one begun since, is left as it is (false).
+    internal async Task<bool> FinishRotationAsync(byte[] old, CancellationToken ct)
     {
         var events = new List<MsfpEvent>();
+        var ended = false;
         await ChangeServerAsync(async (tx, r) =>
         {
             events.Clear();
+            ended = false;
             if (r.Old is null)
             {
                 return;
@@ -480,9 +483,11 @@ public sealed partial class MsfpEngine
             if (Keys.Same(kept.PublicSpan, old))
             {
                 events.AddRange(await EndRotationAsync(tx, r).ConfigureAwait(false));
+                ended = true;
             }
         }, ct).ConfigureAwait(false);
         TellEnded(events);
+        return ended;
     }
 
     // Deletes the old key in r, and marks lost, in tx, the peers still on
