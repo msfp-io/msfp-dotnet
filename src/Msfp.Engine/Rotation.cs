@@ -265,6 +265,11 @@ public sealed partial class MsfpEngine
         try
         {
             var r = await ExchangeAsync(p!, CallRotate, rot.Body(), k.Old, ct).ConfigureAwait(false);
+            if (r.Unsigned)
+            {
+                throw new MsfpException(MsfpError.Unreachable, $"an unsigned refusal: {r.Status}");
+            }
+
             string? state = null;
             if (r.Status is 200 or 202)
             {
@@ -438,6 +443,28 @@ public sealed partial class MsfpEngine
         }
 
         Notify([.. events]);
+    }
+
+    // RotateAtContact in the background: p just called, still on our old key.
+    private void RotateSoon(PeerRecord p)
+    {
+        var spacing = p.RotationAnswer == Rotations.StatePending ? RotatePendingSpacing : RotateSpacing;
+        if (p.RotateSent is { } sent && Now() - sent < spacing)
+        {
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            using var cts = new CancellationTokenSource(2 * CallTimeout);
+            try
+            {
+                await RotateIfDueAsync(p.Id, spacing, cts.Token).ConfigureAwait(false);
+            }
+            catch (Exception e) when (e is OperationCanceledException or ObjectDisposedException)
+            {
+            }
+        }, CancellationToken.None);
     }
 
     // A contact with p, a peer on our old key: a rotate sent first, unless

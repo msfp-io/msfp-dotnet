@@ -5,7 +5,7 @@ using Msfp.Protocol;
 namespace Msfp;
 
 /// <summary>A peer's signed answer: its status; for a refusal, the problem type it gives and its retryAfter; for a 200, its body.</summary>
-internal sealed record Reply(int Status, string? Problem, int RetryAfter, byte[] Body);
+internal sealed record Reply(int Status, string? Problem, int RetryAfter, byte[] Body, bool Unsigned = false);
 
 /// <summary>Header lists of HttpClient's answers, read as MSFP reads headers.</summary>
 internal sealed class ResponseHeaders(HttpResponseMessage res) : IHeaderReader
@@ -59,10 +59,24 @@ public sealed partial class MsfpEngine
             p = await RotateAtContactAsync(p, ct).ConfigureAwait(false);
         }
 
-        return await ExchangeAsync(p, call, body, SignerFor(p), ct).ConfigureAwait(false);
+        var r = await ExchangeAsync(p, call, body, SignerFor(p), ct).ConfigureAwait(false);
+        if (r.Unsigned && r.Status == 404)
+        {
+            // Maybe it just restarted, and refuses what is dated before: once
+            // more a second later, signed again with a new nonce (core section
+            // 6.5, "Retrying").
+            await Task.Delay(RestartRetry, ct).ConfigureAwait(false);
+            r = await ExchangeAsync(p, call, body, SignerFor(p), ct).ConfigureAwait(false);
+        }
+
+        return r.Unsigned ? throw new MsfpException(MsfpError.Unreachable, $"an unsigned refusal: {r.Status}") : r;
     }
 
-    // One call, signed with key.
+    // How long a call refused with an unsigned 404 waits before its one retry.
+    internal static readonly TimeSpan RestartRetry = TimeSpan.FromSeconds(1);
+
+    // One call, signed with key. An unsigned refusal (but pair's) comes back
+    // marked Unsigned: it doesn't count.
     private async Task<Reply> ExchangeAsync(PeerRecord p, string call, byte[] body, MsfpKey key, CancellationToken ct)
     {
         if (Uncallables.Valid(p.Address))
@@ -136,7 +150,7 @@ public sealed partial class MsfpEngine
                 // whose maker doesn't know us yet (core section 6.6).
                 if (!isSigned && call != CallPair)
                 {
-                    throw new MsfpException(MsfpError.Unreachable, $"an unsigned refusal: {status}");
+                    return new Reply(status, null, 0, answer, Unsigned: true);
                 }
 
                 string? problem = null;

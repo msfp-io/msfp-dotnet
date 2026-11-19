@@ -197,6 +197,13 @@ public sealed partial class MsfpEngine
                 return (req, Answer.Refuse(ProblemType.NotFound), null);
             }
 
+            // A peer still on our old key: told of the new one again, at each
+            // contact (core section 12.4), in the background.
+            if (p.OurKey == KeyOld && p.Inbound == Inbound.Yes && p.Suspended is null)
+            {
+                RotateSoon(p);
+            }
+
             // No core in common: every call but hello is not-supported
             // (sections 10.3, 10.4); pair from a known key gets its own 409.
             if (Agreed(p) is null && call is not (CallHello or CallPair))
