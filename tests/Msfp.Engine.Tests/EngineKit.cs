@@ -122,6 +122,9 @@ internal sealed class Network : HttpMessageHandler
 
     public void Remove(string host) => _servers.Remove(host);
 
+    /// <summary>A request through this network, as a caller's view sends it.</summary>
+    public Task<HttpResponseMessage> RouteAsync(HttpRequestMessage request, CancellationToken ct) => SendAsync(request, ct);
+
     public List<Seen> SeenBy(string host)
     {
         lock (_log)
@@ -187,6 +190,69 @@ internal sealed class Network : HttpMessageHandler
     }
 }
 
+/// <summary>
+/// One server's view of the network (msfp-go's mapDialer and gateDialer):
+/// hosts it can't connect to, hosts it refuses as destinations, hosts whose
+/// connections wait for a gate; everything else as the network routes it.
+/// </summary>
+internal sealed class CallerNetwork(Network net) : HttpMessageHandler
+{
+    private readonly Dictionary<string, Func<CancellationToken, Task>> _rules = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Connections to host fail, as to an address nothing listens at.</summary>
+    public CallerNetwork Closed(string host) => Rule(host, _ => throw new HttpRequestException("connection refused: " + host));
+
+    /// <summary>Connections to host are refused destinations (core section 3.3).</summary>
+    public CallerNetwork Refused(string host) =>
+        Rule(host, _ => throw new HttpRequestException("refused", new MsfpException(MsfpError.RefusedDestination, host)));
+
+    /// <summary>Connections to host wait until the gate opens; waiting is set when one does.</summary>
+    public CallerNetwork Held(string host, Task gate, TaskCompletionSource waiting) =>
+        Rule(host, async ct =>
+        {
+            waiting.TrySetResult();
+            await gate.WaitAsync(ct);
+        });
+
+    /// <summary>Connections to host go as the network routes them.</summary>
+    public CallerNetwork Open(string host)
+    {
+        lock (_rules)
+        {
+            _rules.Remove(host);
+        }
+
+        return this;
+    }
+
+    private CallerNetwork Rule(string host, Func<CancellationToken, Task> rule)
+    {
+        lock (_rules)
+        {
+            _rules[host] = rule;
+        }
+
+        return this;
+    }
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        var uri = request.RequestUri!;
+        Func<CancellationToken, Task>? rule;
+        lock (_rules)
+        {
+            _rules.TryGetValue(uri.IsDefaultPort ? uri.Host : $"{uri.Host}:{uri.Port}", out rule);
+        }
+
+        if (rule is not null)
+        {
+            await rule(ct);
+        }
+
+        return await net.RouteAsync(request, ct);
+    }
+}
+
 /// <summary>An engine of a test, with what it was made with.</summary>
 internal sealed class TestServer : IDisposable
 {
@@ -206,7 +272,8 @@ internal sealed class TestServer : IDisposable
 
     public static async Task<TestServer> StartAsync(Network net, string address, string? name = null, long unix = 1800000000,
         ScriptedRandom? random = null, IReadOnlyList<string>? parts = null, IReadOnlyList<string>? pins = null,
-        string prefix = "", bool discovery = false, FakeTime? clock = null, MemoryStore? store = null)
+        string prefix = "", bool discovery = false, FakeTime? clock = null, MemoryStore? store = null, HttpMessageHandler? transport = null,
+        IDialer? dialer = null)
     {
         store ??= new MemoryStore();
         clock ??= new FakeTime(unix);
@@ -220,7 +287,8 @@ internal sealed class TestServer : IDisposable
             TimeProvider = clock,
             Random = random,
             Notifier = events,
-            Transport = net,
+            Transport = transport ?? net,
+            Dialer = dialer,
             Parts = parts,
             Pins = pins,
             Prefix = prefix,
