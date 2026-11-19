@@ -465,7 +465,7 @@ public sealed partial class MsfpEngine
 
     // The forced subtitle track in the language of the audio played, when
     // the copy has one (video section 5.4).
-    private static string ForcedFor(IReadOnlyList<Track> tracks, string? audio)
+    internal static string ForcedFor(IReadOnlyList<Track> tracks, string? audio)
     {
         foreach (var exact in new[] { true, false })
         {
