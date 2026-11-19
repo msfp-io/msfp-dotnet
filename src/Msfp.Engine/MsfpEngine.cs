@@ -49,6 +49,7 @@ public sealed partial class MsfpEngine : IDisposable
         _nonces = new NonceMemory(Now());
         _limits = new CallLimiter(cfg.Limits);
         _events = new Notifications(cfg.Notifier, _log);
+        _discovery = cfg.Discovery;
     }
 
     // The client for a call to a peer: any certificate (pair, hello, the

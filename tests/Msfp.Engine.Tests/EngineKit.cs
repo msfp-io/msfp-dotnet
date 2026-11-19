@@ -115,7 +115,8 @@ internal sealed class Network : HttpMessageHandler
     private readonly Dictionary<string, Func<MsfpRequest, Task<MsfpResponse>>> _servers = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<(string Host, Seen Seen)> _log = [];
 
-    public void Add(string host, MsfpEngine engine) => _servers[host] = r => engine.HandleFederationAsync(r);
+    public void Add(string host, MsfpEngine engine) => _servers[host] = r =>
+        r.Target.StartsWith("/.well-known/", StringComparison.Ordinal) ? Task.FromResult(engine.HandleDiscovery(r)) : engine.HandleFederationAsync(r);
 
     public void Add(string host, Func<MsfpRequest, Task<MsfpResponse>> handler) => _servers[host] = handler;
 
@@ -204,7 +205,8 @@ internal sealed class TestServer : IDisposable
     public string Host => Protocol.Address.Host(Address);
 
     public static async Task<TestServer> StartAsync(Network net, string address, string? name = null, long unix = 1800000000,
-        ScriptedRandom? random = null, IReadOnlyList<string>? parts = null, IReadOnlyList<string>? pins = null)
+        ScriptedRandom? random = null, IReadOnlyList<string>? parts = null, IReadOnlyList<string>? pins = null,
+        string prefix = "", bool discovery = false)
     {
         var store = new MemoryStore();
         var clock = new FakeTime(unix);
@@ -221,6 +223,8 @@ internal sealed class TestServer : IDisposable
             Transport = net,
             Parts = parts,
             Pins = pins,
+            Prefix = prefix,
+            Discovery = discovery,
         });
         var s = new TestServer { Engine = engine, Store = store, Clock = clock, Random = random, Events = events, Address = address };
         net.Add(s.Host, engine);
