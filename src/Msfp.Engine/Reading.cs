@@ -443,7 +443,7 @@ public sealed partial class MsfpEngine
                 Notify(new CatalogReadEnded(p.Id, p.Name, kept, changes, null));
                 return kept;
             }
-            catch (MsfpException e) when (e.Code != MsfpError.BackingOff)
+            catch (Exception e) when (e is not MsfpException { Code: MsfpError.BackingOff })
             {
                 Notify(new CatalogReadEnded(p.Id, p.Name, kept, changes, e));
                 throw;

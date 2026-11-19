@@ -76,6 +76,10 @@ public sealed partial class MsfpEngine
             EndRemote(rm, EndReason.PairingEnded, true);
             throw;
         }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            throw new MsfpException(MsfpError.NotFound, "the peer couldn't be read", e);
+        }
 
         if (!Usable(p, Versions.PartMedia))
         {

@@ -245,10 +245,6 @@ public sealed partial class MsfpEngine
 
             s.Transcode = method == "transcode";
             c.Add(s.Audio, 1, s.Transcode ? 1 : 0);
-            if (c.Empty)
-            {
-                _plays.Counts.Remove(peer);
-            }
         }
 
         return s;
