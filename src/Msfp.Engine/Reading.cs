@@ -633,6 +633,7 @@ public sealed partial class MsfpEngine
                 With = v.With.Count > 0 ? [.. v.With] : null,
                 Ids = v.Ids.Count > 0 ? new Dictionary<string, string>(v.Ids) : null,
                 Video = v.Video is { } pic ? new Picture { Height = pic.Height, Hdr = pic.Hdr.Count > 0 ? [.. pic.Hdr] : null } : null,
+                Place = v.Place is { } pl ? new Place { Season = pl.Season, Episode = pl.Episode } : null,
             };
         }
 

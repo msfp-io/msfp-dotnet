@@ -25,7 +25,10 @@ public sealed class JsonFileStoreTests : IDisposable
             await st.UpdateAsync(async tx =>
             {
                 await tx.PutPeerAsync(new PeerRecord { Id = "p1", Key = B("k"), Name = "one" });
-                await tx.PutPeerTitlesAsync("p1", 1, [new VideoTitle { Key = "movie/tmdb/1", Kind = "movie" }]);
+                await tx.PutPeerTitlesAsync("p1", 1, [
+                    new VideoTitle { Key = "movie/tmdb/1", Kind = "movie" },
+                    new VideoTitle { Key = "series/tmdb/1399/e63056", Kind = "episode", Place = new Place { Season = 1, Episode = 0 } },
+                ]);
             }, Ct);
             await Assert.ThrowsAsync<InvalidDataException>(async () =>
                 await st.UpdateAsync(async tx =>
@@ -43,9 +46,15 @@ public sealed class JsonFileStoreTests : IDisposable
                 var peer = Assert.Single(await tx.PeersAsync());
                 Assert.Equal("one", peer.Name);
                 Assert.NotNull(await tx.PeerTitleAsync("p1", "movie/tmdb/1"));
+                var ep = Assert.IsType<VideoTitle>(await tx.PeerTitleAsync("p1", "series/tmdb/1399/e63056"));
+                Assert.Equal(new Place { Season = 1, Episode = 0 }, ep.Place);
                 Assert.NotNull(await tx.PeerByKeyAsync(B("k")));
             }, Ct);
         }
+
+        // As msfp-go's file store writes it: place, with season and episode (0 kept).
+        var file = string.Concat((await File.ReadAllTextAsync(Path.Combine(dir, "peers", "p1.json"), Ct)).Where(c => !char.IsWhiteSpace(c)));
+        Assert.Contains("\"place\":{\"season\":1,\"episode\":0}", file, StringComparison.Ordinal);
         Assert.False(File.Exists(Path.Combine(dir, "peers", "p9.json")), "a lone catalog kept");
         Assert.Empty(Directory.GetFiles(dir, ".tmp-*", SearchOption.AllDirectories));
     }

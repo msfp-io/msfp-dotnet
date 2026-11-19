@@ -21,7 +21,7 @@ it writes none of the protocol itself.
   This library follows the same design as the Go engine,
   [msfp-go](https://github.com/msfp-io/msfp-go), in .NET's own style.
 
-**Status: 0.1.0-preview, not released.** The protocol layer is complete
+**Status: 0.2.0-preview, not released.** The protocol layer is complete
 and passes every test vector of MSFP version 1. The engine pairs (keys,
 codes, `pair`, `hello`, accepting and ending, signed answers, limits),
 rotates and revokes its key (with its next key, or replaced without it),
@@ -129,7 +129,11 @@ app.Map("/api/v1/stream/{**rest}", async (HttpContext ctx) =>
 
 The operator offers libraries with `SetOffersAsync` and sets limits
 with `SetLimitsAsync`; the host calls `CatalogChanged()` when its titles
-change. To read a peer's titles: `TheirLibrariesAsync`, `SetWantsAsync`,
+change. An episode keyed by its TMDB episode ID
+(`series/tmdb/<id>/e<episode id>`) needs its place in TMDB's numbering,
+`VideoTitle.Place` (`Season`, `Episode`; MSFP video section 4.1): without
+one it isn't sent, and a new place is a change of the title. A peer's such
+episodes come with theirs. To read a peer's titles: `TheirLibrariesAsync`, `SetWantsAsync`,
 then `RunAsync` reads them on schedule (or `ReadNowAsync`) into the
 store, where the host reads them; `PlayableAsync` says whether they can
 be played now. A viewer plays with `PlayAsync`, the host serves the media

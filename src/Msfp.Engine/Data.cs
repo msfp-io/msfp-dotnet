@@ -105,6 +105,17 @@ public sealed record VideoTitle : Title
     [JsonPropertyName("video"), OmitEmpty]
     public Picture? Video { get; set; }
 
+    /// <summary>
+    /// For an episode keyed by its TMDB episode ID
+    /// (series/tmdb/&lt;id&gt;/e&lt;episode id&gt;) only, and required for it:
+    /// its place in TMDB's numbering now (MSFP video sections 3 and 4.1).
+    /// The host sets it for its own such episodes, which aren't sent without
+    /// a valid one; a new place is a change of the title. A peer's is the one
+    /// it sent, checked. Null for any other title (and ignored there).
+    /// </summary>
+    [JsonPropertyName("place"), OmitEmpty]
+    public Place? Place { get; set; }
+
     /// <summary>The keys of the titles it goes with.</summary>
     [JsonPropertyName("with"), OmitEmpty]
     public List<string>? With { get; set; }
@@ -112,6 +123,23 @@ public sealed record VideoTitle : Title
     /// <summary>Other identifiers, by scheme.</summary>
     [JsonPropertyName("ids"), OmitEmpty]
     public Dictionary<string, string>? Ids { get; set; }
+}
+
+/// <summary>
+/// An episode's place in TMDB's numbering (MSFP video section 4.1): the
+/// season_number and episode_number TMDB gives it in the series' own season
+/// list, not in an episode group. A host whose files are numbered another
+/// way maps them to TMDB's numbers first.
+/// </summary>
+public sealed record Place
+{
+    /// <summary>The season number, 0 (specials) to 9,999.</summary>
+    [JsonPropertyName("season")]
+    public int Season { get; set; }
+
+    /// <summary>The episode number, 0 to 99,999.</summary>
+    [JsonPropertyName("episode")]
+    public int Episode { get; set; }
 }
 
 /// <summary>

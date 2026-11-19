@@ -49,6 +49,7 @@ public class VideoTests
         .Strings("audio", t.Audio.Count > 0 ? t.Audio : null)
         .Strings("subtitles", t.Subtitles.Count > 0 ? t.Subtitles : null)
         .Object("video", t.Video is { } p ? v => v.Integer("height", p.Height).Strings("hdr", p.Hdr.Count > 0 ? p.Hdr : null) : null)
+        .Object("place", t.Place is { } pl ? o => o.Integer("season", pl.Season).Integer("episode", pl.Episode) : null)
         .Strings("with", t.With.Count > 0 ? t.With : null)
         .Object("ids", t.Ids.Count > 0 ? i => { foreach (var (k, v) in t.Ids) { i.String(k, v); } } : null));
 
@@ -106,7 +107,7 @@ public class VideoTests
         }
 
         var tags = """["fr","FR","fr-CA","x","fr_CA",3,"aaaaaaaaaaaaa","de","en","es","it","nl","pt","ja","ko","zh","ru","sv"]""";
-        var got = Read("{\"key\":\"series/tmdb/1399/e63056\",\"kind\":\"episode\",\"library\":\"L\",\"audio\":" + tags +
+        var got = Read("{\"key\":\"series/tmdb/1399/e63056\",\"kind\":\"episode\",\"library\":\"L\",\"place\":{\"season\":1,\"episode\":1},\"audio\":" + tags +
             ",\"subtitles\":\"fr\",\"with\":[\"series/tmdb/1399/e63057\",\"series/tmdb/1399/e63056\",\"series/tmdb/2/e1\"," +
             "\"series/tmdb/1399/s1/e3\",7,\"series/tmdb/1399/s1\"],\"ids\":{\"imdb\":\"tt1480055\",\"tvdb\":\"0123\",\"wikidata\":\"Q1\"}}");
         Assert.NotNull(got);
@@ -114,6 +115,7 @@ public class VideoTests
         Assert.Empty(got.Subtitles);
         Assert.Equal(["series/tmdb/1399/e63057", "series/tmdb/1399/s1/e3"], got.With);
         Assert.Equal(new Dictionary<string, string> { ["imdb"] = "tt1480055" }, got.Ids);
+        Assert.Equal(new Place(1, 1), got.Place);
 
         // ids that isn't an object, with that isn't a list: absent.
         got = Read("""{"key":"movie/tmdb/949","kind":"movie","library":"L","ids":["tt0133093"],"with":"x","audio":["en"]}""");
@@ -127,6 +129,13 @@ public class VideoTests
         Assert.True(got is { Audio.Count: 0, Ids.Count: 0 });
         got = Read("""{"key":"movie/tmdb/949","kind":"movie","library":"L","with":["series/tmdb/1399/e1"]}""");
         Assert.True(got is { With.Count: 0 });
+
+        // An episode keyed by its TMDB ID needs its place; on any other
+        // title place is ignored.
+        Assert.Null(Read("""{"key":"series/tmdb/1399/e63056","kind":"episode","library":"L"}"""));
+        Assert.Null(Read("""{"key":"series/tmdb/1399/e63056","kind":"episode","library":"L","place":{"season":1,"episode":1.0}}"""));
+        Assert.Null(Read("""{"key":"series/tmdb/1399/s1/e2","kind":"episode","library":"L","place":{"season":1,"episode":2}}""")!.Place);
+        Assert.Null(Read("""{"key":"movie/tmdb/949","kind":"movie","library":"L","place":{"season":1,"episode":2}}""")!.Place);
 
         // hdr null is of the wrong type: the picture is absent.
         Assert.Null(Read("""{"key":"movie/tmdb/949","kind":"movie","library":"L","video":{"height":1080,"hdr":null}}""")!.Video);

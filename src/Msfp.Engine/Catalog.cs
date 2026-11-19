@@ -746,7 +746,13 @@ public sealed partial class MsfpEngine
         switch (t)
         {
             case VideoTitle v when k.Part == Versions.PartVideo:
-                return VideoOut(k, v, library);
+                if (VideoOut(k, v, library) is { } vw)
+                {
+                    return vw;
+                }
+
+                _log.LogWarning("msfp: an episode of the host's catalog keyed by its TMDB ID has no place in TMDB's numbering; it isn't sent: {Key}", t.Key);
+                break;
             case MusicTitle m when k.Part == Versions.PartMusic:
                 if (MusicOut(m, library) is { } w)
                 {
@@ -761,11 +767,14 @@ public sealed partial class MsfpEngine
     }
 
     // The host's video title as sent: its members cleaned as a receiver would
-    // keep them, so nothing leaves that MSFP doesn't take.
-    private static Action<JsonOut> VideoOut(TitleKey k, VideoTitle t, string library)
+    // keep them, so nothing leaves that MSFP doesn't take; null for an
+    // episode keyed by its TMDB ID without a valid place, which a receiver
+    // would skip (video section 3.1).
+    private static Action<JsonOut>? VideoOut(TitleKey k, VideoTitle t, string library)
     {
         IReadOnlyList<string>? audio = null, subtitles = null, with = null;
         Picture? picture = null;
+        Place? place = null;
         if (k.Playable)
         {
             audio = Languages.SentTags(t.Audio ?? []);
@@ -776,6 +785,15 @@ public sealed partial class MsfpEngine
         if (k.Kind == "episode" && VideoKey.TryParse(t.Key, out var vk))
         {
             with = Video.CleanWith(vk, t.With ?? []).Order(StringComparer.Ordinal).ToList();
+            if (vk.ByEpisodeId)
+            {
+                if (t.Place is not { } pl || !new Protocol.Place(pl.Season, pl.Episode).Valid)
+                {
+                    return null;
+                }
+
+                place = pl;
+            }
         }
 
         SortedDictionary<string, string>? ids = null;
@@ -795,6 +813,7 @@ public sealed partial class MsfpEngine
             .Strings("audio", audio is { Count: > 0 } ? audio : null)
             .Strings("subtitles", subtitles is { Count: > 0 } ? subtitles : null)
             .Object("video", picture is null ? null : v => v.Integer("height", picture.Height).Strings("hdr", picture.Hdr is { Count: > 0 } ? picture.Hdr : null))
+            .Object("place", place is null ? null : p => p.Integer("season", place.Season).Integer("episode", place.Episode))
             .Strings("with", with is { Count: > 0 } ? with : null)
             .Object("ids", ids is null ? null : o =>
             {

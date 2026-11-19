@@ -120,6 +120,37 @@ public sealed class CatalogTests
         Assert.DoesNotContain("\"changes\":true", s.Exchanges("titles")[^1].ResponseBody, StringComparison.Ordinal);
     }
 
+    // A new place is a change of the title (video section 4.1): sent again
+    // under the same key; one that loses its place is gone.
+    [Fact]
+    public async Task PlaceChanges()
+    {
+        var h = new FakeHost();
+        h.Film("films", "movie/tmdb/1", "en");
+        foreach (var k in new[] { "series/tmdb/1399/e1", "series/tmdb/1399/e2" })
+        {
+            h.Titles[k] = new VideoTitle { Key = k, Kind = "episode", Libraries = ["films"], Place = new Place { Season = 1, Episode = 1 } };
+        }
+
+        using var s = await Sharing.StartAsync(h);
+        Assert.Equal(["movie/tmdb/1", "series/tmdb/1399/e1", "series/tmdb/1399/e2"], Keys(await s.PeerTitlesAsync()));
+        lock (h.Lock)
+        {
+            ((VideoTitle)h.Titles["series/tmdb/1399/e1"]).Place = new Place { Season = 2, Episode = 5 };
+            ((VideoTitle)h.Titles["series/tmdb/1399/e2"]).Place = null;
+        }
+
+        s.A.Engine.CatalogChanged();
+        await s.B.Engine.ReadNowAsync(s.OnB);
+        var ans = Json(s.Exchanges("titles")[^1].ResponseBody);
+        Assert.True((bool)ans["changes"]!);
+        Assert.Equal(["series/tmdb/1399/e1"], ans["titles"]!.AsArray().Select(t => (string)t!["key"]!).ToList());
+        Assert.Equal(["series/tmdb/1399/e2"], ans["gone"]!.AsArray().Select(g => (string)g!).ToList());
+        var got = await s.PeerTitlesAsync();
+        Assert.Equal(["movie/tmdb/1", "series/tmdb/1399/e1"], Keys(got));
+        Assert.Equal(new Place { Season = 2, Episode = 5 }, ((VideoTitle)got["series/tmdb/1399/e1"]).Place);
+    }
+
     // A host's ChangeLog answers changes; one too old, the whole list.
     private class LoggingHost(FakeHost h) : ICatalog, IChangeLog
     {
@@ -264,11 +295,31 @@ public sealed class CatalogTests
             Key = "series/tmdb/1399/e1", Kind = "episode", Libraries = ["films"], Audio = ["en", "EN", "x"],
             With = ["series/tmdb/1399/e3", "series/tmdb/2/e1", "series/tmdb/1399/e2"],
             Ids = new() { ["imdb"] = "tt01", ["tvdb"] = "81189", ["other"] = "1" },
+            Place = new Place { Season = 1, Episode = 0 },
         };
+        // An episode keyed by its TMDB ID without a place, or with one out of
+        // range, isn't sent; place on other titles isn't sent.
+        h.Titles["series/tmdb/1399/e7"] = new VideoTitle { Key = "series/tmdb/1399/e7", Kind = "episode", Libraries = ["films"] };
+        h.Titles["series/tmdb/1399/e8"] = new VideoTitle
+        {
+            Key = "series/tmdb/1399/e8", Kind = "episode", Libraries = ["films"], Place = new Place { Season = 10_000, Episode = 1 },
+        };
+        h.Titles["series/tmdb/1399/s2/e1"] = new VideoTitle
+        {
+            Key = "series/tmdb/1399/s2/e1", Kind = "episode", Libraries = ["films"], Place = new Place { Season = 2, Episode = 1 },
+        };
+        ((VideoTitle)h.Titles["movie/tmdb/1"]).Place = new Place { Season = 1, Episode = 1 };
         using var s = await Sharing.StartAsync(h);
         var got = await s.PeerTitlesAsync();
-        Assert.Equal(["movie/tmdb/1", "series/tmdb/1399/e1"], Keys(got));
+        Assert.Equal(["movie/tmdb/1", "series/tmdb/1399/e1", "series/tmdb/1399/s2/e1"], Keys(got));
+        var body = s.Exchanges("titles")[^1].ResponseBody;
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(body, "\"place\""));
+        Assert.Contains("\"key\":\"series/tmdb/1399/e1\",\"kind\":\"episode\",\"library\":", body, StringComparison.Ordinal);
+        Assert.Contains("\"place\":{\"season\":1,\"episode\":0},\"with\":", body, StringComparison.Ordinal);
+        Assert.Null(((VideoTitle)got["movie/tmdb/1"]).Place);
+        Assert.Null(((VideoTitle)got["series/tmdb/1399/s2/e1"]).Place);
         var ep = (VideoTitle)got["series/tmdb/1399/e1"];
+        Assert.Equal(new Place { Season = 1, Episode = 0 }, ep.Place);
         Assert.Equal(["en"], ep.Audio!);
         Assert.Equal(["series/tmdb/1399/e2", "series/tmdb/1399/e3"], ep.With!);
         Assert.Single(ep.Ids!);

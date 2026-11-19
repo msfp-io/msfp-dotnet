@@ -21,6 +21,13 @@ public readonly record struct VideoKey(string Kind, long Tmdb, int Season = 0, i
     public bool Playable => Kind is "movie" or "episode";
 
     /// <summary>
+    /// Whether the key names an episode by TMDB's ID of it
+    /// (series/tmdb/&lt;id&gt;/e&lt;episode id&gt;): such an episode carries
+    /// its <see cref="Place"/> (video sections 3.1 and 4.1).
+    /// </summary>
+    public bool ByEpisodeId => Kind == "episode" && EpisodeId > 0;
+
+    /// <summary>
     /// Reads a video title key in its one canonical form (video section 4):
     /// the kind, the scheme tmdb, the TMDB ID (1 to 9,999,999,999), then for
     /// a season s&lt;season&gt; (0, or 1 to 4 digits), for an episode
@@ -145,6 +152,20 @@ public sealed record Picture(int Height, IReadOnlyList<string> Hdr)
 }
 
 /// <summary>
+/// An episode's place in TMDB's numbering (video sections 3 and 4.1): the
+/// season and episode numbers TMDB gives it now, in the series' own season
+/// list. Carried by episodes keyed by their TMDB episode ID only, and
+/// required for them.
+/// </summary>
+/// <param name="Season">The season number, 0 (specials) to <see cref="Video.MaxSeason"/>.</param>
+/// <param name="Episode">The episode number, 0 to <see cref="Video.MaxEpisode"/>.</param>
+public sealed record Place(int Season, int Episode)
+{
+    /// <summary>Whether both numbers are in range (video section 3.1): what a sender sends, and a receiver keeps.</summary>
+    public bool Valid => Season is >= 0 and <= Video.MaxSeason && Episode is >= 0 and <= Video.MaxEpisode;
+}
+
+/// <summary>
 /// A peer's video title, as kept: its key, its kind, the library it gives,
 /// and the members video adds, cleaned (lists empty when absent).
 /// </summary>
@@ -154,6 +175,7 @@ public sealed record Picture(int Height, IReadOnlyList<string> Hdr)
 /// <param name="Audio">Its audio languages (films and episodes).</param>
 /// <param name="Subtitles">Its subtitle languages (films and episodes).</param>
 /// <param name="Video">Its picture (films and episodes); null when absent.</param>
+/// <param name="Place">Its place in TMDB's numbering (episodes keyed by their TMDB episode ID, which a receiver skips without one); null for any other title.</param>
 /// <param name="With">The other episodes it holds (episodes).</param>
 /// <param name="Ids">Its other identifiers, by scheme (not seasons).</param>
 public sealed record VideoTitle(
@@ -163,6 +185,7 @@ public sealed record VideoTitle(
     IReadOnlyList<string> Audio,
     IReadOnlyList<string> Subtitles,
     Picture? Video,
+    Place? Place,
     IReadOnlyList<string> With,
     IReadOnlyDictionary<string, string> Ids);
 
@@ -181,6 +204,12 @@ public static partial class Video
 
     /// <summary>How many other episodes' keys an episode's with lists at most (video section 4.2).</summary>
     public const int MaxWith = 16;
+
+    /// <summary>The greatest season number of a <see cref="Place"/> (video section 3.1).</summary>
+    public const int MaxSeason = 9999;
+
+    /// <summary>The greatest episode number of a <see cref="Place"/> (video section 3.1).</summary>
+    public const int MaxEpisode = 99999;
 
     /// <summary>The heights a picture is stepped to (video sections 3.2 and 5.1).</summary>
     public static readonly IReadOnlyList<int> Heights = [480, 720, 1080, 1440, 2160, 4320];
@@ -306,7 +335,8 @@ public static partial class Video
     /// Reads one entry of a titles answer as catalog section 3.3 and video
     /// section 3.1 say: null, to skip it, when it isn't an object whose key,
     /// kind and library are strings, when the key isn't a canonical video
-    /// key, or when its kind isn't the key's. A member video adds of the
+    /// key, when its kind isn't the key's, or when it is an episode keyed by
+    /// its TMDB episode ID without a valid place. A member video adds of the
     /// wrong type counts as absent; a bad entry of one of its lists is
     /// skipped alone. Whether library is one asked for is the caller's to
     /// check.
@@ -342,6 +372,7 @@ public static partial class Video
 
         IReadOnlyList<string> audio = [], subtitles = [], with = [];
         Picture? picture = null;
+        Place? place = null;
 
         // Languages for films and episodes only, with for episodes only.
         if (k.Playable)
@@ -356,6 +387,13 @@ public static partial class Video
             with = CleanWith(k, Music.StringsOf(t["with"]));
         }
 
+        // An episode keyed by its TMDB ID is placed by place, required
+        // (video section 4.1); place on any other title is ignored.
+        if (k.ByEpisodeId && (place = ReadPlace(t["place"])) is null)
+        {
+            return null;
+        }
+
         var ids = new Dictionary<string, string>(StringComparer.Ordinal);
         if (k.Kind != "season" && t["ids"] is JsonObject o)
         {
@@ -368,7 +406,7 @@ public static partial class Video
             }
         }
 
-        return new VideoTitle(key, kind, library, audio, subtitles, picture, with, ids);
+        return new VideoTitle(key, kind, library, audio, subtitles, picture, place, with, ids);
     }
 
     /// <summary>Reads one entry of a titles answer from its bytes, as <see cref="ReadTitle(JsonNode?)"/>; null too when they aren't I-JSON.</summary>
@@ -382,6 +420,21 @@ public static partial class Video
         {
             return null;
         }
+    }
+
+    // Reads place as a receiver keeps it (video section 3.1): null unless it
+    // is an object whose season and episode are MSFP integers in range;
+    // other members are ignored.
+    private static Place? ReadPlace(JsonNode? node)
+    {
+        if (node is not JsonObject o)
+        {
+            return null;
+        }
+
+        var season = Music.IntegerIn(o["season"], 0, MaxSeason);
+        var episode = Music.IntegerIn(o["episode"], 0, MaxEpisode);
+        return season < 0 || episode < 0 ? null : new Place((int)season, (int)episode);
     }
 
     // Reads video as a receiver keeps it (video section 3.1): null, absent,

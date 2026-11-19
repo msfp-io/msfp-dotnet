@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased: v0.1.0-preview
+## Unreleased: v0.2.0-preview
+
+- An episode keyed by its TMDB episode ID carries `place`, its season and
+  episode in TMDB's numbering (MSFP video sections 3, 3.1 and 4.1). The
+  host sets `VideoTitle.Place` (a `Place` with `Season` and `Episode`)
+  for its own such episodes: one without a valid place isn't sent, and a
+  new place is a change of the title. A peer's such episode without a
+  valid place is skipped; `place` on other titles is ignored. Peers'
+  titles keep it in the stores (`place`, as msfp-go's file store).
+  `Msfp.Protocol`: `Place`, `VideoTitle.Place` (a new positional member,
+  after `Video`), `VideoKey.ByEpisodeId`, `Video.MaxSeason` and
+  `Video.MaxEpisode`. The vectors are the spec's of 2026-11-19.
+
+## v0.1.0-preview (not released)
 
 The MSFP v1 engine for .NET, the same API design as msfp-go v0.2.0
 (msfp-spec's api/), in .NET's own style. Not released.
