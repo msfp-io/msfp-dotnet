@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The protocol alone (the Go engine's package wire): keys, codes,
+       signatures, strict JSON, statements, the media checks. -->
+  <PropertyGroup>
+    <RootNamespace>Msfp.Protocol</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsPackable>true</IsPackable>
+    <Description>MSFP, the Media Server Federation Protocol, version 1: the protocol's pieces (keys, pairing codes, signed requests and answers, strict JSON, statements, media checks).</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Ed25519 and its group arithmetic: .NET has none of its own. -->
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <InternalsVisibleTo Include="Msfp.Protocol.Tests" />
+  </ItemGroup>
+</Project>

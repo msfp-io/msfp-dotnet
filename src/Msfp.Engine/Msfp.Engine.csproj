@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The engine (the Go engine's package msfp) and its two stores. -->
+  <PropertyGroup>
+    <RootNamespace>Msfp</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsPackable>true</IsPackable>
+    <Description>The MSFP engine: runs the Media Server Federation Protocol inside a media server (pairing, keys, signed calls, catalog, playback), with memory and JSON-file stores.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Msfp.Protocol/Msfp.Protocol.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <InternalsVisibleTo Include="Msfp.Engine.Tests" />
+  </ItemGroup>
+</Project>
