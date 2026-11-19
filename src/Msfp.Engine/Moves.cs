@@ -653,7 +653,8 @@ public sealed partial class MsfpEngine
         Exception? failed = null;
         try
         {
-            var r = await ExchangeAsync(there, CallHello, await OurHelloAsync(ViewOf(p), p, answering: false, ct).ConfigureAwait(false), SignerFor(p), ct).ConfigureAwait(false);
+            var hello = await OurHelloAsync(ViewOf(p), p, answering: false, ct).ConfigureAwait(false);
+            var r = await ExchangeAsync(there, CallHello, hello, SignerFor(p), ct).ConfigureAwait(false);
             if (r.Status != 200)
             {
                 failed = new MsfpException(MsfpError.Unreachable, $"it answered {r.Status}");

@@ -158,7 +158,8 @@ public sealed partial class MsfpEngine
         var current = Current();
         try
         {
-            await SignedExchangeAsync(p, CallHello, await OurHelloAsync(ViewOf(p), p, answering: false, ct).ConfigureAwait(false), current, ct).ConfigureAwait(false);
+            var hello = await OurHelloAsync(ViewOf(p), p, answering: false, ct).ConfigureAwait(false);
+            await SignedExchangeAsync(p, CallHello, hello, current, ct).ConfigureAwait(false);
         }
         catch (MsfpException)
         {

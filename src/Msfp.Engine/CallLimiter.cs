@@ -202,6 +202,13 @@ internal sealed class CallLimiter(CallLimits limits)
         Forget(_addresses, now, limits.AddressRate, limits.AddressBurst);
         Forget(_peers, now, limits.PeerRate, limits.PeerBurst);
         Forget(_plays, now, limits.PlayRate, limits.PlayBurst);
+        foreach (var (k, w) in _waits.ToList())
+        {
+            if (now > w.RetryAt && now > w.BackoffAt && now - w.Last > TimeSpan.FromMinutes(10))
+            {
+                _waits.Remove(k);
+            }
+        }
     }
 
     private static void Forget(Dictionary<string, Bucket> m, DateTimeOffset now, double rate, double burst)
@@ -223,6 +230,7 @@ internal sealed class CallLimiter(CallLimits limits)
         public DateTimeOffset RetryAt;
         public DateTimeOffset BackoffAt;
         public int Failures;
+        public DateTimeOffset Last;
     }
 
     private readonly Dictionary<string, Wait> _waits = new(StringComparer.Ordinal);
@@ -239,6 +247,7 @@ internal sealed class CallLimiter(CallLimits limits)
     {
         lock (_lock)
         {
+            Sweep(now);
             return !_waits.TryGetValue(key, out var w) || (now >= w.RetryAt && (!background || now >= w.BackoffAt));
         }
     }
@@ -249,12 +258,14 @@ internal sealed class CallLimiter(CallLimits limits)
     {
         lock (_lock)
         {
+            Sweep(now);
             if (!_waits.TryGetValue(key, out var w))
             {
                 w = new Wait();
                 _waits[key] = w;
             }
 
+            w.Last = now;
             var busy = status is 429 or 503;
             if (answered && busy && retryAfter > 0)
             {

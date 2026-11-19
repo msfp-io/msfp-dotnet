@@ -7,7 +7,11 @@ namespace Msfp;
 internal sealed record ServerKeys(MsfpKey Current, byte[] Commitment, byte[] Ids, MsfpKey? Old, DateTimeOffset? OldSince,
     bool OldRevoked, MsfpKey? Revoked, DateTimeOffset? RevokedAt);
 
-/// <summary>Where this server is, as the server record holds it: its address, the former one during a move (null for none) and since when, whether it reached itself at the new one, whether it can be called.</summary>
+/// <summary>
+/// Where this server is, as the server record holds it: its address, the
+/// former one during a move (null for none) and since when, whether it
+/// reached itself at the new one, whether it can be called.
+/// </summary>
 internal sealed record AddressState(string Address, string? Former, DateTimeOffset? MovedAt, bool Reached, bool Uncallable, string? UncallableAddress);
 
 public sealed partial class MsfpEngine
