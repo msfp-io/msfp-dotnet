@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/examples/">
+    <Project Path="examples/Pairing/Pairing.csproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/Msfp.Engine/Msfp.Engine.csproj" />
     <Project Path="src/Msfp.Protocol/Msfp.Protocol.csproj" />
