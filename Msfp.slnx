@@ -1,6 +1,6 @@
 <Solution>
   <Folder Name="/examples/">
-    <Project Path="examples/Pairing/Pairing.csproj" />
+    <Project Path="examples/ShareFolder/ShareFolder.csproj" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/Msfp.Engine/Msfp.Engine.csproj" />

@@ -143,22 +143,30 @@ own), or previews of peers' titles are left out.
 
 ## The example
 
-[examples/Pairing](examples/Pairing) is a small host: Kestrel with a
-self-signed certificate it pins, its records in JSON files, typed commands
-in place of a panel, and the stream route mounted (`AspNetSink`). Run
-two of them on one machine:
+[examples/ShareFolder](examples/ShareFolder) is a small host, msfp-go's
+`examples/share-folder` in C#: Kestrel with a self-signed certificate it
+pins, its records in JSON files, typed commands in place of a panel, and
+a folder of films shared with its peers ([Folder.cs](examples/ShareFolder/Folder.cs)
+is the engine's `ICatalog`, `IPlayback` and `IMedia`). A film is a file
+named with its TMDB ID, `Title (Year) [tmdbid-949].mp4`, optionally with
+an HLS copy made beforehand beside it (`<same name>.hls/master.m3u8`) and
+WebVTT subtitles (`<same name>.<language>.vtt`); nothing is transcoded.
+Run two of them on one machine:
 
 ```sh
-cd examples/Pairing
-dotnet run -- --address https://127.0.0.1:8441 --data a --loopback
+cd examples/ShareFolder
+dotnet run -- --address https://127.0.0.1:8441 --data a --films ~/films --loopback
 dotnet run -- --address https://127.0.0.1:8442 --data b --loopback
 ```
 
 `--loopback` lets peers on the same machine be called (the engine refuses
 local addresses otherwise). Type `code` in the first and `redeem <code>` in
 the second, compare the fingerprints both print, and `accept <id>` in the
-first. The comment at the top of
-[Program.cs](examples/Pairing/Program.cs) lists every command.
+first. Then `offer <id>` in the first shares the films; `want <id>` in the
+second reads them, `titles <id>` lists them, and `play <id> <key>` prints a
+URL that `curl -k` or `ffplay -tls_verify 0` plays through the second
+server. The comment at the top of
+[Program.cs](examples/ShareFolder/Program.cs) lists every command.
 
 ## Versions
 
@@ -175,7 +183,11 @@ dotnet test
 ```
 
 The engine's tests run whole servers against each other in one process,
-and once over real TLS. The protocol's test vectors under
+and once over real TLS. The example host passes msfp-spec's
+[conformance suite](https://github.com/msfp-io/msfp-spec/tree/main/conformance)
+as msfp-go's does: 118 checks passed, 0 failed, 3 skipped (a title in
+several libraries, preview sheets and PGS subtitles, which a folder of
+films doesn't have), with `--code2`, `--load` and `--end`. The protocol's test vectors under
 [tests/Msfp.Protocol.Tests/testdata](tests/Msfp.Protocol.Tests/testdata)
 come from the spec's
 [vectors/](https://github.com/msfp-io/msfp-spec/tree/main/vectors), copied
