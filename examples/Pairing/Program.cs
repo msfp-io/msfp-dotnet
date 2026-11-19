@@ -20,6 +20,7 @@
 //   check <id>       send a peer a hello now
 //   end <id>         end a pairing
 //   server           this server's fingerprint and next key
+//   uncallable on|off  this server can't be called (behind a router), or can again
 //   quit
 using System.Net;
 using System.Security.Cryptography;
@@ -72,6 +73,9 @@ app.MapPost("/api/v1/federation/{call}", async (HttpContext ctx) =>
     await ctx.Response.Body.WriteAsync(res.Body, ctx.RequestAborted);
 });
 await app.StartAsync();
+// The engine's background work: moves, scheduled hellos, keys' time.
+using var stop = new CancellationTokenSource();
+_ = engine.RunAsync(stop.Token);
 var server = await engine.ServerAsync();
 Console.WriteLine($"{address}, fingerprint {server.Fingerprint}");
 
@@ -120,11 +124,15 @@ while (Console.ReadLine() is { } line)
                 var s = await engine.ServerAsync();
                 Console.WriteLine($"{s.Address}, fingerprint {s.Fingerprint}, next key {s.NextKey} (on this server: {s.NextOnServer})");
                 break;
+            case "uncallable":
+                await engine.SetUncallableAsync(rest == "on");
+                Console.WriteLine($"named {(await engine.ServerAsync()).Named}");
+                break;
             case "quit":
                 await app.StopAsync();
                 return;
             default:
-                Console.WriteLine("code, preview, redeem, accept, peers, check, end, server, quit");
+                Console.WriteLine("code, preview, redeem, accept, peers, check, end, server, uncallable, quit");
                 break;
         }
     }
@@ -137,7 +145,7 @@ while (Console.ReadLine() is { } line)
 await app.StopAsync();
 
 static void Show(PeerView p) =>
-    Console.WriteLine($"{p.Id}  {p.Name}  {p.Address}  {p.State}  fingerprint {p.Fingerprint}  core {p.Core}");
+    Console.WriteLine($"{p.Id}  {p.Name}  {p.Address}  {p.State}  inbound {p.Inbound}  fingerprint {p.Fingerprint}  core {p.Core}");
 
 string? Arg(string name)
 {
