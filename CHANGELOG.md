@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased: v0.2.0-preview
+## v0.2.0-preview (2026-11-19)
 
 - An episode keyed by its TMDB episode ID carries `place`, its season and
   episode in TMDB's numbering (MSFP video sections 3, 3.1 and 4.1). The
@@ -13,7 +13,7 @@
   after `Video`), `VideoKey.ByEpisodeId`, `Video.MaxSeason` and
   `Video.MaxEpisode`. The vectors are the spec's of 2026-11-19.
 
-## v0.1.0-preview (not released)
+## v0.1.0-preview (2026-11-19)
 
 The MSFP v1 engine for .NET, the same API design as msfp-go v0.2.0
 (msfp-spec's api/), in .NET's own style. Not released.
