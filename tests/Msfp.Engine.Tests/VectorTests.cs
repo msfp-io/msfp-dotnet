@@ -292,4 +292,117 @@ public sealed class VectorTests
         // Nothing was kept of them.
         Assert.Null((await a.RecordAsync(onA.Id)).Versions);
     }
+
+    // The addresses of strict.json's uncallableAddresses, in hellos saying
+    // inbound false, through an engine: each valid one is stored at once,
+    // each invalid one refused, signed, and nothing kept (core sections 5.2
+    // and 9.2).
+    [Fact]
+    public async Task UncallableAddressVectorsThroughEngine()
+    {
+        var (_, a, _, onA, _, _) = await NewPairAsync();
+        var keyB = MsfpKey.FromSeed(Convert.FromHexString(Vectors.Seed("b")));
+        var stored = onA.Address;
+        foreach (var c in Vectors.Load("strict.json")["uncallableAddresses"]!.AsArray().Select(x => x!.AsObject()))
+        {
+            var text = c.S("text");
+            var body = JsonOut.Object(o => o.String("state", "paired").Integers("core", [1]).String("address", text).Bool("inbound", false));
+            var res = await Kit.SendAsync(a, keyB, "hello", body);
+            var got = await a.RecordAsync(onA.Id);
+            if (c["valid"]!.GetValue<bool>())
+            {
+                Assert.True(res.Status == 200 && got.Address == text && got.Inbound == Inbound.No, $"{text}: {res.Status}, B at {got.Address}");
+            }
+            else
+            {
+                Assert.True(res.Status == 404 && res.Signed() && got.Address == stored, $"{text}: {res.Status}, B at {got.Address}");
+            }
+
+            stored = got.Address;
+        }
+    }
+
+    // The last three exchanges of exchanges.json from B's side, through its
+    // engine: B can't be called, at the vectors' address; its scheduled
+    // hellos carry inbound false and knownKey a; A's answer with a rotation
+    // and a revocation makes B suspend a, then move to a2; B's next hello,
+    // at once, carries knownKey a2, and A's answer under a2 is B's to keep.
+    [Fact]
+    public async Task UncallableExchangesFromCaller()
+    {
+        var (net, a, b, _, onB, vs) = await NewPairAsync();
+        b.Random.Queue(Convert.ToHexStringLower(Base32Lower("4dq6fy7e4xtop2hj5lv6z3po54")));
+        await b.Engine.SetUncallableAsync(true);
+        Assert.Equal("https://msfp-4dq6fy7e4xtop2hj5lv6z3po54.invalid", (await b.Engine.ServerAsync()).Address);
+
+        JsonObject answering = vs["hello"];
+        var asked = new List<string>();
+        net.Add(a.Host, async r =>
+        {
+            using var m = new MemoryStream();
+            await r.Body.CopyToAsync(m);
+            lock (asked)
+            {
+                asked.Add(Encoding.UTF8.GetString(m.ToArray()));
+            }
+
+            return new MsfpResponse
+            {
+                Status = answering["status"]!.GetValue<int>(),
+                Headers = [new("Content-Type", answering.S("answerContentType")), new(Signing.HeaderSignature, answering.S("answerSignature"))],
+                Body = Encoding.UTF8.GetBytes(answering.S("answerBody")),
+            };
+        });
+
+        async Task SendAsync(string name, long at)
+        {
+            var v = vs[name];
+            answering = v;
+            asked.Clear();
+            b.Clock.Set(at);
+            b.Random.Queue(v.S("nonce"));
+            await b.Engine.RunOnceAsync();
+            var got = JsonNode.Parse(Assert.Single(asked))!.AsObject();
+            var want = JsonNode.Parse(v.S("body"))!.AsObject();
+            foreach (var member in new[] { "address", "inbound", "knownKey" })
+            {
+                Assert.Equal(want[member]?.ToJsonString(), got[member]?.ToJsonString());
+            }
+        }
+
+        await SendAsync("hello, from a server that can't be called", 1800000240);
+        var rec = await b.RecordAsync(onB.Id);
+        Assert.Equal(PeerState.Paired, rec.State);
+        Assert.Equal(1800000240, rec.Seen!.Value.ToUnixTimeSeconds());
+        Assert.Single(rec.Pins!);
+        await SendAsync("hello, answered with a rotation and a revocation", 1800300000);
+        rec = await b.RecordAsync(onB.Id);
+        Assert.Equal(Vectors.Public("a2"), Base64UrlText.Encode(rec.Key));
+        Assert.Null(rec.Suspended);
+        Assert.NotEmpty(b.Events.Of<PeerSuspended>());
+        Assert.NotEmpty(b.Events.Of<PeerRotated>());
+        Assert.NotEmpty(b.Events.Of<PeerResumed>());
+        await SendAsync("hello, with the new key known", 1800300060);
+        Assert.Equal(1800300060, (await b.RecordAsync(onB.Id)).Seen!.Value.ToUnixTimeSeconds());
+    }
+
+    private static byte[] Base32Lower(string text)
+    {
+        const string Alphabet = "abcdefghijklmnopqrstuvwxyz234567";
+        var output = new List<byte>();
+        int buffer = 0, bits = 0;
+        foreach (var c in text)
+        {
+            buffer = (buffer << 5) | Alphabet.IndexOf(c, StringComparison.Ordinal);
+            bits += 5;
+            if (bits >= 8)
+            {
+                bits -= 8;
+                output.Add((byte)(buffer >> bits));
+                buffer &= (1 << bits) - 1;
+            }
+        }
+
+        return [.. output];
+    }
 }

@@ -206,10 +206,10 @@ internal sealed class TestServer : IDisposable
 
     public static async Task<TestServer> StartAsync(Network net, string address, string? name = null, long unix = 1800000000,
         ScriptedRandom? random = null, IReadOnlyList<string>? parts = null, IReadOnlyList<string>? pins = null,
-        string prefix = "", bool discovery = false)
+        string prefix = "", bool discovery = false, FakeTime? clock = null, MemoryStore? store = null)
     {
-        var store = new MemoryStore();
-        var clock = new FakeTime(unix);
+        store ??= new MemoryStore();
+        clock ??= new FakeTime(unix);
         random ??= new ScriptedRandom();
         var events = new EventLog();
         var engine = await MsfpEngine.OpenAsync(new MsfpConfig
@@ -239,6 +239,9 @@ internal sealed class TestServer : IDisposable
     }
 
     public void Dispose() => Engine.Dispose();
+
+    /// <summary>Waits for the work the engine started in the background.</summary>
+    public Task WaitAsync() => Engine.WaitForTestAsync();
 }
 
 internal static class Vectors

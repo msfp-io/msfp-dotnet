@@ -85,7 +85,7 @@ public sealed partial class MsfpEngine
     /// <exception cref="MsfpException">Off: <see cref="MsfpError.InvalidAddress"/> for a server opened without an address (<see cref="SetAddressAsync"/> first).</exception>
     public async Task SetUncallableAsync(bool on, CancellationToken ct = default)
     {
-        var made = on ? Uncallables.NewAddress() : "";
+        var made = on ? Uncallables.NewAddress(_random) : "";
         string configured;
         lock (_keysLock)
         {

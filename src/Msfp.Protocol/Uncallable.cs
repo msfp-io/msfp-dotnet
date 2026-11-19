@@ -30,9 +30,14 @@ public static class Uncallables
     public static readonly TimeSpan HelloGone = TimeSpan.FromHours(1);
 
     /// <summary>A new address of a server that can't be called, at random. A server makes it once, and keeps it.</summary>
-    public static string NewAddress()
+    public static string NewAddress() => NewAddress(RandomNumberGenerator.Create());
+
+    /// <summary>A new address of a server that can't be called, from this randomness.</summary>
+    public static string NewAddress(RandomNumberGenerator random)
     {
-        var b = RandomNumberGenerator.GetBytes(AddressBytes);
+        ArgumentNullException.ThrowIfNull(random);
+        var b = new byte[AddressBytes];
+        random.GetBytes(b);
         return Prefix + Keys.Base32(b, LowerBase32) + Suffix;
     }
 
