@@ -128,7 +128,53 @@ public sealed record Picture
     /// <summary>The HDR formats.</summary>
     [JsonPropertyName("hdr"), OmitEmpty]
     public List<string>? Hdr { get; set; }
+
+    /// <summary>
+    /// Whether a copy of this picture is better than one of
+    /// <paramref name="other"/>, as <see cref="Best"/> ranks them (both
+    /// stepped): of a greater height, then with HDR when the other has none,
+    /// then with more formats.
+    /// </summary>
+    /// <param name="other">The other picture.</param>
+    public bool Better(Picture other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+        return Height != other.Height ? Height > other.Height : (Hdr?.Count ?? 0) > (other.Hdr?.Count ?? 0);
+    }
+
+    /// <summary>
+    /// The picture of the best of a title's copies, as MSFP video section 3.2
+    /// says, stepped: the greatest height, then HDR before none, then more
+    /// formats; null when no copy's size is known. A host lists its copies to
+    /// Copies in that order, best first, so that play without a version
+    /// plays it. Go's BestPicture.
+    /// </summary>
+    /// <param name="pictures">Each copy's picture.</param>
+    public static Picture? Best(IEnumerable<Picture> pictures)
+    {
+        ArgumentNullException.ThrowIfNull(pictures);
+        Picture? best = null;
+        foreach (var p in pictures)
+        {
+            var hdr = Protocol.Video.CleanHdr(p.Hdr ?? []);
+            var w = new Picture { Height = Protocol.Video.StepHeight(p.Height), Hdr = hdr.Count > 0 ? [.. hdr] : null };
+            if (w.Height > 0 && (best is null || w.Better(best)))
+            {
+                best = w;
+            }
+        }
+
+        return best;
+    }
 }
+
+/// <summary>
+/// One of a title's copies as a peer sees it: an opaque ID and a name (MSFP
+/// playback section 2.3).
+/// </summary>
+/// <param name="Id">The version ID.</param>
+/// <param name="Name">Its name.</param>
+public sealed record Version(string Id, string Name);
 
 /// <summary>
 /// An artist, an album or a track, with its description (MSFP music
@@ -638,7 +684,7 @@ public enum MediaKind
 /// What a media request asks for. Names are already checked against
 /// ^[A-Za-z0-9._-]{1,64}$, never "." or "..".
 /// </summary>
-public sealed record MediaPath
+public sealed partial record MediaPath
 {
     /// <summary>The kind.</summary>
     public MediaKind Kind { get; init; }
@@ -664,7 +710,7 @@ public sealed record MediaPath
 /// <param name="First">The first byte.</param>
 /// <param name="Last">The last byte, included; -1 for the end.</param>
 /// <param name="Suffix">The last bytes asked for, when it is a suffix.</param>
-public sealed record ByteRange(long First, long Last, long Suffix);
+public sealed partial record ByteRange(long First, long Last, long Suffix);
 
 /// <summary>
 /// What a pairing may use of a server at once (MSFP playback section 5):

@@ -28,8 +28,13 @@ public sealed partial class MsfpEngine
     /// Every second: this server's new address tried until it answers (then
     /// announced), and while it can't be called, its scheduled hellos. Every
     /// hour too: the end of this server's move, peers late to move told
-    /// again, peers' new addresses tried again. This preview has no catalog
-    /// or playback work yet.
+    /// again, peers' new addresses tried again; the playbacks left on peers
+    /// before a restart stopped (once); the engine's own change log of the
+    /// host's catalog refreshed. Every second too: peers' catalogs read when
+    /// due (a minute after the start, then every SyncEvery, at once when what
+    /// is wanted changes), peers' playbacks here expired (looked at every 30
+    /// seconds), and peers told where this server's viewers are in their
+    /// playbacks there, when 45 seconds have passed (Progress).
     /// </remarks>
     public async Task RunAsync(CancellationToken ct)
     {
@@ -83,15 +88,34 @@ public sealed partial class MsfpEngine
         }, ct).ConfigureAwait(false);
         await MaintainKeysAsync(ct).ConfigureAwait(false);
         await MaintainAddressesAsync(ct).ConfigureAwait(false);
+        await StopLeftoversAsync(ct).ConfigureAwait(false);
+        if (_logKept)
+        {
+            try
+            {
+                await RefreshOwnAsync(ct).ConfigureAwait(false);
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                _log.LogWarning(e, "msfp: the catalog's change log couldn't be refreshed");
+            }
+        }
+
+        await ReadDueAsync(true, ct).ConfigureAwait(false);
+        ExpirePlaybacks(true);
         await TickAsync(ct).ConfigureAwait(false);
     }
 
     // The work of each second: this server's new address tried, its
-    // scheduled hellos sent.
+    // scheduled hellos sent, catalogs due read, playbacks expired, progress
+    // due sent.
     private async Task TickAsync(CancellationToken ct)
     {
         await ReachAndAnnounceAsync(ct).ConfigureAwait(false);
         await ScheduledHellosAsync(ct).ConfigureAwait(false);
+        await ReadDueAsync(false, ct).ConfigureAwait(false);
+        ExpirePlaybacks(false);
+        TellWatched();
     }
 
     // What time does to keys (core sections 12.4, 12.6, 12.7): our old key

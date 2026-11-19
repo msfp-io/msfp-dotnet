@@ -805,6 +805,13 @@ public sealed partial class MsfpEngine
         }
 
         Notify([.. events]);
+        if (events.Any(e => e is InboundChanged { Inbound: var i } && i == Inbound.Yes))
+        {
+            // What it holds for us was dropped while it couldn't be called:
+            // read again now, not at the next reading.
+            ReadSoon(id);
+        }
+
         return superseded;
     }
 }

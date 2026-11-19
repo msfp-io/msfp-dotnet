@@ -50,7 +50,12 @@ public sealed partial class MsfpEngine : IDisposable
         _limits = new CallLimiter(cfg.Limits);
         _events = new Notifications(cfg.Notifier, _log);
         _discovery = cfg.Discovery;
+        _startedAt = Now();
     }
+
+    // When this engine started: the first readings of peers' catalogs go a
+    // minute after.
+    private readonly DateTimeOffset _startedAt;
 
     // The client for a call to a peer: any certificate (pair, hello, the
     // discovery document), or those publicly trusted and the peer's pins.
@@ -134,6 +139,7 @@ public sealed partial class MsfpEngine : IDisposable
         try
         {
             await engine.LoadKeysAsync(ct).ConfigureAwait(false);
+            await engine.KeepsLogAsync(ct).ConfigureAwait(false);
         }
         catch
         {
@@ -159,9 +165,39 @@ public sealed partial class MsfpEngine : IDisposable
 
         _recordLock.Dispose();
         _keyAction.Dispose();
+        _ownLock.Dispose();
+        _smallGate.Dispose();
+        _sheetGate.Dispose();
+        lock (_readingLocks)
+        {
+            foreach (var l in _readingLocks.Values)
+            {
+                l.Dispose();
+            }
+        }
     }
 
     internal DateTimeOffset Now() => _time.GetUtcNow();
+
+    // Whether the engine keeps the change log of the host's catalog: the
+    // host has a catalog without one, and the store can keep it.
+    private async Task KeepsLogAsync(CancellationToken ct)
+    {
+        if (_cfg.Catalog is null || ChangeLog() is not null)
+        {
+            return;
+        }
+
+        await _store.ReadAsync(tx =>
+        {
+            _logKept = tx is IOwnLogTx;
+            return ValueTask.CompletedTask;
+        }, ct).ConfigureAwait(false);
+        if (!_logKept)
+        {
+            _log.LogWarning("msfp: the catalog keeps no change log, and the store can't: peers read the whole list each time");
+        }
+    }
 
     internal DateTimeOffset NowSecond()
     {
@@ -176,11 +212,12 @@ public sealed partial class MsfpEngine : IDisposable
         return b;
     }
 
-    // An opaque ID: a prefix and 10 random bytes in lowercase base32.
-    internal string NewId(string prefix)
+    // An opaque ID: a prefix and n random bytes (10 by default) in
+    // lowercase base32, without padding.
+    internal string NewId(string prefix, int n = 10)
     {
         const string Alphabet = "abcdefghijklmnopqrstuvwxyz234567";
-        var b = RandomBytes(10);
+        var b = RandomBytes(n);
         var s = new System.Text.StringBuilder(prefix);
         int buffer = 0, bits = 0;
         foreach (var x in b)
@@ -194,6 +231,11 @@ public sealed partial class MsfpEngine : IDisposable
             }
 
             buffer &= (1 << bits) - 1;
+        }
+
+        if (bits > 0)
+        {
+            s.Append(Alphabet[(buffer << (5 - bits)) & 31]);
         }
 
         return s.ToString();
@@ -293,5 +335,48 @@ public sealed partial class MsfpEngine : IDisposable
         return now!;
     }
 
-    internal void Notify(params MsfpEvent[] events) => _events.Tell(events);
+    internal void Notify(params MsfpEvent[] events)
+    {
+        foreach (var e in events)
+        {
+            React(e);
+        }
+
+        _events.Tell(events);
+    }
+
+    // What the engine itself does on an event, before the host is told: a
+    // peer no longer paired, or suspended, ends its playbacks both ways
+    // (MSFP playback section 6.3); one that can't be called is fetched from
+    // no more, and what was kept of its titles goes (core section 7.5); a
+    // change of the parts on makes the next reading of our titles a whole one.
+    private void React(MsfpEvent e)
+    {
+        switch (e)
+        {
+            case PeerEnded or PeerGone or PeerSuspended:
+                var id = e switch
+                {
+                    PeerEnded x => x.Peer,
+                    PeerGone x => x.Peer,
+                    PeerSuspended x => x.Peer,
+                    _ => "",
+                };
+                EndPlaybacks(pb => pb.Peer == id, EndReason.PairingEnded);
+                EndRemotes(id, EndReason.PairingEnded);
+                if (e is PeerGone)
+                {
+                    Background(ct => DropCatalogAsync(id, ct));
+                }
+
+                break;
+            case InboundChanged { Inbound: var inbound } changed when inbound == Inbound.No:
+                EndRemotes(changed.Peer, EndReason.PairingEnded);
+                Background(ct => DropCatalogAsync(changed.Peer, ct));
+                break;
+            case VersionsChanged v:
+                Background(ct => PartsChangedAsync(v.Peer, ct));
+                break;
+        }
+    }
 }

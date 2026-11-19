@@ -33,10 +33,9 @@ public sealed partial class MsfpEngine
     internal const string CallRotate = "rotate";
     internal const string CallRevoke = "revoke";
 
-    // The calls of version 1, by their name under the base path. Those the
-    // engine doesn't serve yet answer not-supported, signed, once checked.
+    // The calls of version 1, by their name under the base path.
     private static readonly HashSet<string> Calls =
-        new(StringComparer.Ordinal) { CallPair, CallHello, CallRotate, CallRevoke, "libraries", "titles", "play", "progress", "stop" };
+        new(StringComparer.Ordinal) { CallPair, CallHello, CallRotate, CallRevoke, CallLibraries, CallTitles, CallPlay, CallProgress, CallStop };
 
     /// <summary>
     /// The federation routes peers call, under
@@ -131,6 +130,11 @@ public sealed partial class MsfpEngine
         CallHello => await HelloAsync(req, ct).ConfigureAwait(false),
         CallRotate => await RotateAsync(req, ct).ConfigureAwait(false),
         CallRevoke => await RevokeAsync(req, ct).ConfigureAwait(false),
+        CallLibraries => await LibrariesAsync(req, ct).ConfigureAwait(false),
+        CallTitles => await TitlesAsync(req, ct).ConfigureAwait(false),
+        CallPlay => await PlayAsync(req, ct).ConfigureAwait(false),
+        CallProgress => await ProgressAsync(req, ct).ConfigureAwait(false),
+        CallStop => await StopAsync(req, ct).ConfigureAwait(false),
         _ => Answer.Refuse(ProblemType.NotSupported),
     };
 
