@@ -386,6 +386,40 @@ public sealed class VectorTests
         Assert.Equal(1800300060, (await b.RecordAsync(onB.Id)).Seen!.Value.ToUnixTimeSeconds());
     }
 
+    // exchanges.json, the last three, from A's side: B can't be called. A
+    // revokes a and rotates to a2: its answer to B's hello, signed with a,
+    // carries both statements, newly dated, as the vector's; B's next hello
+    // knows a2, and is answered under it.
+    [Fact]
+    public async Task UncallableExchangesFromAnswerer()
+    {
+        var (_, a, _, onA, _, vs) = await NewPairAsync();
+        a.Clock.Set(1800000240);
+        var res = await ServeAsync(a.Engine, vs["hello, from a server that can't be called"]);
+        Assert.Equal(200, res.Status);
+        Assert.Equal(Inbound.No, (await a.RecordAsync(onA.Id)).Inbound);
+        a.Clock.Set(1800300000);
+        a.Random.Queue(Vectors.Seed("a3"));
+        Assert.True(await a.Engine.KeyStolenAsync());
+        var pulled = vs["hello, answered with a rotation and a revocation"];
+        res = await ServeAsync(a.Engine, pulled);
+        Assert.Equal(200, res.Status);
+        Assert.True(Signing.CheckResponse(Base64UrlText.Decode(Vectors.Public("a"))!, pulled.S("nonceText"), 200, res.Header("Content-Type"),
+            res.Body.Span, res.Header(Signing.HeaderSignature)));
+        var got = JsonNode.Parse(res.Body.Span)!.AsObject();
+        var want = JsonNode.Parse(pulled.S("answerBody"))!.AsObject();
+        Assert.Equal(want["rotation"]!.ToJsonString(), got["rotation"]!.ToJsonString());
+        Assert.Equal(want["revocation"]!.ToJsonString(), got["revocation"]!.ToJsonString());
+        a.Clock.Set(1800300060);
+        var known = vs["hello, with the new key known"];
+        res = await ServeAsync(a.Engine, known);
+        Assert.Equal(200, res.Status);
+        Assert.True(Signing.CheckResponse(Base64UrlText.Decode(Vectors.Public("a2"))!, known.S("nonceText"), 200, res.Header("Content-Type"),
+            res.Body.Span, res.Header(Signing.HeaderSignature)));
+        Assert.DoesNotContain("\"rotation\"", Encoding.UTF8.GetString(res.Body.Span), StringComparison.Ordinal);
+        Assert.Null((await a.Engine.ServerAsync()).RotationSince);
+    }
+
     private static byte[] Base32Lower(string text)
     {
         const string Alphabet = "abcdefghijklmnopqrstuvwxyz234567";

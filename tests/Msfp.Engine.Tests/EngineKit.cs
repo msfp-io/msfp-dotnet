@@ -273,7 +273,7 @@ internal sealed class TestServer : IDisposable
     public static async Task<TestServer> StartAsync(Network net, string address, string? name = null, long unix = 1800000000,
         ScriptedRandom? random = null, IReadOnlyList<string>? parts = null, IReadOnlyList<string>? pins = null,
         string prefix = "", bool discovery = false, FakeTime? clock = null, IStore? store = null, HttpMessageHandler? transport = null,
-        IDialer? dialer = null)
+        IDialer? dialer = null, CallLimits? limits = null)
     {
         store ??= new MemoryStore();
         clock ??= new FakeTime(unix);
@@ -289,6 +289,7 @@ internal sealed class TestServer : IDisposable
             Notifier = events,
             Transport = transport ?? net,
             Dialer = dialer,
+            Limits = limits ?? new(),
             Parts = parts,
             Pins = pins,
             Prefix = prefix,

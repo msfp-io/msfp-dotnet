@@ -71,4 +71,29 @@ public sealed class CallTests
         await b.WaitAsync();
         Assert.Equal(hellos, net.SeenBy(a.Host).Count);
     }
+
+    // A peer over its limit is answered 429, signed, with retryAfter; this
+    // server's calls to it then wait that long, the operator's too. Over the
+    // limit by address, before any signature, even a peer gets the plain 404.
+    [Fact]
+    public async Task RateLimits()
+    {
+        var net = new Network();
+        var a = await TestServer.StartAsync(net, "https://a.example.org", limits: new CallLimits { PeerRate = 0.001, PeerBurst = 2 });
+        var b = await TestServer.StartAsync(net, "https://b.example.org");
+        var (_, onB) = await Kit.LinkAsync(a, b); // A's hello to B, then B's none: A's accept hello was A's call
+        await b.Engine.CheckAsync(onB);
+        await b.Engine.CheckAsync(onB);
+        Assert.Equal(MsfpError.RateLimited, (await Assert.ThrowsAsync<MsfpException>(() => b.Engine.CheckAsync(onB))).Code);
+        var last = net.SeenBy(a.Host)[^1];
+        Assert.True(last.Status == 429 && last.ResponseSignature is not null && last.ResponseBody.Contains("\"retryAfter\":", StringComparison.Ordinal));
+        Assert.Equal(MsfpError.BackingOff, (await Assert.ThrowsAsync<MsfpException>(() => b.Engine.CheckAsync(onB))).Code);
+
+        var c = await TestServer.StartAsync(net, "https://c.example.org", limits: new CallLimits { AddressRate = 0.001, AddressBurst = 1 });
+        var d = await TestServer.StartAsync(net, "https://d.example.org");
+        var (_, onD) = await Kit.LinkAsync(c, d);
+        Assert.Equal(MsfpError.Unreachable, (await Assert.ThrowsAsync<MsfpException>(() => d.Engine.CheckAsync(onD))).Code);
+        last = net.SeenBy(c.Host)[^1];
+        Assert.True(last.Status == 404 && last.ResponseSignature is null);
+    }
 }
