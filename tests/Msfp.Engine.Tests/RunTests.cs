@@ -69,6 +69,10 @@ public sealed class RunTests
     public async Task UnsignedRefusalRetriedOnce()
     {
         var (net, a, b, onA, _) = await PairedAsync();
+        // What pairing started in the background (A reading B's discovery
+        // document) is over before B's calls are counted.
+        await a.WaitAsync();
+        await b.WaitAsync();
         var refused = 0;
         net.Add(b.Host, async r =>
         {
