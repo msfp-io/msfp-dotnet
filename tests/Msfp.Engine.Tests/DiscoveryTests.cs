@@ -40,6 +40,66 @@ public sealed class DiscoveryTests
         }).PlainNotFound);
     }
 
+    // A moves under another path: B's calls at the stored base fail; after
+    // 3 of them it fetches A's document again, and calls it there. Then A
+    // serves no document, under the default path: B's next 3 failing calls
+    // fetch it again, the answered 404 sets the default base back.
+    [Fact]
+    public async Task BaseFetchedAgainAfterFailingCalls()
+    {
+        var net = new Network();
+        var clock = new FakeTime(1800000000);
+        var store = new Stores.MemoryStore();
+        var a = await TestServer.StartAsync(net, "https://a.example.org", prefix: "/srv/a", discovery: true, clock: clock, store: store);
+        var b = await TestServer.StartAsync(net, "https://b.example.org", clock: clock);
+        var (_, aOnB) = await Kit.LinkAsync(a, b);
+        Assert.Equal("/srv/a/api/v1/federation/", (await b.RecordAsync(aOnB)).Base);
+
+        a.Dispose();
+        a = await TestServer.StartAsync(net, "https://a.example.org", prefix: "/srv/c", discovery: true, clock: clock, store: store);
+        for (var i = 0; i < MsfpEngine.FailingCalls; i++)
+        {
+            Assert.Equal(MsfpError.Unreachable, (await Assert.ThrowsAsync<MsfpException>(() => b.Engine.CheckAsync(aOnB))).Code);
+        }
+
+        await b.WaitAsync();
+        Assert.Equal("/srv/c/api/v1/federation/", (await b.RecordAsync(aOnB)).Base);
+        await b.Engine.CheckAsync(aOnB);
+
+        // An hour later (the refetch is hourly at most), with no document.
+        a.Dispose();
+        a = await TestServer.StartAsync(net, "https://a.example.org", clock: clock, store: store);
+        clock.Advance(TimeSpan.FromHours(1));
+        for (var i = 0; i < MsfpEngine.FailingCalls; i++)
+        {
+            await Assert.ThrowsAsync<MsfpException>(() => b.Engine.CheckAsync(aOnB));
+        }
+
+        await b.WaitAsync();
+        Assert.Null((await b.RecordAsync(aOnB)).Base);
+        await b.Engine.CheckAsync(aOnB);
+        a.Dispose();
+    }
+
+    // No answer at all keeps the base stored: a moment's outage doesn't undo it.
+    [Fact]
+    public async Task NoAnswerKeepsTheBase()
+    {
+        var net = new Network();
+        var clock = new FakeTime(1800000000);
+        var a = await TestServer.StartAsync(net, "https://a.example.org", prefix: "/srv/a", discovery: true, clock: clock);
+        var b = await TestServer.StartAsync(net, "https://b.example.org", clock: clock);
+        var (_, aOnB) = await Kit.LinkAsync(a, b);
+        net.Remove(a.Host);
+        for (var i = 0; i < MsfpEngine.FailingCalls; i++)
+        {
+            await Assert.ThrowsAsync<MsfpException>(() => b.Engine.CheckAsync(aOnB));
+        }
+
+        await b.WaitAsync();
+        Assert.Equal("/srv/a/api/v1/federation/", (await b.RecordAsync(aOnB)).Base);
+    }
+
     [Fact]
     public async Task BadPrefixRefused()
     {
