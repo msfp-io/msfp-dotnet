@@ -16,7 +16,7 @@ public sealed class CatalogTests
     [Fact]
     public async Task LibrariesAndPaging()
     {
-        var h = new FakeHost { Libs = [new Library { Id = "films", Name = " Films​ ", Kind = "movies" }, new Library { Id = "other", Name = "Other", Kind = "weird" }] };
+        var h = new FakeHost { Libs = [new Library { Id = "films", Name = " Films\u200b ", Kind = "movies" }, new Library { Id = "other", Name = "Other", Kind = "weird" }] };
         for (var i = 1; i <= 12_001; i++)
         {
             h.Film("films", "movie/tmdb/" + i.ToString(CultureInfo.InvariantCulture), "en");

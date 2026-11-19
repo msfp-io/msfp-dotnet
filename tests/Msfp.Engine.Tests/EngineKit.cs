@@ -238,6 +238,7 @@ internal sealed class Network : HttpMessageHandler
                 hl.Add(k, v);
             }
 
+            hl.Remove("Content-Length"); // the body's own, unless the rewrite sets one
             if (rw.Rewrite(uri.AbsolutePath, hl, res.Body.ToArray()) is { } changed)
             {
                 if (hl.Get(Signing.HeaderSignature) is not null)
