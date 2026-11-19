@@ -18,7 +18,7 @@ namespace Msfp.Protocol;
 /// holds one in a member its reader knows is refused
 /// (<see cref="ReadRequest"/>); unknown members are ignored whatever they
 /// hold. In an answer, null at its top fails the whole answer, and inside
-/// it reads as the member left out (<see cref="ReadAnswer"/>).
+/// it reads as the member left out (<see cref="ReadAnswer(ReadOnlySpan{byte})"/>).
 /// <see cref="JsonOut"/> writes bodies without any.</para>
 /// <para>Readers then take each member with <see cref="JsonMembers"/>: a
 /// member of the wrong type is a bad body, an absent one is null.</para>
@@ -76,7 +76,16 @@ public static class StrictJson
     /// member's type, as each call's section says).
     /// </summary>
     /// <exception cref="ProtocolException">The body isn't a valid answer.</exception>
-    public static JsonObject ReadAnswer(ReadOnlySpan<byte> body)
+    public static JsonObject ReadAnswer(ReadOnlySpan<byte> body) => ReadAnswer(body, keepNestedNulls: false);
+
+    /// <summary>
+    /// Reads a federation answer, null at its top refused; with
+    /// <paramref name="keepNestedNulls"/>, the nulls inside it are kept for
+    /// a reader that judges them itself (a hello's version lists, which
+    /// refuse a known part that is null, and ignore a null entry).
+    /// </summary>
+    /// <exception cref="ProtocolException">The body isn't a valid answer.</exception>
+    public static JsonObject ReadAnswer(ReadOnlySpan<byte> body, bool keepNestedNulls)
     {
         var obj = ParseObject(body, nulls: true);
         foreach (var (_, value) in obj)
@@ -87,7 +96,11 @@ public static class StrictJson
             }
         }
 
-        DropNulls(obj);
+        if (!keepNestedNulls)
+        {
+            DropNulls(obj);
+        }
+
         return obj;
     }
 

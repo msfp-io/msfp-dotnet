@@ -39,6 +39,9 @@ public sealed class Discovery
     /// <summary>Its parts member, an object whose known parts are lists, as sent; null when absent.</summary>
     public JsonObject? Parts { get; }
 
+    /// <summary>The versions the document lists, read as a hello's are (core section 10.2).</summary>
+    public Versions Versions => Versions.Read(Core, Parts, (Core is not null, Parts is not null));
+
     /// <summary>Its base path, <see cref="DefaultBase"/> when it gives none.</summary>
     public string Base { get; }
 

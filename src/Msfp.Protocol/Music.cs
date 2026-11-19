@@ -61,13 +61,13 @@ public readonly record struct TitleKey(string Part, string Kind, bool Playable)
     {
         if (VideoKey.TryParse(key, out var v))
         {
-            parsed = new TitleKey("video", v.Kind, v.Playable);
+            parsed = new TitleKey(Versions.PartVideo, v.Kind, v.Playable);
             return true;
         }
 
         if (MusicKey.TryParse(key, out var m))
         {
-            parsed = new TitleKey("music", m.Kind, m.Playable);
+            parsed = new TitleKey(Versions.PartMusic, m.Kind, m.Playable);
             return true;
         }
 
