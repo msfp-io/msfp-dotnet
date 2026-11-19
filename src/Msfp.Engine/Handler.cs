@@ -168,8 +168,23 @@ public sealed partial class MsfpEngine
         }
         catch (ForgottenException f)
         {
-            // A server whose pairing ended: "unknown", signed (core section 7.4).
             req.Verified = f.Verified;
+            // A server whose pairing ended when our key was stolen: its hello
+            // gets the revocation, for 30 days (core section 12.7).
+            var (revocation, replaced) = await RevocationAnswerAsync(req, call, ct).ConfigureAwait(false);
+            if (revocation is not null)
+            {
+                return (req, revocation, null);
+            }
+
+            // One whose pairing ended in a replacement, after those 30 days:
+            // it can't know our new key, so "unknown" unsigned (section 12.7).
+            if (replaced)
+            {
+                return (null, Answer.PlainRefusal, null);
+            }
+
+            // A server whose pairing ended: "unknown", signed (core section 7.4).
             req.Signer = Current();
             return (req, Answer.Refuse(ProblemType.NotFound), null);
         }
@@ -179,7 +194,7 @@ public sealed partial class MsfpEngine
         }
 
         req.Verified = v;
-        req.Ours = OurHost();
+        req.Ours = v.Former ? FormerHost() ?? OurHost() : OurHost();
         var key = "";
         if (v.Known)
         {
@@ -191,6 +206,9 @@ public sealed partial class MsfpEngine
 
             req.Peer = p;
             req.Signer = SignerFor(p);
+            // Which of our addresses it calls: one still on our former is told
+            // of the new one (core section 13.1).
+            await HeardAtAsync(p, v.Former, ct).ConfigureAwait(false);
             // A revoked key is heard for rotate and revoke only (core section 12.6).
             if (p.Suspended is not null && call is not (CallRotate or CallRevoke))
             {
@@ -268,7 +286,7 @@ public sealed partial class MsfpEngine
             Seen = _nonces,
             AdmitAsync = AdmitAsync,
             ForgottenAsync = IsForgottenAsync,
-            Former = () => OurAddress().Former is { } f ? Address.Host(f) : null,
+            Former = FormerHost,
         };
         lock (_keysLock)
         {

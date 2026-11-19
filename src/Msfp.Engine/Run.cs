@@ -24,7 +24,13 @@ public sealed partial class MsfpEngine
     /// but nothing happens with time. Run it in a <c>BackgroundService</c>,
     /// or call <see cref="RunOnceAsync"/> on a schedule of the host's: never both.
     /// </summary>
-    /// <remarks>This preview has no per-second work yet (address moves, scheduled hellos, catalogs, playbacks).</remarks>
+    /// <remarks>
+    /// Every second: this server's new address tried until it answers (then
+    /// announced), and while it can't be called, its scheduled hellos. Every
+    /// hour too: the end of this server's move, peers late to move told
+    /// again, peers' new addresses tried again. This preview has no catalog
+    /// or playback work yet.
+    /// </remarks>
     public async Task RunAsync(CancellationToken ct)
     {
         using var timer = new PeriodicTimer(TickEvery);
@@ -32,19 +38,23 @@ public sealed partial class MsfpEngine
         do
         {
             var now = Now();
-            // A clock set back runs the hourly work again rather than
-            // waiting for the hour it left.
-            if (hourly is null || now - hourly.Value >= TidyEvery || now < hourly.Value)
+            try
             {
-                hourly = now;
-                try
+                // A clock set back runs the hourly work again rather than
+                // waiting for the hour it left.
+                if (hourly is null || now - hourly.Value >= TidyEvery || now < hourly.Value)
                 {
+                    hourly = now;
                     await RunOnceAsync(ct).ConfigureAwait(false);
                 }
-                catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
+                else
                 {
-                    _log.LogWarning(e, "msfp: background work failed");
+                    await TickAsync(ct).ConfigureAwait(false);
                 }
+            }
+            catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                _log.LogWarning(e, "msfp: background work failed");
             }
         }
         while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false));
@@ -53,7 +63,8 @@ public sealed partial class MsfpEngine
     /// <summary>
     /// Does, once, all the background work due now, and waits for it: for
     /// tests with a fake clock, and for hosts that schedule work themselves
-    /// (every few minutes).
+    /// (every second or so for a server that can't be called, whose hellos
+    /// are on a schedule of seconds; every few minutes otherwise).
     /// </summary>
     public async Task RunOnceAsync(CancellationToken ct = default)
     {
@@ -71,10 +82,21 @@ public sealed partial class MsfpEngine
             await tx.TrimForgottenAsync(now - ForgetAfter).ConfigureAwait(false);
         }, ct).ConfigureAwait(false);
         await MaintainKeysAsync(ct).ConfigureAwait(false);
+        await MaintainAddressesAsync(ct).ConfigureAwait(false);
+        await TickAsync(ct).ConfigureAwait(false);
+    }
+
+    // The work of each second: this server's new address tried, its
+    // scheduled hellos sent.
+    private async Task TickAsync(CancellationToken ct)
+    {
+        await ReachAndAnnounceAsync(ct).ConfigureAwait(false);
+        await ScheduledHellosAsync(ct).ConfigureAwait(false);
     }
 
     // What time does to keys (core sections 12.4, 12.6, 12.7): our old key
-    // deleted 30 days after the change began (that change only); a peer
+    // deleted 30 days after the change began (that change only), the key
+    // revoked with no next key 30 days after; a peer
     // suspended 30 days without a valid rotation gone; a peer on our old
     // key told again daily.
     private async Task MaintainKeysAsync(CancellationToken ct)
@@ -84,6 +106,21 @@ public sealed partial class MsfpEngine
         if (k.Old is not null && k.OldSince is { } since && now - since >= KeyOverlap)
         {
             await FinishRotationAsync(k.Old.Public(), ct).ConfigureAwait(false);
+        }
+
+        // The key revoked with no next key: its 30 days of answers over.
+        if (k.Revoked is not null && k.RevokedAt is { } revokedAt && now - revokedAt >= KeyOverlap)
+        {
+            await ChangeServerAsync((_, r) =>
+            {
+                if (r.Revoked is not null && r.RevokedAt == revokedAt)
+                {
+                    r.Revoked = null;
+                    r.RevokedAt = null;
+                }
+
+                return ValueTask.CompletedTask;
+            }, ct).ConfigureAwait(false);
         }
 
         var events = new List<MsfpEvent>();
@@ -107,6 +144,6 @@ public sealed partial class MsfpEngine
         }, ct).ConfigureAwait(false);
         Notify([.. events]);
         await EachPeerAsync(p => p.OurKey == KeyOld && p.Inbound == Inbound.Yes && p.Suspended is null,
-            p => RotateIfDueAsync(p.Id, RotateDaily, ct), ct).ConfigureAwait(false);
+            p => RotateIfDueAsync(p.Id, RotateDaily, ct, background: true), ct).ConfigureAwait(false);
     }
 }

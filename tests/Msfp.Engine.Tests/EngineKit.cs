@@ -255,3 +255,58 @@ internal static class Vectors
 
     public static string Public(string key) => Load("keys.json")["keys"]![key]!["public"]!.GetValue<string>();
 }
+
+/// <summary>What the engine tests share: pairings, raw calls, keys read from a store.</summary>
+internal static class Kit
+{
+    /// <summary>A pairing both operators accepted: a makes the code, b redeems it, a accepts. The peers' IDs: b on a, a on b.</summary>
+    public static async Task<(string BOnA, string AOnB)> LinkAsync(TestServer a, TestServer b)
+    {
+        var fingerprint = (await b.Engine.ServerAsync()).Fingerprint;
+        var (code, _) = await a.Engine.MakeCodeAsync(null);
+        var onB = await b.Engine.RedeemCodeAsync(code);
+        var onA = (await a.Engine.PeersAsync()).Single(p => p.Fingerprint == fingerprint);
+        await a.Engine.AcceptAsync(onA.Id);
+        return (onA.Id, onB.Id);
+    }
+
+    /// <summary>A call to a server, signed with a key, as a peer sends it, at the server's time.</summary>
+    public static async Task<MsfpResponse> SendAsync(TestServer to, MsfpKey signer, string call, byte[] body, string? host = null)
+    {
+        var target = "/api/v1/federation/" + call;
+        var h = new HeaderList().Add("Content-Type", "application/json");
+        Signing.SignRequest("POST", host ?? to.Host, target, body, signer, to.Clock.GetUtcNow()).Apply(h);
+        return await to.Engine.HandleFederationAsync(new MsfpRequest { Method = "POST", Target = target, Headers = h, Body = new MemoryStream(body) });
+    }
+
+    /// <summary>A key of a server, read from its store (the plain sealer of the tests).</summary>
+    public static async Task<MsfpKey> KeyAsync(TestServer s, Func<ServerRecord, byte[]?> pick, string context)
+    {
+        ServerRecord? r = null;
+        await s.Store.ReadAsync(async tx => r = await tx.ServerAsync(), CancellationToken.None);
+        return MsfpKey.FromSeed(await PlainSealer.Instance.OpenAsync(pick(r!)!, context, CancellationToken.None));
+    }
+
+    /// <summary>The server's record.</summary>
+    public static async Task<ServerRecord> ServerRecordAsync(TestServer s)
+    {
+        ServerRecord? r = null;
+        await s.Store.ReadAsync(async tx => r = await tx.ServerAsync(), CancellationToken.None);
+        return r!;
+    }
+
+    public static byte[] Paired { get; } = "{\"state\":\"paired\",\"core\":[1],\"parts\":{}}"u8.ToArray();
+
+    public static string Text(this MsfpResponse r) => System.Text.Encoding.UTF8.GetString(r.Body.Span);
+
+    public static bool Signed(this MsfpResponse r) => r.Header(Signing.HeaderSignature) is not null;
+
+    /// <summary>Moves every clock on by d.</summary>
+    public static void Advance(TimeSpan d, params TestServer[] servers)
+    {
+        foreach (var s in servers)
+        {
+            s.Clock.Advance(d);
+        }
+    }
+}

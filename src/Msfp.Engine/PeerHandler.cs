@@ -37,7 +37,7 @@ internal static class PeerHandler
     // Resolves the host, refuses every address of it MSFP refuses, and
     // connects to the first that answers: the address checked is the one
     // connected to, so a name can't be re-resolved in between.
-    private static async ValueTask<Stream> DialAsync(DnsEndPoint endpoint, bool allowLoopback, CancellationToken ct)
+    internal static async ValueTask<Stream> DialAsync(DnsEndPoint endpoint, bool allowLoopback, CancellationToken ct)
     {
         var addresses = IPAddress.TryParse(endpoint.Host, out var literal)
             ? [literal]

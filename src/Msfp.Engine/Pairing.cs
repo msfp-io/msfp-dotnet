@@ -29,8 +29,9 @@ public sealed partial class MsfpEngine
     public async Task<(string Text, CodeView Code)> MakeCodeAsync(string? note, CancellationToken ct = default)
     {
         var rec = await ServerRecordAsync(ct).ConfigureAwait(false);
-        if (rec.Uncallable)
+        if (rec.Uncallable || SaysUncallable())
         {
+            // Nobody could redeem it (core section 7.5): the other operator makes one.
             throw new MsfpException(MsfpError.NoCodes);
         }
 
@@ -284,20 +285,8 @@ public sealed partial class MsfpEngine
         {
             // Its base path, from its discovery document (core section 11),
             // for every call to it; in the background.
-            _ = Task.Run(async () =>
-            {
-                var b = await FetchBaseAsync(p.Address, CancellationToken.None).ConfigureAwait(false);
-                if (b is not null)
-                {
-                    try
-                    {
-                        await UpdatePeerAsync(p.Id, q => q.Base = b, CancellationToken.None).ConfigureAwait(false);
-                    }
-                    catch (MsfpException)
-                    {
-                    }
-                }
-            }, CancellationToken.None);
+            var (id, at) = (p.Id, p.Address);
+            Background(ct => KeepBaseAsync(id, at, ct));
         }
 
         return Answer.Ok(JsonOut.Object(o => o.String("name", Name()).Bytes("nextCommitment", OurKeys().Commitment)));

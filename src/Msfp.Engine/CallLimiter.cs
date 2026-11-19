@@ -214,4 +214,72 @@ internal sealed class CallLimiter(CallLimits limits)
             }
         }
     }
+
+    // The other side: this server's own calls to a peer. Until when it asked
+    // them to wait, and, after calls it didn't answer, until when calls made
+    // in the background hold off.
+    private sealed class Wait
+    {
+        public DateTimeOffset RetryAt;
+        public DateTimeOffset BackoffAt;
+        public int Failures;
+    }
+
+    private readonly Dictionary<string, Wait> _waits = new(StringComparer.Ordinal);
+
+    // How long this server's background calls hold off after the first call
+    // a peer didn't answer, doubling each time, up to an hour, give or take
+    // a quarter.
+    internal static readonly TimeSpan BackoffFirst = TimeSpan.FromSeconds(2);
+
+    // Whether a call to the peer with key may go now: an operator's call
+    // goes unless the peer asked to wait (a signed retryAfter); a background
+    // one also holds off after calls the peer didn't answer.
+    public bool MayCall(string key, bool background, DateTimeOffset now)
+    {
+        lock (_lock)
+        {
+            return !_waits.TryGetValue(key, out var w) || (now >= w.RetryAt && (!background || now >= w.BackoffAt));
+        }
+    }
+
+    // Keeps what a call to the peer with key gave: a signed answer (status,
+    // and its retryAfter for a 429 or 503), or none.
+    public void Heard(string key, bool answered, int status, int retryAfter, DateTimeOffset now)
+    {
+        lock (_lock)
+        {
+            if (!_waits.TryGetValue(key, out var w))
+            {
+                w = new Wait();
+                _waits[key] = w;
+            }
+
+            var busy = status is 429 or 503;
+            if (answered && busy && retryAfter > 0)
+            {
+                w.RetryAt = now + TimeSpan.FromSeconds(retryAfter);
+            }
+            else if (!answered || busy)
+            {
+                w.Failures++;
+                w.BackoffAt = now + Backoff(w.Failures);
+            }
+            else
+            {
+                w.Failures = 0;
+                w.BackoffAt = default;
+            }
+        }
+    }
+
+    // How long background calls hold off after n calls in a row went unanswered.
+    internal static TimeSpan Backoff(int n)
+    {
+        var most = TimeSpan.FromSeconds(Protocol.RetryAfter.Max);
+        var d = BackoffFirst * Math.Pow(2, Math.Min(n - 1, 20));
+        d = d > most ? most : d;
+        d *= 0.75 + (Random.Shared.NextDouble() / 2);
+        return d > most ? most : d;
+    }
 }

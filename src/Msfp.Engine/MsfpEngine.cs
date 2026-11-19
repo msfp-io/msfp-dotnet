@@ -34,7 +34,7 @@ public sealed partial class MsfpEngine : IDisposable
     private readonly SemaphoreSlim _recordLock = new(1, 1);
     private readonly object _keysLock = new();
     private ServerKeys _keys = null!;
-    private AddressState _addr = new("", null, false, false, null);
+    private AddressState _addr = new("", null, null, false, false, null);
     private Verifier _verifier = null!;
 
     private MsfpEngine(MsfpConfig cfg, ISealer sealer)
@@ -130,7 +130,7 @@ public sealed partial class MsfpEngine : IDisposable
             throw new MsfpException(MsfpError.InvalidAddress, $"Config.Prefix \"{cfg.Prefix}\": {e.Message}", e);
         }
 
-        var engine = new MsfpEngine(cfg, sealer);
+        var engine = new MsfpEngine(cfg, sealer) { _configured = cfg.Address };
         try
         {
             await engine.LoadKeysAsync(ct).ConfigureAwait(false);

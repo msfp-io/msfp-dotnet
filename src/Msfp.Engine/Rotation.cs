@@ -54,21 +54,20 @@ public sealed partial class MsfpEngine
     /// </summary>
     /// <param name="nextKey">The exported next key's text, or null for the seed on the server.</param>
     /// <param name="withoutNext">
-    /// When the next key may be stolen too or is lost: a new key, not by a
-    /// rotation, every pairing ended (case 2). Not built yet in this
-    /// preview: it throws <see cref="NotSupportedException"/>.
+    /// When the next key may be stolen too or is lost: the server makes a
+    /// new key, not by a rotation, and every pairing ends (case 2): peers
+    /// are deleted, their keys forgotten, and no ended is sent, which they
+    /// would refuse from a suspended key. For 30 days, a hello from one of
+    /// them is answered with the revocation, signed with the key revoked,
+    /// so a peer the revoke didn't reach learns it too. Each pairing is
+    /// then made again with a new code.
     /// </param>
     /// <param name="ct">Cancels the action.</param>
-    /// <returns>Whether the server rotated.</returns>
+    /// <returns>Whether the server rotated (false with <paramref name="withoutNext"/>).</returns>
     /// <exception cref="MsfpException"><see cref="MsfpError.NoNextKey"/> (nothing is revoked), <see cref="MsfpError.NotNextKey"/>,
     /// <see cref="MsfpError.RotationUnderWay"/>.</exception>
     public async Task<bool> KeyStolenAsync(string? nextKey = null, bool withoutNext = false, CancellationToken ct = default)
     {
-        if (withoutNext)
-        {
-            throw new NotSupportedException("msfp: a key stolen without its next key is a later phase of msfp-dotnet");
-        }
-
         if (!await _keyAction.WaitAsync(0, ct).ConfigureAwait(false))
         {
             throw new MsfpException(MsfpError.RotationUnderWay);
@@ -76,7 +75,7 @@ public sealed partial class MsfpEngine
 
         try
         {
-            var next = await NextKeyFromAsync(nextKey, ct).ConfigureAwait(false);
+            var next = withoutNext ? null : await NextKeyFromAsync(nextKey, ct).ConfigureAwait(false);
             // A change under way is finished first: every peer left then
             // knows us by the key revoked.
             if (OurKeys().Old is { } old)
@@ -102,6 +101,12 @@ public sealed partial class MsfpEngine
                     _log.LogInformation(e, "msfp: a peer couldn't be told this server's key is revoked: {Peer}", p.Id);
                 }
             }, ct).ConfigureAwait(false);
+            if (next is null)
+            {
+                await ReplaceKeyAsync(stolen, ct).ConfigureAwait(false);
+                return false;
+            }
+
             await RotateToAsync(next, revoked: true, ct).ConfigureAwait(false);
             await TellRotationAsync(ct).ConfigureAwait(false);
             return true;
@@ -186,13 +191,94 @@ public sealed partial class MsfpEngine
                 await tx.PutPeerAsync(p).ConfigureAwait(false);
             }
 
-            foreach (var c in await tx.CodesAsync().ConfigureAwait(false))
-            {
-                await tx.DeleteCodeAsync(c.Id).ConfigureAwait(false);
-            }
+            await WithdrawCodesAsync(tx).ConfigureAwait(false);
         }, ct).ConfigureAwait(false);
         _log.LogInformation("msfp: this server's key changed to {Fingerprint}", next.Fingerprint);
         TellEnded(events);
+    }
+
+    // Deletes every code.
+    internal static async Task WithdrawCodesAsync(IStoreTx tx)
+    {
+        foreach (var c in await tx.CodesAsync().ConfigureAwait(false))
+        {
+            await tx.DeleteCodeAsync(c.Id).ConfigureAwait(false);
+        }
+    }
+
+    // Gives this server a new key and a new next key, with no rotation,
+    // after stolen was revoked with no next key (core section 12.7, case
+    // 2), in one Update: every peer deleted, each key of its history
+    // forgotten as ended by this replacement (ForgottenKey.Revoked, at
+    // RevokedAt), the revoked key kept for its 30 days of answers.
+    private async Task ReplaceKeyAsync(MsfpKey stolen, CancellationToken ct)
+    {
+        var fresh = RandomBytes(32);
+        var after = MsfpKey.FromSeed(RandomBytes(32));
+        var now = NowSecond();
+        var ended = new List<PeerRecord>();
+        await ChangeServerAsync(async (tx, r) =>
+        {
+            ended.Clear();
+            var cur = await OpenKeyAsync(r.Current, SealContext.Current, ct).ConfigureAwait(false);
+            if (!Keys.Same(cur.PublicSpan, stolen.PublicSpan))
+            {
+                throw new MsfpException(MsfpError.RotationUnderWay); // changed meanwhile: nothing is replaced
+            }
+
+            foreach (var p in await tx.PeersAsync().ConfigureAwait(false))
+            {
+                await ForgetPeerAsync(tx, p, now, byReplacement: true).ConfigureAwait(false);
+                ended.Add(p);
+            }
+
+            r.Revoked = await _sealer.SealAsync(stolen.Seed(), SealContext.Revoked, ct).ConfigureAwait(false);
+            r.Current = await _sealer.SealAsync(fresh, SealContext.Current, ct).ConfigureAwait(false);
+            r.Next = await _sealer.SealAsync(after.Seed(), SealContext.Next, ct).ConfigureAwait(false);
+            r.RevokedAt = now;
+            r.NextCommitment = Keys.Commitment(after.PublicSpan);
+            r.Old = null;
+            r.OldSince = null;
+            r.OldRevoked = false;
+            await WithdrawCodesAsync(tx).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
+        _log.LogWarning("msfp: this server has a new key, without its next one: every pairing ended, to be made again: {Fingerprint} {Peers}",
+            Current().Fingerprint, ended.Count);
+        Notify([.. ended.Select(p => new PeerEnded(p.Id, p.Name, false))]);
+    }
+
+    // The answer, for the 30 days after this server's key was revoked with
+    // no next key (core section 12.7, case 2), to a hello from a peer whose
+    // pairing ended in that replacement: a 200 signed with the key
+    // revoked, carrying only the revocation, newly dated; null for any
+    // other call or caller. Replaced says the caller's pairing ended in a
+    // replacement whose 30 days are over (or an earlier one): it gets the
+    // plain unsigned 404, since it can't know the key that replaced the
+    // one it knew.
+    private async Task<(Answer? Answer, bool Replaced)> RevocationAnswerAsync(CallRequest req, string call, CancellationToken ct)
+    {
+        ForgottenKey? f = null;
+        var hash = System.Security.Cryptography.SHA256.HashData(req.Verified!.Key);
+        await _store.ReadAsync(async tx => f = await tx.ForgottenAsync(hash).ConfigureAwait(false), ct).ConfigureAwait(false);
+        if (f is not { Revoked: true })
+        {
+            return (null, false);
+        }
+
+        var k = OurKeys();
+        if (k.Revoked is null || k.RevokedAt is not { } at || f.At != at || Now() - at >= KeyOverlap)
+        {
+            return (null, true);
+        }
+
+        if (call != CallHello)
+        {
+            return (null, false);
+        }
+
+        req.Signer = k.Revoked;
+        var revocation = Rotations.SignRevocation(k.Revoked, Now());
+        return (Answer.Ok(JsonOut.Object(o => o.Object("revocation", revocation.WriteBody))), true);
     }
 
     private async Task<byte[]> OpenSeedAsync(byte[] sealedSeed, string context, CancellationToken ct)
@@ -225,7 +311,7 @@ public sealed partial class MsfpEngine
     // spacing ago (zero: whatever the last), and gives the peer as it is
     // then (null when it is gone). Of contacts at once, one only sends it:
     // the time sent is claimed in an Update first.
-    private async Task<PeerRecord?> RotateIfDueAsync(string id, TimeSpan spacing, CancellationToken ct)
+    private async Task<PeerRecord?> RotateIfDueAsync(string id, TimeSpan spacing, CancellationToken ct, bool background = false)
     {
         var now = Now();
         PeerRecord? p = null;
@@ -264,11 +350,7 @@ public sealed partial class MsfpEngine
         var rot = Rotations.SignRotation(k.Old, k.Current, k.Commitment, now);
         try
         {
-            var r = await ExchangeAsync(p!, CallRotate, rot.Body(), k.Old, ct).ConfigureAwait(false);
-            if (r.Unsigned)
-            {
-                throw new MsfpException(MsfpError.Unreachable, $"an unsigned refusal: {r.Status}");
-            }
+            var r = await CallAsync(p!, CallRotate, rot.Body(), ct, background).ConfigureAwait(false);
 
             string? state = null;
             if (r.Status is 200 or 202)
@@ -454,22 +536,13 @@ public sealed partial class MsfpEngine
             return;
         }
 
-        _ = Task.Run(async () =>
-        {
-            using var cts = new CancellationTokenSource(2 * CallTimeout);
-            try
-            {
-                await RotateIfDueAsync(p.Id, spacing, cts.Token).ConfigureAwait(false);
-            }
-            catch (Exception e) when (e is OperationCanceledException or ObjectDisposedException)
-            {
-            }
-        }, CancellationToken.None);
+        var id = p.Id;
+        Background(ct => RotateIfDueAsync(id, spacing, ct, background: true));
     }
 
     // A contact with p, a peer on our old key: a rotate sent first, unless
     // one went within the spacing (core section 12.4).
-    private async Task<PeerRecord> RotateAtContactAsync(PeerRecord p, CancellationToken ct)
+    private async Task<PeerRecord> RotateAtContactAsync(PeerRecord p, CancellationToken ct, bool background = false)
     {
         var spacing = p.RotationAnswer == Rotations.StatePending ? RotatePendingSpacing : RotateSpacing;
         if (p.RotateSent is { } sent && Now() - sent < spacing)
@@ -477,6 +550,6 @@ public sealed partial class MsfpEngine
             return p;
         }
 
-        return await RotateIfDueAsync(p.Id, spacing, ct).ConfigureAwait(false) ?? p;
+        return await RotateIfDueAsync(p.Id, spacing, ct, background).ConfigureAwait(false) ?? p;
     }
 }

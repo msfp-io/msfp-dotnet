@@ -6,22 +6,24 @@ namespace Msfp;
 
 public sealed partial class MsfpEngine
 {
-    // The hello this server sends or answers p in state (paired or
-    // waiting): its versions and the address it names; its pins, or, while
-    // it can't be called, inbound false and, in its requests, the key it
-    // knows p by; to a peer that knows our current key, our commitment.
-    // Core and parts are always sent, parts {} when none is on (core
-    // section 10.2).
-    private byte[] OurHello(string state, PeerRecord? p, bool answering, bool callsFailed = false)
+    // The hello this server sends or answers (answering) p in state (paired
+    // or waiting): its versions and the address it names; its pins, or,
+    // while it can't be called, inbound false and, in its requests, the key
+    // it knows p by (knownKey) and p's rotation it waits on; to a peer that
+    // knows our current key, our commitment (null p: none). Core and parts
+    // are always sent, parts {} when none is on (core section 10.2). An
+    // answer adds what Pullable gives, and callsFailed.
+    private async Task<byte[]> OurHelloAsync(string state, PeerRecord? p, bool answering, CancellationToken ct,
+        (Rotation? Rotation, Revocation? Revocation) pulled = default, bool callsFailed = false)
     {
         var named = Named();
         var uncallable = Uncallables.Valid(named);
-        var pins = uncallable ? null : _cfg.Pins is { Count: > 0 } list ? Pins.Clean(list) : null;
+        var pins = uncallable ? null : await OwnPinsAsync(answering, ct).ConfigureAwait(false);
         return JsonOut.Object(o =>
         {
             o.String("state", state);
             OurVersions().WriteTo(o);
-            o.Strings("certificates", pins);
+            o.Strings("certificates", pins is { Count: > 0 } ? pins : null);
             o.String("address", named);
             o.Bytes("nextCommitment", p is not null && string.IsNullOrEmpty(p.OurKey) ? OurKeys().Commitment : null);
             if (uncallable)
@@ -30,7 +32,25 @@ public sealed partial class MsfpEngine
                 if (!answering && p is not null)
                 {
                     o.Bytes("knownKey", p.Key);
+                    if (p.Pending is { Old: { } old } && Keys.Same(old, p.Key))
+                    {
+                        o.String("rotation", Rotations.StatePending);
+                    }
+                    else if (p.Refused is not null)
+                    {
+                        o.String("rotation", Hello.RotationRefused);
+                    }
                 }
+            }
+
+            if (pulled.Rotation is { } rot)
+            {
+                o.Object("rotation", rot.WriteBody);
+            }
+
+            if (pulled.Revocation is { } rev)
+            {
+                o.Object("revocation", rev.WriteBody);
             }
 
             o.Bool("callsFailed", answering && callsFailed ? true : null);
@@ -75,6 +95,7 @@ public sealed partial class MsfpEngine
         }
 
         var events = new List<MsfpEvent>();
+        var confirm = false;
         PeerRecord now;
         try
         {
@@ -86,7 +107,9 @@ public sealed partial class MsfpEngine
                     events.AddRange(TheyPaired(q));
                 }
 
-                events.AddRange(KeepHello(q, msg));
+                var kept = KeepHello(q, msg);
+                events.AddRange(kept.Events);
+                confirm = kept.Confirm;
                 q.Seen = NowSecond();
             }, ct).ConfigureAwait(false);
         }
@@ -96,7 +119,19 @@ public sealed partial class MsfpEngine
         }
 
         Notify([.. events]);
-        return Answer.Ok(OurHello(ViewOf(now), now, answering: true));
+        if (confirm)
+        {
+            ConfirmSoon(p.Id);
+        }
+
+        // From a peer that can't be called: which of our keys it knows us by
+        // (core section 12.4); then our rotation for it to pull.
+        if (msg.Uncallable)
+        {
+            now = await KnownKeyAsync(req, now, msg, ct).ConfigureAwait(false);
+        }
+
+        return Answer.Ok(await OurHelloAsync(ViewOf(now), now, answering: true, ct, Pullable(now), CallsFailedTo(now.Id)).ConfigureAwait(false));
     }
 
     // A peer saying it has accepted (core sections 7.1 and 9.2): if we were
@@ -117,31 +152,21 @@ public sealed partial class MsfpEngine
     }
 
     // Keeps what a peer's signed hello, request or answer, says of it:
-    // whether it can be called, its address, its pins, its versions. Its
-    // nextCommitment is ignored: a commitment comes from pair or a rotation
-    // only (core section 12.5).
-    private List<MsfpEvent> KeepHello(PeerRecord p, Hello h)
+    // whether it can be called (first: where its address is checked, or
+    // stored at once, depends on it), its address (KeepAddress: confirm says
+    // a confirmation is due), its pins, its versions. Its nextCommitment is
+    // ignored: a commitment comes from pair or a rotation only (core section
+    // 12.5).
+    private (List<MsfpEvent> Events, bool Confirm) KeepHello(PeerRecord p, Hello h)
     {
-        var events = new List<MsfpEvent>();
-        var inbound = h.Uncallable ? Inbound.No : Inbound.Yes;
-        if (p.Inbound != inbound)
-        {
-            var was = p.Inbound;
-            p.Inbound = inbound;
-            if (was.Value.Length > 0)
-            {
-                events.Add(new InboundChanged(p.Id, p.Name, inbound));
-            }
-        }
-
-        // An address change (core section 13.2) is confirmed by a hello
-        // there in Go's engine; this first cut keeps the stored one and
-        // records nothing (a later phase).
+        var events = KeepInbound(p, h.Uncallable);
+        var (moved, confirm) = KeepAddress(p, h.Address);
+        events.AddRange(moved);
         p.Pins = [.. Pins.Clean(h.Certificates)];
         var kept = ToRecord(h.Versions);
         if (p.Versions is not null && SameVersions(p.Versions, kept))
         {
-            return events;
+            return (events, confirm);
         }
 
         p.Versions = kept;
@@ -151,7 +176,22 @@ public sealed partial class MsfpEngine
         }
 
         events.Add(new VersionsChanged(p.Id, p.Name));
-        return events;
+        return (events, confirm);
+    }
+
+    // Keeps a hello answer's callsFailed: shown on the panel (CallsFailed,
+    // when it turns true), nothing else (core section 7.5).
+    private List<MsfpEvent> KeepCallsFailed(PeerRecord p, bool failed)
+    {
+        var was = p.CallsFailed;
+        p.CallsFailed = failed;
+        if (failed && !was)
+        {
+            _log.LogInformation("msfp: a peer says this server's calls to it couldn't connect; maybe this server can't be called: {Peer}", p.Id);
+            return [new CallsFailed(p.Id, p.Name)];
+        }
+
+        return [];
     }
 
     private static bool SameVersions(WireVersions a, WireVersions b) =>
@@ -213,12 +253,7 @@ public sealed partial class MsfpEngine
         await _store.UpdateAsync(async tx =>
         {
             p = await tx.PeerAsync(id).ConfigureAwait(false) ?? throw new MsfpException(MsfpError.NotFound);
-            foreach (var k in HistoryKeys(p))
-            {
-                await tx.ForgetAsync(new ForgottenKey { KeyHash = SHA256.HashData(k), At = now }).ConfigureAwait(false);
-            }
-
-            await tx.DeletePeerAsync(p.Id).ConfigureAwait(false);
+            await ForgetPeerAsync(tx, p, now, byReplacement: false).ConfigureAwait(false);
         }, ct).ConfigureAwait(false);
         _log.LogInformation("msfp: pairing ended: {Peer} {Name}", p!.Id, p.Name);
         Notify(new PeerEnded(p.Id, p.Name, false));
@@ -237,6 +272,18 @@ public sealed partial class MsfpEngine
         {
             _log.LogInformation(e, "msfp: the other server couldn't be told the pairing ended: {Peer}", p.Id);
         }
+    }
+
+    // Deletes p in tx, every key of its history forgotten at now (core
+    // section 7.4, step 1); byReplacement marks them ended by ReplaceKeyAsync.
+    private static async Task ForgetPeerAsync(IStoreTx tx, PeerRecord p, DateTimeOffset now, bool byReplacement)
+    {
+        foreach (var k in HistoryKeys(p))
+        {
+            await tx.ForgetAsync(new ForgottenKey { KeyHash = SHA256.HashData(k), At = now, Revoked = byReplacement }).ConfigureAwait(false);
+        }
+
+        await tx.DeletePeerAsync(p.Id).ConfigureAwait(false);
     }
 
     // Every key of a peer's history (core section 7.4).
@@ -271,15 +318,24 @@ public sealed partial class MsfpEngine
 
     /// <summary>
     /// Sends a peer a hello now, telling it where the pairing stands here,
-    /// and keeps its answer.
+    /// and applies its answer: an answer carrying a valid revocation of the
+    /// peer's key suspends it, and nothing else of it is kept.
     /// </summary>
     /// <exception cref="MsfpException"><see cref="MsfpError.NotFound"/>, <see cref="MsfpError.Uncallable"/>,
     /// <see cref="MsfpError.Suspended"/>, <see cref="MsfpError.KeyLost"/>, <see cref="MsfpError.Unreachable"/>,
     /// <see cref="MsfpError.Unknown"/> (its signed 404: it doesn't know us, and is marked gone).</exception>
-    public async Task<PeerView> CheckAsync(string id, CancellationToken ct = default)
+    public Task<PeerView> CheckAsync(string id, CancellationToken ct = default) => CheckAsync(id, background: false, ct);
+
+    // CheckAsync, as the operator asks it, or in the background. While this
+    // server can't be called, an answer's rotation is applied too (after its
+    // revocation), and of a suspended peer's answers, that only (core
+    // sections 12.4 and 12.6).
+    internal async Task<PeerView> CheckAsync(string id, bool background, CancellationToken ct)
     {
         var rec = await PeerRecordAsync(id, ct).ConfigureAwait(false);
-        var r = await CallAsync(rec, CallHello, OurHello(ViewOf(rec), rec, answering: false), ct).ConfigureAwait(false);
+        var uncallable = SaysUncallable();
+        var r = await CallAsync(rec, CallHello, await OurHelloAsync(ViewOf(rec), rec, answering: false, ct).ConfigureAwait(false), ct, background)
+            .ConfigureAwait(false);
         var events = new List<MsfpEvent>();
         switch (r.Status)
         {
@@ -298,25 +354,53 @@ public sealed partial class MsfpEngine
                     throw new MsfpException(MsfpError.Unreachable, e.Message, e);
                 }
 
+                var pulled = ans.Pull(rec.Key, Now());
+                if (rec.Suspended is not null || pulled.Revocation is not null)
+                {
+                    // A revocation, in an answer signed with the key it revokes:
+                    // suspended, and nothing else of that answer kept (core
+                    // sections 9.2, 12.6 and 12.7). Any server applies it; one
+                    // that can't be called then applies its rotation, the only
+                    // thing it reads of a suspended peer's answers.
+                    if (pulled.Revocation is not null && rec.Suspended is null)
+                    {
+                        Notify([.. await RevokedAsync(id, rec.Key, ct).ConfigureAwait(false)]);
+                    }
+
+                    if (uncallable)
+                    {
+                        await PulledRotationAsync(id, pulled.Rotation, ct).ConfigureAwait(false);
+                    }
+
+                    return await PeerAsync(id, ct).ConfigureAwait(false);
+                }
+
+                var confirm = false;
                 await UpdatePeerAsync(id, q =>
                 {
                     events.Clear();
-                    events.AddRange(KeepHello(q, ans));
+                    var kept = KeepHello(q, ans);
+                    events.AddRange(kept.Events);
+                    confirm = kept.Confirm;
                     if (ans.State == Hello.StatePaired)
                     {
                         events.AddRange(TheyPaired(q));
                     }
 
-                    var was = q.CallsFailed;
-                    q.CallsFailed = ans.CallsFailed;
-                    if (ans.CallsFailed && !was)
-                    {
-                        events.Add(new CallsFailed(q.Id, q.Name));
-                    }
-
+                    events.AddRange(KeepCallsFailed(q, ans.CallsFailed));
                     q.Seen = NowSecond();
                 }, ct).ConfigureAwait(false);
                 Notify([.. events]);
+                if (confirm)
+                {
+                    ConfirmSoon(id);
+                }
+
+                if (uncallable)
+                {
+                    await PulledRotationAsync(id, pulled.Rotation, ct).ConfigureAwait(false);
+                }
+
                 return await PeerAsync(id, ct).ConfigureAwait(false);
             case 404:
                 // It doesn't know us, or suspended our key: gone (core section
@@ -328,12 +412,93 @@ public sealed partial class MsfpEngine
                     {
                         q.State = PeerState.Gone;
                         events.Add(new PeerGone(q.Id, q.Name));
+                        _log.LogInformation("msfp: a peer no longer knows this server: {Peer} {Name}", q.Id, q.Name);
                     }
                 }, ct).ConfigureAwait(false);
                 Notify([.. events]);
                 throw new MsfpException(MsfpError.Unknown);
             default:
                 throw Problems.RefusalError(r.Status, r.Problem ?? "");
+        }
+    }
+
+    // Applies a rotation pulled from a hello answer, checked (Hello.Pull), as
+    // a rotate would be (core section 12.4, step 2): once the peer's new key
+    // is current, the next hello goes at once, with knownKey the new key
+    // (step 3).
+    private async Task PulledRotationAsync(string id, Rotation? rot, CancellationToken ct)
+    {
+        if (rot is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (await ReceiveRotationAsync(id, rot, ct).ConfigureAwait(false) == Rotations.StateRotated)
+            {
+                HelloNow(id);
+            }
+        }
+        catch (MsfpException e)
+        {
+            _log.LogWarning(e, "msfp: a peer's change of key couldn't be kept: {Peer}", id);
+        }
+    }
+
+    // What a hello answer to p, a peer that can't be called, adds that it
+    // can't be sent otherwise (core sections 12.4 and 12.6): while p knows us
+    // by our old key, our rotation statement, newly dated, and when that key
+    // was revoked, the revocation, newly dated too. Both travel only in
+    // answers signed with the old key.
+    private (Rotation? Rotation, Revocation? Revocation) Pullable(PeerRecord p)
+    {
+        var k = OurKeys();
+        if (p.Inbound != Inbound.No || p.OurKey != KeyOld || k.Old is null)
+        {
+            return default;
+        }
+
+        var now = Now();
+        return (Rotations.SignRotation(k.Old, k.Current, k.Commitment, now), k.OldRevoked ? Rotations.SignRevocation(k.Old, now) : null);
+    }
+
+    // Reads, from the hello of p, a peer that can't be called, which of our
+    // keys it knows us by (core section 12.4, step 4): during a change, the
+    // new one means p moved, and the answer is signed with it already; the
+    // old one, with pending or refused, is its answer to our rotation. A key
+    // that is neither of ours is ignored.
+    private async Task<PeerRecord> KnownKeyAsync(CallRequest req, PeerRecord p, Hello h, CancellationToken ct)
+    {
+        var k = OurKeys();
+        if (p.OurKey != KeyOld || h.KnownKey is null || k.Old is null)
+        {
+            return p;
+        }
+
+        if (Keys.Same(h.KnownKey, k.Current.PublicSpan))
+        {
+            if (await PeerMovedAsync(p.Id, h.KnownKey, ct).ConfigureAwait(false))
+            {
+                req.Signer = k.Current;
+            }
+        }
+        else if (Keys.Same(h.KnownKey, k.Old.PublicSpan) && h.RotationState is { } state)
+        {
+            await RotationAnswerAsync(p.Id, k.Current.Public(), state, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            return p;
+        }
+
+        try
+        {
+            return await PeerRecordAsync(p.Id, ct).ConfigureAwait(false);
+        }
+        catch (MsfpException)
+        {
+            return p;
         }
     }
 }

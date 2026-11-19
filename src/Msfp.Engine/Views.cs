@@ -61,6 +61,18 @@ public sealed record PeerView
 
     /// <summary>What it lets this server use of it, as its last libraries answer said; null until it did.</summary>
     public Limits? TheirLimits { get; init; }
+
+    /// <summary>During this server's move, announced: it still signs for our former address.</summary>
+    public bool NotMoved { get; init; }
+
+    /// <summary>It hasn't moved after some days (core section 13.1).</summary>
+    public bool MoveLate { get; init; }
+
+    /// <summary>Its new address being confirmed; null for none.</summary>
+    public MoveView? Moving { get; init; }
+
+    /// <summary>Its last answer to our rotate while it is on our old key: "pending" or "refused"; "" for none.</summary>
+    public string RotationAnswer { get; init; } = "";
 }
 
 /// <summary>A peer's key the operator is shown: its fingerprint, and when.</summary>
@@ -68,20 +80,78 @@ public sealed record PeerView
 /// <param name="At">When.</param>
 public sealed record KeyNotice(string Fingerprint, DateTimeOffset At);
 
+/// <summary>A peer's new address being confirmed (core section 13.2).</summary>
+/// <param name="Address">The address it named.</param>
+/// <param name="Since">When it first named it.</param>
+/// <param name="FailingSince">When the confirmation began failing; null while it hasn't failed.</param>
+/// <param name="Warn">A day of failures: the operator is warned.</param>
+public sealed record MoveView(string Address, DateTimeOffset Since, DateTimeOffset? FailingSince, bool Warn);
+
 /// <summary>What the panel shows of this server.</summary>
-/// <param name="Fingerprint">The current key's.</param>
-/// <param name="Address">Where this server is now.</param>
-/// <param name="Named">What its hellos name.</param>
-/// <param name="Uncallable">The operator's "this server can't be called".</param>
-/// <param name="NextKey">The committed next key's fingerprint.</param>
-/// <param name="NextOnServer">Whether the next key's seed is still here.</param>
-public sealed record ServerView(string Fingerprint, string Address, string Named, bool Uncallable, string NextKey, bool NextOnServer);
+public sealed record ServerView
+{
+    /// <summary>The current key's fingerprint.</summary>
+    public required string Fingerprint { get; init; }
+
+    /// <summary>Where this server is now (its address of the .invalid form while it can't be called).</summary>
+    public required string Address { get; init; }
+
+    /// <summary>What its hellos name: its former address while the new one isn't reached yet.</summary>
+    public required string Named { get; init; }
+
+    /// <summary>The address it moved from, still accepted; "" for no move under way (or one from the .invalid form).</summary>
+    public string Former { get; init; } = "";
+
+    /// <summary>When the move began; null for no move under way.</summary>
+    public DateTimeOffset? MovedAt { get; init; }
+
+    /// <summary>The new address doesn't answer yet, so peers aren't told.</summary>
+    public bool Waiting { get; init; }
+
+    /// <summary>During a move, the peers that aren't gone which sign for the new address.</summary>
+    public int PeersMoved { get; init; }
+
+    /// <summary>During a move, the peers that aren't gone.</summary>
+    public int PeersToMove { get; init; }
+
+    /// <summary>The operator's "this server can't be called".</summary>
+    public bool Uncallable { get; init; }
+
+    /// <summary>The discovery document is served.</summary>
+    public bool Discovery { get; init; }
+
+    /// <summary>The committed next key's fingerprint (from its commitment, core section 4.2).</summary>
+    public required string NextKey { get; init; }
+
+    /// <summary>Whether the next key's seed is still here.</summary>
+    public bool NextOnServer { get; init; }
+
+    /// <summary>When this server's change of key began; null when none is under way.</summary>
+    public DateTimeOffset? RotationSince { get; init; }
+
+    /// <summary>How many peers still know this server by its old key.</summary>
+    public int NotRotated { get; init; }
+
+    /// <summary>
+    /// When this server's key was revoked with no next key; for 30 days,
+    /// former peers' hellos get the revocation. Null for none.
+    /// </summary>
+    public DateTimeOffset? RevokedAt { get; init; }
+
+    /// <summary>The core versions spoken.</summary>
+    public IReadOnlyList<int> Core { get; init; } = [];
+
+    /// <summary>The parts served, with their versions.</summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<int>> Parts { get; init; } = new Dictionary<string, IReadOnlyList<int>>();
+}
 
 public sealed partial class MsfpEngine
 {
     internal PeerView View(PeerRecord p)
     {
         var agreed = Agreed(p);
+        var a = OurAddress();
+        var notMoved = a.Former is not null && a.Reached && NotMoved(p, Address.Host(a.Address));
         return new PeerView
         {
             Id = p.Id, Name = p.Name, Address = p.Address, Fingerprint = Keys.Fingerprint(p.Key), State = p.State,
@@ -91,6 +161,8 @@ public sealed partial class MsfpEngine
             OurKey = p.OurKey ?? "",
             Pending = p.Pending?.New is { } pk ? new KeyNotice(Keys.Fingerprint(pk), DateTimeOffset.FromUnixTimeSeconds(p.Pending.Date)) : null,
             Refused = p.Refused is { } rk ? new KeyNotice(Keys.Fingerprint(rk.Key), rk.At) : null, Limits = p.Limits with { }, TheirLimits = p.TheirLimits is null ? null : p.TheirLimits with { },
+            RotationAnswer = p.RotationAnswer ?? "", NotMoved = notMoved, MoveLate = notMoved && a.MovedAt is { } at && Now() - at >= MoveLate,
+            Moving = p.Move is { } m ? new MoveView(m.Address, m.Since, m.FailingSince, new AddressMove(m.Address, null, m.FailingSince).Warn(Now())) : null,
         };
     }
 
@@ -112,8 +184,21 @@ public sealed partial class MsfpEngine
     public async Task<ServerView> ServerAsync(CancellationToken ct = default)
     {
         var r = await ServerRecordAsync(ct).ConfigureAwait(false);
-        var a = OurAddress();
-        return new ServerView(Current().Fingerprint, a.Uncallable ? a.UncallableAddress ?? a.Address : a.Address, Named(),
-            a.Uncallable, Keys.CommitmentFingerprint(r.NextCommitment ?? []), r.Next is not null);
+        IReadOnlyList<PeerRecord> peers = [];
+        await _store.ReadAsync(async tx => peers = await tx.PeersAsync().ConfigureAwait(false), ct).ConfigureAwait(false);
+        var moving = !string.IsNullOrEmpty(r.Former);
+        var host = Address.Host(r.Address);
+        var v = OurVersions();
+        return new ServerView
+        {
+            Fingerprint = Current().Fingerprint, Address = r.Address, Named = Named(), Uncallable = r.Uncallable, Discovery = _discovery,
+            NextKey = Keys.CommitmentFingerprint(r.NextCommitment ?? []), NextOnServer = r.Next is not null,
+            RotationSince = r.Old is null ? null : r.OldSince, NotRotated = peers.Count(p => p.OurKey == KeyOld),
+            RevokedAt = r.RevokedAt, Core = v.Core, Parts = v.Parts,
+            Former = moving && !Uncallables.Valid(r.Former) ? r.Former! : "",
+            MovedAt = moving ? r.MovedAt : null, Waiting = moving && !r.Reached,
+            PeersToMove = moving ? peers.Count(p => p.State != PeerState.Gone) : 0,
+            PeersMoved = moving ? peers.Count(p => p.State != PeerState.Gone && !NotMoved(p, host)) : 0,
+        };
     }
 }

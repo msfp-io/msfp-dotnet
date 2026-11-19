@@ -166,6 +166,12 @@ public sealed class MsfpException : Exception
     public MsfpException(MsfpError code, string? detail, Exception? inner)
         : base(MessageOf(code, detail, inner), inner) => Code = code;
 
+    /// <summary>For <see cref="MsfpError.Unreachable"/>: the call couldn't connect at all (no route, refused, timed out, a name that doesn't resolve, TLS failing).</summary>
+    internal bool NoConnection { get; init; }
+
+    /// <summary>For <see cref="MsfpError.Unreachable"/>: an unsigned refusal, the peer doesn't hear the key the call was signed with; its status.</summary>
+    internal int NotHeard { get; init; }
+
     /// <summary>An error of code Internal (the forms .NET expects of an exception).</summary>
     public MsfpException()
         : this(MsfpError.Internal)
