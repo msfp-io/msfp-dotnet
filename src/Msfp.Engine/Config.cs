@@ -95,6 +95,16 @@ public sealed record MsfpConfig
     /// <summary>Makes connections to peers; the engine's checked one when null.</summary>
     public IDialer? Dialer { get; init; }
 
+    /// <summary>
+    /// The HTTP handler the engine's calls to peers go through, in place of
+    /// its own (which connects through <see cref="Dialer"/>, refuses local
+    /// destinations, checks certificates as core section 3.2 says, never
+    /// follows redirects, asks no compression and uses no proxy). For tests
+    /// and for hosts with a transport of their own, which must keep those
+    /// rules. Never disposed by the engine.
+    /// </summary>
+    public System.Net.Http.HttpMessageHandler? Transport { get; init; }
+
     /// <summary>Is told the engine's events; without one they are only logged.</summary>
     public INotifier? Notifier { get; init; }
 
