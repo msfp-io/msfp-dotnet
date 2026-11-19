@@ -50,12 +50,23 @@ public sealed record PeerView
     /// <summary>What it knows this server by: <see cref="MsfpEngine.KeyCurrent"/>, <see cref="MsfpEngine.KeyOld"/> or <see cref="MsfpEngine.KeyLost"/>.</summary>
     public string OurKey { get; init; } = "";
 
+    /// <summary>A new key of its waiting for the operator to confirm (<see cref="MsfpEngine.ConfirmRotationAsync"/>), with the statement's date; null for none.</summary>
+    public KeyNotice? Pending { get; init; }
+
+    /// <summary>A rotation of its refused, and when (<see cref="MsfpEngine.DismissRefusedAsync"/>); null for none.</summary>
+    public KeyNotice? Refused { get; init; }
+
     /// <summary>What it may use here.</summary>
     public Limits Limits { get; init; } = new();
 
     /// <summary>What it lets this server use of it, as its last libraries answer said; null until it did.</summary>
     public Limits? TheirLimits { get; init; }
 }
+
+/// <summary>A peer's key the operator is shown: its fingerprint, and when.</summary>
+/// <param name="Fingerprint">The key's fingerprint.</param>
+/// <param name="At">When.</param>
+public sealed record KeyNotice(string Fingerprint, DateTimeOffset At);
 
 /// <summary>What the panel shows of this server.</summary>
 /// <param name="Fingerprint">The current key's.</param>
@@ -77,7 +88,9 @@ public sealed partial class MsfpEngine
             Created = p.Created, Paired = p.Paired, Seen = p.Seen, Suspended = p.Suspended,
             Core = agreed?.Core ?? 0, Parts = agreed?.Parts ?? new Dictionary<string, int>(),
             Inbound = p.Inbound, CallsFailed = p.CallsFailed, CommitmentFrom = p.CommitmentFrom ?? "",
-            OurKey = p.OurKey ?? "", Limits = p.Limits with { }, TheirLimits = p.TheirLimits is null ? null : p.TheirLimits with { },
+            OurKey = p.OurKey ?? "",
+            Pending = p.Pending?.New is { } pk ? new KeyNotice(Keys.Fingerprint(pk), DateTimeOffset.FromUnixTimeSeconds(p.Pending.Date)) : null,
+            Refused = p.Refused is { } rk ? new KeyNotice(Keys.Fingerprint(rk.Key), rk.At) : null, Limits = p.Limits with { }, TheirLimits = p.TheirLimits is null ? null : p.TheirLimits with { },
         };
     }
 

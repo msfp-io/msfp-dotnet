@@ -125,6 +125,58 @@ public sealed class VectorTests
         Assert.Single(recA.Pins!);
     }
 
+    private static JsonObject KeyVector(string file) => Vectors.Load(file)["exchange"]!.AsObject();
+
+    // rotation.json: A rotates from a to a2, committing to a3; B, which
+    // holds A's commitment to a2 from the pair, moves at once and answers
+    // rotated, byte for byte.
+    [Fact]
+    public async Task RotateThroughB()
+    {
+        var (_, _, b, _, onB, _) = await NewPairAsync();
+        var want = KeyVector("rotation.json");
+        b.Clock.Set(1800100000);
+        var res = await ServeAsync(b.Engine, want);
+        Assert.Equal(want["status"]!.GetValue<int>(), res.Status);
+        Assert.Equal(want.S("answerBody"), Encoding.UTF8.GetString(res.Body.Span));
+        Assert.Equal(want.S("answerSignature"), res.Header(Signing.HeaderSignature));
+        Assert.Equal(want.S("answerContentType"), res.Header("Content-Type"));
+        var rec = await b.RecordAsync(onB.Id);
+        Assert.Equal(Vectors.Public("a2"), Base64UrlText.Encode(rec.Key));
+        Assert.Equal(Vectors.Public("a"), Base64UrlText.Encode(rec.PreviousKey!));
+        Assert.Equal("rotation", rec.CommitmentFrom);
+        Assert.Single(b.Events.Of<PeerRotated>());
+        Assert.Equal("KGOK-5E7J-HLIB-DV4F-GVMJ-IQC6", (await b.Engine.PeerAsync(onB.Id)).Fingerprint);
+    }
+
+    // revocation.json: A revokes a; B suspends it and answers suspended,
+    // byte for byte. Then only rotate and revoke are heard from a.
+    [Fact]
+    public async Task RevokeThroughB()
+    {
+        var (_, _, b, _, onB, _) = await NewPairAsync();
+        var want = KeyVector("revocation.json");
+        b.Clock.Set(1800200000);
+        var res = await ServeAsync(b.Engine, want);
+        Assert.Equal(want["status"]!.GetValue<int>(), res.Status);
+        Assert.Equal(want.S("answerBody"), Encoding.UTF8.GetString(res.Body.Span));
+        Assert.Equal(want.S("answerSignature"), res.Header(Signing.HeaderSignature));
+        Assert.NotNull((await b.RecordAsync(onB.Id)).Suspended);
+        Assert.Single(b.Events.Of<PeerSuspended>());
+        // A hello from the suspended key: a signed 404.
+        var h = new HeaderList().Add("Content-Type", "application/json");
+        var body = "{\"state\":\"paired\"}"u8.ToArray();
+        var key = Msfp.Protocol.MsfpKey.FromSeed(Convert.FromHexString(Vectors.Seed("a")));
+        Signing.SignRequest("POST", "192.0.2.10:8096", "/api/v1/federation/hello", body, key, b.Clock.GetUtcNow()).Apply(h);
+        res = await b.Engine.HandleFederationAsync(new MsfpRequest
+        {
+            Method = "POST", Target = "/api/v1/federation/hello", Headers = h, Body = new MemoryStream(body),
+        });
+        Assert.Equal(404, res.Status);
+        Assert.False(res.PlainNotFound);
+        Assert.NotNull(res.Header(Signing.HeaderSignature));
+    }
+
     [Fact]
     public async Task TamperedAnswersRefused()
     {

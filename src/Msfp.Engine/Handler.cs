@@ -129,6 +129,8 @@ public sealed partial class MsfpEngine
     {
         CallPair => await PairAsync(req, ct).ConfigureAwait(false),
         CallHello => await HelloAsync(req, ct).ConfigureAwait(false),
+        CallRotate => await RotateAsync(req, ct).ConfigureAwait(false),
+        CallRevoke => await RevokeAsync(req, ct).ConfigureAwait(false),
         _ => Answer.Refuse(ProblemType.NotSupported),
     };
 
