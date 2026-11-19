@@ -24,7 +24,7 @@ internal sealed class AspNetHeaders(IHeaderDictionary headers) : IHeaderReader
 /// <summary>Two engines behind real Kestrel servers over TLS, with self-signed certificates, pairing.</summary>
 public sealed class KestrelTests
 {
-    private static X509Certificate2 SelfSigned()
+    internal static X509Certificate2 SelfSigned()
     {
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var req = new CertificateRequest("CN=127.0.0.1", key, HashAlgorithmName.SHA256);
