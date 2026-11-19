@@ -333,6 +333,15 @@ public sealed class Verifier
     public Func<byte[], bool>? Forgotten { get; init; }
 
     /// <summary>
+    /// <see cref="Admit"/> for a host whose lookups are asynchronous (a
+    /// database): used by <see cref="CheckAsync"/>, before <see cref="Admit"/>.
+    /// </summary>
+    public Func<byte[], CancellationToken, ValueTask<Admission>>? AdmitAsync { get; init; }
+
+    /// <summary><see cref="Forgotten"/>, asynchronous: used by <see cref="CheckAsync"/>, before <see cref="Forgotten"/>.</summary>
+    public Func<byte[], CancellationToken, ValueTask<bool>>? ForgottenAsync { get; init; }
+
+    /// <summary>
     /// Verifies a request: method, target (its path and query as sent),
     /// headers and body, at now. It checks only that the request was
     /// signed by the key it names, for this server, recently, and never
@@ -341,6 +350,37 @@ public sealed class Verifier
     /// <exception cref="ProtocolException"><see cref="ProtocolError.Signature"/> for any refusal.</exception>
     /// <exception cref="ForgottenException">A valid, new request from a server whose pairing ended.</exception>
     public Verified Check(string method, string target, IHeaderReader headers, ReadOnlySpan<byte> body, DateTimeOffset now)
+    {
+        var (key, nonce, former) = CheckSignature(method, target, headers, body, now);
+        Admission? a = Admit is null ? null : Admit(key);
+        return Remember(key, nonce, former, now, a, () => Forgotten is not null && Forgotten(key));
+    }
+
+    /// <summary>
+    /// <see cref="Check"/>, with <see cref="AdmitAsync"/> and
+    /// <see cref="ForgottenAsync"/> asked when they are set (the synchronous
+    /// ones otherwise).
+    /// </summary>
+    /// <exception cref="ProtocolException"><see cref="ProtocolError.Signature"/> for any refusal.</exception>
+    /// <exception cref="ForgottenException">A valid, new request from a server whose pairing ended.</exception>
+    public async ValueTask<Verified> CheckAsync(string method, string target, IHeaderReader headers, ReadOnlyMemory<byte> body,
+        DateTimeOffset now, CancellationToken ct = default)
+    {
+        var (key, nonce, former) = CheckSignature(method, target, headers, body.Span, now);
+        Admission? a = AdmitAsync is not null ? await AdmitAsync(key, ct).ConfigureAwait(false) : Admit?.Invoke(key);
+        var forgotten = false;
+        if (a is { Heard: false })
+        {
+            forgotten = ForgottenAsync is not null ? await ForgottenAsync(key, ct).ConfigureAwait(false) : Forgotten?.Invoke(key) == true;
+        }
+
+        return Remember(key, nonce, former, now, a, () => forgotten);
+    }
+
+    // The checks of core section 6.4 up to the signature: the key, the
+    // nonce and whether it was signed for our former host.
+    private (byte[] Key, string Nonce, bool Former) CheckSignature(string method, string target, IHeaderReader headers,
+        ReadOnlySpan<byte> body, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(headers);
@@ -403,16 +443,22 @@ public sealed class Verifier
             former = true;
         }
 
-        // Only once the signature is good, and the key one this server
-        // hears, is the nonce remembered.
+        return (key, nonce, former);
+    }
+
+    // Only once the signature is good, and the key one this server hears,
+    // is the nonce remembered: nobody can fill the memory with nonces, or
+    // keys, they made up.
+    private Verified Remember(byte[] key, string nonce, bool former, DateTimeOffset now, Admission? admission, Func<bool> forgotten)
+    {
+        var bad = new ProtocolException(ProtocolError.Signature);
         var known = true;
-        if (Admit is not null)
+        if (admission is { } a)
         {
-            var a = Admit(key);
             known = a.Known;
             if (!a.Heard)
             {
-                if (Forgotten is null || !Forgotten(key))
+                if (!forgotten())
                 {
                     throw bad;
                 }

@@ -85,6 +85,26 @@ public sealed class CoreUnitTests
     }
 
     [Fact]
+    public async Task AdmitAndForgottenAsync()
+    {
+        var k = MsfpKey.Generate();
+        var now = DateTimeOffset.UtcNow;
+        var h = new HeaderList();
+        Signing.SignRequest("POST", "a.example.org", "/x", "{}"u8, k, now).Apply(h);
+        var v = new Verifier
+        {
+            Host = "a.example.org",
+            AdmitAsync = async (_, _) => { await Task.Yield(); return new Admission(false, false); },
+            ForgottenAsync = async (_, _) => { await Task.Yield(); return true; },
+        };
+        var e = await Assert.ThrowsAsync<ForgottenException>(async () => await v.CheckAsync("POST", "/x", h, "{}"u8.ToArray(), now));
+        Assert.True(Keys.Same(e.Verified.Key, k.Public()));
+        await Assert.ThrowsAsync<ProtocolException>(async () => await v.CheckAsync("POST", "/x", h, "{}"u8.ToArray(), now));
+        var heard = new Verifier { Host = "a.example.org", AdmitAsync = (_, _) => ValueTask.FromResult(new Admission(true, true)) };
+        Assert.True((await heard.CheckAsync("POST", "/x", h, "{}"u8.ToArray(), now)).Known);
+    }
+
+    [Fact]
     public void AnswerMediaTypes()
     {
         Assert.Equal("-", Signing.AnswerMediaType(new HeaderList()));

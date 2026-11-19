@@ -164,7 +164,7 @@ public sealed partial class MsfpEngine
         Verified v;
         try
         {
-            v = Verifier().Check(r.Method, r.Target, r.Headers, body, Now());
+            v = await Verifier().CheckAsync(r.Method, r.Target, r.Headers, body, Now(), ct).ConfigureAwait(false);
         }
         catch (ForgottenException f)
         {
@@ -259,8 +259,8 @@ public sealed partial class MsfpEngine
         {
             Host = OurHost(),
             Seen = _nonces,
-            Admit = Admit,
-            Forgotten = IsForgotten,
+            AdmitAsync = AdmitAsync,
+            ForgottenAsync = IsForgottenAsync,
             Former = () => OurAddress().Former is { } f ? Address.Host(f) : null,
         };
         lock (_keysLock)
@@ -272,23 +272,23 @@ public sealed partial class MsfpEngine
     // Whether a key may be heard (core section 6.5): a peer's current key,
     // in any state; its previous one while still heard; anyone while a
     // code of ours is live (on pair: the check of the call is pair's).
-    private Admission Admit(byte[] key)
+    private async ValueTask<Admission> AdmitAsync(byte[] key, CancellationToken ct)
     {
-        if (PeerHeardAsync(key, CancellationToken.None).AsTask().GetAwaiter().GetResult() is not null)
+        if (await PeerHeardAsync(key, ct).ConfigureAwait(false) is not null)
         {
             return new Admission(true, true);
         }
 
         var live = false;
         var now = Now();
-        _store.ReadAsync(async tx => live = (await tx.CodesAsync().ConfigureAwait(false)).Any(c => c.Expires > now),
-            CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        await _store.ReadAsync(async tx => live = (await tx.CodesAsync().ConfigureAwait(false)).Any(c => c.Expires > now), ct)
+            .ConfigureAwait(false);
         return new Admission(live, false);
     }
 
     // Whether a key is a server's whose pairing with this one ended, or
     // this server's own current key (heard only from itself).
-    private bool IsForgotten(byte[] key)
+    private async ValueTask<bool> IsForgottenAsync(byte[] key, CancellationToken ct)
     {
         if (Keys.Same(key, Current().PublicSpan))
         {
@@ -297,8 +297,8 @@ public sealed partial class MsfpEngine
 
         var hash = SHA256.HashData(key);
         var found = false;
-        _store.ReadAsync(async tx => found = await tx.ForgottenAsync(hash).ConfigureAwait(false) is not null,
-            CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        await _store.ReadAsync(async tx => found = await tx.ForgottenAsync(hash).ConfigureAwait(false) is not null, ct)
+            .ConfigureAwait(false);
         return found;
     }
 
