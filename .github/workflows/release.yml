@@ -1,0 +1,63 @@
+# Publishes Msfp.Protocol and Msfp.Engine on nuget.org when a version tag
+# is pushed (v0.1.0-preview, say). The tag must match <Version> in
+# Directory.Build.props. No key is stored: nuget.org's Trusted Publishing
+# gives this workflow a key for one hour (policy: msfp-io/msfp-dotnet,
+# release.yml, environment release). The release environment can ask for
+# an approval before the push.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write # the token nuget.org trades for a key
+    container:
+      image: mcr.microsoft.com/dotnet/sdk:10.0.404
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: The tag matches the version
+        run: |
+          version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Directory.Build.props)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME, but Directory.Build.props says $version" >&2
+            exit 1
+          fi
+
+      - name: Restore
+        run: dotnet restore Msfp.slnx
+
+      - name: Build
+        run: dotnet build Msfp.slnx --no-restore -c Release
+
+      - name: Tests
+        run: dotnet test Msfp.slnx --no-build -c Release
+
+      - name: Packages
+        run: |
+          dotnet pack src/Msfp.Protocol --no-build -c Release -o artifacts
+          dotnet pack src/Msfp.Engine --no-build -c Release -o artifacts
+
+      - name: nuget.org login (a key for one hour)
+        id: login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Push
+        run: >-
+          dotnet nuget push "artifacts/*.nupkg"
+          --api-key "${{ steps.login.outputs.NUGET_API_KEY }}"
+          --source https://api.nuget.org/v3/index.json
