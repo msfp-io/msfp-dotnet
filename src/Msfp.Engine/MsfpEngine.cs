@@ -157,6 +157,7 @@ public sealed partial class MsfpEngine : IDisposable
         }
 
         _recordLock.Dispose();
+        _keyAction.Dispose();
     }
 
     internal DateTimeOffset Now() => _time.GetUtcNow();

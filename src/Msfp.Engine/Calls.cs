@@ -52,6 +52,13 @@ public sealed partial class MsfpEngine
             throw new MsfpException(MsfpError.NotSupported);
         }
 
+        if (p.OurKey == KeyOld && call is not (CallRotate or CallPair))
+        {
+            // Still on our old key: told of the new one first, at each
+            // contact (core section 12.4).
+            p = await RotateAtContactAsync(p, ct).ConfigureAwait(false);
+        }
+
         return await ExchangeAsync(p, call, body, SignerFor(p), ct).ConfigureAwait(false);
     }
 

@@ -177,6 +177,95 @@ public sealed class VectorTests
         Assert.NotNull(res.Header(Signing.HeaderSignature));
     }
 
+    private static string NonceHex(JsonObject v) => Convert.ToHexStringLower(Base64UrlText.Decode(v.S("nonceText"), 16)!);
+
+    // rotation.json from A's side: A rotates from a to a2, committing to
+    // a3; its rotate to B and B's answer are the vector's, byte for byte.
+    [Fact]
+    public async Task RotateFromA()
+    {
+        var (net, a, b, onA, onB, _) = await NewPairAsync();
+        var want = KeyVector("rotation.json");
+        a.Clock.Set(1800100000);
+        b.Clock.Set(1800100000);
+        a.Random.Queue(Vectors.Seed("a3"), NonceHex(want));
+        await a.Engine.RotateAsync();
+        var got = Assert.Single(net.SeenBy(b.Host), x => x.Target.EndsWith("/rotate", StringComparison.Ordinal));
+        Assert.Equal(want.S("body"), got.RequestBody);
+        Assert.Equal(want.S("signature"), got.RequestSignature);
+        Assert.Equal(want["status"]!.GetValue<int>(), got.Status);
+        Assert.Equal(want.S("answerBody"), got.ResponseBody);
+        Assert.Equal(want.S("answerSignature"), got.ResponseSignature);
+        Assert.Equal(Vectors.Public("a2"), Base64UrlText.Encode((await b.RecordAsync(onB.Id)).Key));
+        Assert.Equal("KGOK-5E7J-HLIB-DV4F-GVMJ-IQC6", (await a.Engine.ServerAsync()).Fingerprint);
+        // B was the only peer: the change is over, the old key deleted.
+        Assert.Equal(MsfpEngine.KeyCurrent, (await a.Engine.PeerAsync(onA.Id)).OurKey);
+        Assert.Single(a.Events.Of<RotationEnded>());
+        ServerRecord? rec = null;
+        await a.Store.ReadAsync(async tx => rec = await tx.ServerAsync(), CancellationToken.None);
+        Assert.Null(rec!.Old);
+        // Calls go on, signed with a2, which B hears.
+        await a.Engine.CheckAsync(onA.Id);
+    }
+
+    // revocation.json from A's side: A revokes a, then rotates to a2 in the
+    // same action; its revoke and B's answer are the vector's.
+    [Fact]
+    public async Task KeyStolenFromA()
+    {
+        var (net, a, b, _, onB, _) = await NewPairAsync();
+        var want = KeyVector("revocation.json");
+        a.Clock.Set(1800200000);
+        b.Clock.Set(1800200000);
+        a.Random.Queue(NonceHex(want), Vectors.Seed("a3"));
+        Assert.True(await a.Engine.KeyStolenAsync());
+        var got = Assert.Single(net.SeenBy(b.Host), x => x.Target.EndsWith("/revoke", StringComparison.Ordinal));
+        Assert.Equal(want.S("body"), got.RequestBody);
+        Assert.Equal(want.S("signature"), got.RequestSignature);
+        Assert.Equal(want.S("answerBody"), got.ResponseBody);
+        Assert.Equal(want.S("answerSignature"), got.ResponseSignature);
+        // Suspended, then moved to the committed key: no longer suspended.
+        var rec = await b.RecordAsync(onB.Id);
+        Assert.Equal(Vectors.Public("a2"), Base64UrlText.Encode(rec.Key));
+        Assert.Null(rec.Suspended);
+    }
+
+    // A peer that doesn't answer stays on our old key; at the next contact it
+    // is sent the rotate first; one that never moves is lost when the
+    // change ends.
+    [Fact]
+    public async Task RotateAtContactAndLost()
+    {
+        var (net, a, b, onA, onB, _) = await NewPairAsync();
+        net.Remove(b.Host);
+        await a.Engine.RotateAsync();
+        Assert.Equal(MsfpEngine.KeyOld, (await a.Engine.PeerAsync(onA.Id)).OurKey);
+        Assert.Empty(await a.Engine.CodesAsync());
+        // Back: the next contact sends the rotate first, then the hello
+        // under the new key.
+        net.Add(b.Host, b.Engine);
+        a.Clock.Advance(TimeSpan.FromMinutes(2));
+        b.Clock.Advance(TimeSpan.FromMinutes(2));
+        await a.Engine.CheckAsync(onA.Id);
+        Assert.Equal(MsfpEngine.KeyCurrent, (await a.Engine.PeerAsync(onA.Id)).OurKey);
+        Assert.Equal((await a.Engine.ServerAsync()).Fingerprint, (await b.Engine.PeerAsync(onB.Id)).Fingerprint);
+
+        // Away again for two changes: the second ends the first, and B, still
+        // on the key before, is lost.
+        net.Remove(b.Host);
+        await a.Engine.RotateAsync();
+        await a.Engine.RotateAsync();
+        Assert.Equal(MsfpEngine.KeyLost, (await a.Engine.PeerAsync(onA.Id)).OurKey);
+        Assert.Single(a.Events.Of<OurKeyLost>());
+        net.Add(b.Host, b.Engine);
+        Assert.Equal(MsfpError.KeyLost, (await Assert.ThrowsAsync<MsfpException>(() => a.Engine.CheckAsync(onA.Id))).Code);
+        // Another key action at once: refused.
+        var t1 = a.Engine.RotateAsync();
+        var e = await Record.ExceptionAsync(() => a.Engine.RotateAsync());
+        await t1;
+        Assert.True(e is null || e is MsfpException { Code: MsfpError.RotationUnderWay });
+    }
+
     [Fact]
     public async Task TamperedAnswersRefused()
     {
