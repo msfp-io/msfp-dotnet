@@ -21,6 +21,36 @@ internal sealed class AspNetHeaders(IHeaderDictionary headers) : IHeaderReader
         headers.TryGetValue(name, out var v) ? v.Where(s => s is not null).Select(s => s!).ToList() : [];
 }
 
+/// <summary>An answer of the engine's media on ASP.NET Core's response.</summary>
+internal sealed class AspNetSink(HttpResponse response) : IResponseSink
+{
+    public void Start(int status, string contentType, long length, string contentRange)
+    {
+        response.StatusCode = status;
+        if (contentType.Length > 0)
+        {
+            response.ContentType = contentType;
+        }
+
+        if (length >= 0)
+        {
+            response.ContentLength = length;
+        }
+
+        if (contentRange.Length > 0)
+        {
+            response.Headers.ContentRange = contentRange;
+        }
+
+        if (status is 200 or 206)
+        {
+            response.Headers.AcceptRanges = "bytes";
+        }
+    }
+
+    public ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct) => response.Body.WriteAsync(data, ct);
+}
+
 /// <summary>Two engines behind real Kestrel servers over TLS, with self-signed certificates, pairing.</summary>
 public sealed class KestrelTests
 {
@@ -49,7 +79,7 @@ public sealed class KestrelTests
         }
     }
 
-    private static async Task<Server> StartAsync(string name)
+    private static async Task<Server> StartAsync(string name, FakeHost? host = null)
     {
         var cert = SelfSigned();
         var builder = WebApplication.CreateSlimBuilder();
@@ -76,6 +106,21 @@ public sealed class KestrelTests
 
             await ctx.Response.Body.WriteAsync(res.Body, ctx.RequestAborted);
         });
+        // The stream route of peers' tickets.
+        app.Map("/api/v1/stream/{**rest}", async (HttpContext ctx) =>
+        {
+            var outcome = await engine!.HandleStreamAsync(new MsfpRequest
+            {
+                Method = ctx.Request.Method,
+                Target = ctx.Features.Get<IHttpRequestFeature>()!.RawTarget,
+                Headers = new AspNetHeaders(ctx.Request.Headers),
+                Body = Stream.Null,
+            }, new AspNetSink(ctx.Response), ctx.RequestAborted);
+            if (outcome != StreamOutcome.Served)
+            {
+                ctx.Response.StatusCode = 404;
+            }
+        });
         await app.StartAsync();
         var bound = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
         var port = new Uri(bound).Port;
@@ -86,6 +131,9 @@ public sealed class KestrelTests
             Name = () => name,
             AllowLoopback = true,
             Pins = [Pins.Pin(cert)],
+            Catalog = host,
+            Playback = host,
+            Media = host,
         });
         return new Server { App = app, Engine = engine };
     }
@@ -115,5 +163,61 @@ public sealed class KestrelTests
         var (code, _) = await a.Engine.MakeCodeAsync(null);
         var e = await Assert.ThrowsAsync<MsfpException>(() => c.RedeemCodeAsync(code));
         Assert.Equal(MsfpError.RefusedDestination, e.Code);
+    }
+
+    // A film shared and played over TLS: the catalog read, the media relayed
+    // through the pinned media client, a range, and a response held open
+    // cut when the owning side ends the playback.
+    [Fact]
+    public async Task ShareAndPlayOverTls()
+    {
+        var h = HostKit.FilmHost();
+        h.Libs = [new Library { Id = "films", Name = "Films", Kind = "movies" }];
+        await using var a = await StartAsync("Server A", h);
+        await using var b = await StartAsync("Server B");
+        await Task.Delay(1100);
+        var (code, _) = await a.Engine.MakeCodeAsync(null);
+        var onB = (await b.Engine.RedeemCodeAsync(code)).Id;
+        var onA = Assert.Single(await a.Engine.PeersAsync()).Id;
+        await a.Engine.AcceptAsync(onA);
+        await a.Engine.CheckAsync(onA);
+        await b.Engine.CheckAsync(onB);
+        await a.Engine.SetOffersAsync(onA, ["films"]);
+        var libs = await b.Engine.TheirLibrariesAsync(onB);
+        await b.Engine.SetWantsAsync(onB, [libs[0].Id]);
+        Assert.Equal(1, await b.Engine.ReadNowAsync(onB));
+        var pb = await b.Engine.PlayAsync(onB, new PlayRequest { Title = "movie/tmdb/949" });
+        var master = new MemorySink();
+        await b.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.Master }, "", master);
+        Assert.Equal(HostKit.Master, master.Text);
+        var part = new MemorySink();
+        await b.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.Segment, Name = "seg0.m4s" }, "bytes=2-5", part);
+        Assert.Equal((206, "2345", "bytes 2-5/20"), (part.Status, part.Text, part.ContentRange));
+        // A response held open, as a live transcode: cut at the end.
+        lock (h.Lock)
+        {
+            h.Serve = async (_, _, output, ct) =>
+            {
+                output.Start(200, "video/mp4", -1, "");
+                while (true)
+                {
+                    await output.WriteAsync("xxxx"u8.ToArray(), ct);
+                    await Task.Delay(5, ct);
+                }
+            };
+        }
+
+        var held = new MemorySink();
+        var fetch = b.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.Segment, Name = "seg1.m4s" }, "", held);
+        while (held.Body.Length < 40)
+        {
+            await Task.Delay(10);
+        }
+
+        a.Engine.StopPlayback(Assert.Single(a.Engine.Playbacks()).Id);
+        // The owning side ends its answer there; the relay ends with it.
+        await fetch.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(200, held.Status);
+        Assert.Empty(a.Engine.Playbacks());
     }
 }
