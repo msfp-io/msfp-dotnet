@@ -24,9 +24,11 @@ it writes none of the protocol itself.
 **Status: 0.1.0-preview, not released.** The protocol layer is complete
 and passes every test vector of MSFP version 1. The engine pairs (keys,
 codes, `pair`, `hello`, accepting and ending, signed answers, limits),
-rotates and revokes its key with a next key, follows its peers' rotations
-and revocations, and serves its discovery document. Servers that can't be
-called, address moves, a key stolen without its next key, catalog and
+rotates and revokes its key (with its next key, or replaced without it),
+follows its peers' rotations and revocations, moves to a new address
+(`SetAddressAsync`) and follows its peers' moves, runs as a server that
+can't be called (`SetUncallableAsync`) or pairs with one, backs off from
+peers that don't answer, and serves its discovery document. Catalog and
 playback come next.
 
 ## Packages
