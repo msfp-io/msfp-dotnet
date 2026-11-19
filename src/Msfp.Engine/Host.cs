@@ -30,7 +30,7 @@ namespace Msfp;
 /// <para>
 /// Any exception a store throws fails the engine's action; toward a peer,
 /// it is a signed 500. Lookups that find nothing return null (or false),
-/// they don't throw. The generic forms are in <see cref="StoreExtensions"/>.
+/// they don't throw.
 /// </para>
 /// </remarks>
 public interface IStore
@@ -44,36 +44,35 @@ public interface IStore
     /// <param name="fn">What reads and writes.</param>
     /// <param name="ct">Cancels the wait for the transaction.</param>
     ValueTask UpdateAsync(Func<IStoreTx, ValueTask> fn, CancellationToken ct);
-}
 
-/// <summary>The forms of <see cref="IStore"/>'s calls that give a value back.</summary>
-public static class StoreExtensions
-{
-    /// <summary>Runs fn on a consistent view, and gives what it gave.</summary>
+    /// <summary>
+    /// Runs fn on a consistent view, and gives what it gave. By default, on
+    /// <see cref="ReadAsync(Func{IStoreTx, ValueTask}, CancellationToken)"/>.
+    /// </summary>
     /// <typeparam name="T">What fn gives.</typeparam>
-    /// <param name="store">The store.</param>
     /// <param name="fn">What reads.</param>
     /// <param name="ct">Cancels the wait.</param>
-    public static async ValueTask<T> ReadAsync<T>(this IStore store, Func<IStoreTx, ValueTask<T>> fn, CancellationToken ct)
+    async ValueTask<T> ReadAsync<T>(Func<IStoreTx, ValueTask<T>> fn, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(fn);
         T result = default!;
-        await store.ReadAsync(async tx => result = await fn(tx).ConfigureAwait(false), ct).ConfigureAwait(false);
+        await ReadAsync(async tx => { result = await fn(tx).ConfigureAwait(false); }, ct).ConfigureAwait(false);
         return result;
     }
 
-    /// <summary>Runs fn in a transaction, and gives what it gave once the transaction is kept.</summary>
+    /// <summary>
+    /// Runs fn in a transaction, and gives what it gave once the transaction
+    /// is kept. By default, on
+    /// <see cref="UpdateAsync(Func{IStoreTx, ValueTask}, CancellationToken)"/>.
+    /// </summary>
     /// <typeparam name="T">What fn gives.</typeparam>
-    /// <param name="store">The store.</param>
     /// <param name="fn">What reads and writes.</param>
     /// <param name="ct">Cancels the wait.</param>
-    public static async ValueTask<T> UpdateAsync<T>(this IStore store, Func<IStoreTx, ValueTask<T>> fn, CancellationToken ct)
+    async ValueTask<T> UpdateAsync<T>(Func<IStoreTx, ValueTask<T>> fn, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(fn);
         T result = default!;
-        await store.UpdateAsync(async tx => result = await fn(tx).ConfigureAwait(false), ct).ConfigureAwait(false);
+        await UpdateAsync(async tx => { result = await fn(tx).ConfigureAwait(false); }, ct).ConfigureAwait(false);
         return result;
     }
 }

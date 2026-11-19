@@ -25,8 +25,8 @@ public sealed record MsfpConfig
     public required string Address { get; init; }
 
     /// <summary>
-    /// Keeps the engine's records: <c>Msfp.Stores.JsonFileStore</c> for a
-    /// small host, <c>Msfp.Stores.MemoryStore</c> for tests, or the host's
+    /// Keeps the engine's records: <see cref="Stores.JsonFileStore"/> for a
+    /// small host, <see cref="Stores.MemoryStore"/> for tests, or the host's
     /// own database.
     /// </summary>
     public required IStore Store { get; init; }
