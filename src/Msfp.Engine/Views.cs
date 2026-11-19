@@ -73,6 +73,15 @@ public sealed record PeerView
 
     /// <summary>Its last answer to our rotate while it is on our old key: "pending" or "refused"; "" for none.</summary>
     public string RotationAnswer { get; init; } = "";
+
+    /// <summary>How many of the host's libraries are offered to it.</summary>
+    public int Offers { get; init; }
+
+    /// <summary>How many of its libraries this server reads.</summary>
+    public int Wants { get; init; }
+
+    /// <summary>How many of those it no longer offers (WantsGone).</summary>
+    public int WantsGone { get; init; }
 }
 
 /// <summary>A peer's key the operator is shown: its fingerprint, and when.</summary>
@@ -163,6 +172,7 @@ public sealed partial class MsfpEngine
             Refused = p.Refused is { } rk ? new KeyNotice(Keys.Fingerprint(rk.Key), rk.At) : null, Limits = p.Limits with { }, TheirLimits = p.TheirLimits is null ? null : p.TheirLimits with { },
             RotationAnswer = p.RotationAnswer ?? "", NotMoved = notMoved, MoveLate = notMoved && a.MovedAt is { } at && Now() - at >= MoveLate,
             Moving = p.Move is { } m ? new MoveView(m.Address, m.Since, m.FailingSince, new AddressMove(m.Address, null, m.FailingSince).Warn(Now())) : null,
+            Offers = p.Offers?.Count ?? 0, Wants = p.Wants?.Count(w => w.Wanted) ?? 0, WantsGone = p.Wants?.Count(w => w.Wanted && w.Gone) ?? 0,
         };
     }
 

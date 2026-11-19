@@ -28,8 +28,12 @@ rotates and revokes its key (with its next key, or replaced without it),
 follows its peers' rotations and revocations, moves to a new address
 (`SetAddressAsync`) and follows its peers' moves, runs as a server that
 can't be called (`SetUncallableAsync`) or pairs with one, backs off from
-peers that don't answer, and serves its discovery document. Catalog and
-playback come next.
+peers that don't answer, and serves its discovery document. It shares
+and plays too: the catalog both ways (libraries offered and wanted, titles
+read whole or as changes, its own change log or the host's), playback both
+ways (play, progress, stop, the pairing's limits), the media of peers'
+tickets and the relay of a peer's media (HLS, WebVTT, PGS, preview
+sheets), for films, series and music.
 
 ## Packages
 
@@ -106,11 +110,43 @@ await engine.AcceptAsync(id);                            // once both compared f
 logs. Every method throws `MsfpException`, whose `Code` says why
 (`MsfpError.CodeExpired`, `MsfpError.AlreadyPeer`…).
 
+## Sharing and playing
+
+A host that shares gives the engine its libraries and playback
+(`MsfpConfig.Catalog`, `Playback`, `Media`: `ICatalog`, `IPlayback`,
+`IMedia`), and mounts the stream route of peers' tickets beside the
+federation route:
+
+```csharp
+app.Map("/api/v1/stream/{**rest}", async (HttpContext ctx) =>
+{
+    var outcome = await engine.HandleStreamAsync(new MsfpRequest { /* as above, Body = Stream.Null */ },
+        new AspNetSink(ctx.Response), ctx.RequestAborted);
+    if (outcome == StreamOutcome.Fallback) { /* a ticket of the host's own viewers: its own route */ }
+    else if (outcome == StreamOutcome.NotFound) { ctx.Response.StatusCode = 404; }
+});
+```
+
+The operator offers libraries with `SetOffersAsync` and sets limits
+with `SetLimitsAsync`; the host calls `CatalogChanged()` when its titles
+change. To read a peer's titles: `TheirLibrariesAsync`, `SetWantsAsync`,
+then `RunAsync` reads them on schedule (or `ReadNowAsync`) into the
+store, where the host reads them; `PlayableAsync` says whether they can
+be played now. A viewer plays with `PlayAsync`, the host serves the media
+at its own route through `FetchAsync` (`MediaPath.TryParse` reads its
+URL), and reports with `Progress` and `StopAsync`.
+
+Preview sheets a peer sends are re-encoded before they reach a viewer
+(MSFP video section 7). .NET has no JPEG codec, so the engine has no
+default `ISheetEncoder`: give one (ImageSharp, SkiaSharp, the host's
+own), or previews of peers' titles are left out.
+
 ## The example
 
 [examples/Pairing](examples/Pairing) is a small host: Kestrel with a
 self-signed certificate it pins, its records in JSON files, typed commands
-in place of a panel. Run two of them on one machine:
+in place of a panel, and the stream route mounted (`AspNetSink`). Run
+two of them on one machine:
 
 ```sh
 cd examples/Pairing

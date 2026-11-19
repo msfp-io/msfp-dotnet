@@ -128,7 +128,12 @@ public sealed record MsfpConfig
     /// <summary>The host's media.</summary>
     public IMedia? Media { get; init; }
 
-    /// <summary>Re-encodes relayed preview sheets; the engine's default when null.</summary>
+    /// <summary>
+    /// Re-encodes relayed preview sheets (MSFP video section 7). .NET has no
+    /// JPEG codec, so there is no default (Go's is JPEGSheets): without one,
+    /// the previews of peers' playbacks are left out
+    /// (<see cref="RemotePlayback.Trickplay"/> is null).
+    /// </summary>
     public ISheetEncoder? SheetEncoder { get; init; }
 
     /// <summary>This server's own cap on what peers play here; 0, by default, for none.</summary>

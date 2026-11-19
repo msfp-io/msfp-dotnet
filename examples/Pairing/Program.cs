@@ -72,6 +72,25 @@ app.MapPost("/api/v1/federation/{call}", async (HttpContext ctx) =>
 
     await ctx.Response.Body.WriteAsync(res.Body, ctx.RequestAborted);
 });
+// The stream route of peers' tickets (playback's media): every method
+// goes to the engine, which serves GET only; the raw target, no
+// authentication in front, no compression. A ticket that isn't the
+// engine's would be the host's own viewers' (none here): 404.
+app.Map("/api/v1/stream/{**rest}", async (HttpContext ctx) =>
+{
+    var outcome = await engine.HandleStreamAsync(new MsfpRequest
+    {
+        Method = ctx.Request.Method,
+        Target = ctx.Features.Get<IHttpRequestFeature>()!.RawTarget,
+        Headers = new AspNetHeaders(ctx.Request.Headers),
+        Body = Stream.Null,
+        ClientAddress = ctx.Connection.RemoteIpAddress,
+    }, new AspNetSink(ctx.Response), ctx.RequestAborted);
+    if (outcome != StreamOutcome.Served)
+    {
+        ctx.Response.StatusCode = 404;
+    }
+});
 await app.StartAsync();
 // The engine's background work: moves, scheduled hellos, keys' time.
 using var stop = new CancellationTokenSource();
@@ -177,6 +196,39 @@ internal sealed class AspNetHeaders(IHeaderDictionary headers) : IHeaderReader
 {
     public IReadOnlyList<string> GetValues(string name) =>
         headers.TryGetValue(name, out var v) ? v.Where(s => s is not null).Select(s => s!).ToList() : [];
+}
+
+/// <summary>
+/// An answer of the engine's media written on ASP.NET Core's response: the
+/// status and only the headers MSFP needs, no content coding.
+/// </summary>
+internal sealed class AspNetSink(HttpResponse response) : IResponseSink
+{
+    public void Start(int status, string contentType, long length, string contentRange)
+    {
+        response.StatusCode = status;
+        if (contentType.Length > 0)
+        {
+            response.ContentType = contentType;
+        }
+
+        if (length >= 0)
+        {
+            response.ContentLength = length;
+        }
+
+        if (contentRange.Length > 0)
+        {
+            response.Headers.ContentRange = contentRange;
+        }
+
+        if (status is 200 or 206)
+        {
+            response.Headers.AcceptRanges = "bytes";
+        }
+    }
+
+    public ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct) => response.Body.WriteAsync(data, ct);
 }
 
 /// <summary>Prints what happened.</summary>
