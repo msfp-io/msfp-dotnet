@@ -116,7 +116,49 @@ internal sealed class Network : HttpMessageHandler
     private readonly List<(string Host, Seen Seen)> _log = [];
 
     public void Add(string host, MsfpEngine engine) => _servers[host] = r =>
-        r.Target.StartsWith("/.well-known/", StringComparison.Ordinal) ? Task.FromResult(engine.HandleDiscovery(r)) : engine.HandleFederationAsync(r);
+        r.Target.StartsWith("/.well-known/", StringComparison.Ordinal) ? Task.FromResult(engine.HandleDiscovery(r))
+        : r.Target.StartsWith("/api/v1/stream/", StringComparison.Ordinal) ? HostKit.StreamAsync(engine, r)
+        : engine.HandleFederationAsync(r);
+
+    private readonly Dictionary<string, (Func<string, HeaderList, byte[], byte[]?> Rewrite, Func<MsfpKey> Key)> _rewrites =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _down = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Makes host a hostile peer: rewrite changes its answers (given the
+    /// path, the answer's headers to change, its body; null leaves it), each
+    /// signed again with key when it was signed (msfp-go's setRewrite).
+    /// </summary>
+    public void Rewrite(string host, Func<string, HeaderList, byte[], byte[]?>? rewrite, Func<MsfpKey>? key = null)
+    {
+        lock (_rewrites)
+        {
+            if (rewrite is null)
+            {
+                _rewrites.Remove(host);
+            }
+            else
+            {
+                _rewrites[host] = (rewrite, key ?? (() => throw new InvalidOperationException("no key")));
+            }
+        }
+    }
+
+    /// <summary>Makes host answer every request with a plain 503, as if it couldn't be reached (msfp-go's setDown).</summary>
+    public void Down(string host, bool down)
+    {
+        lock (_down)
+        {
+            if (down)
+            {
+                _down.Add(host);
+            }
+            else
+            {
+                _down.Remove(host);
+            }
+        }
+    }
 
     public void Add(string host, Func<MsfpRequest, Task<MsfpResponse>> handler) => _servers[host] = handler;
 
@@ -163,6 +205,14 @@ internal sealed class Network : HttpMessageHandler
             }
         }
 
+        lock (_down)
+        {
+            if (_down.Contains(host))
+            {
+                return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new ByteArrayContent("down"u8.ToArray()) };
+            }
+        }
+
         var res = await server(new MsfpRequest
         {
             Method = request.Method.Method,
@@ -171,10 +221,42 @@ internal sealed class Network : HttpMessageHandler
             Body = new MemoryStream(body),
             ClientAddress = IPAddress.Parse("192.0.2.99"),
         });
+        (Func<string, HeaderList, byte[], byte[]?> Rewrite, Func<MsfpKey> Key) rw;
+        bool hostile;
+        lock (_rewrites)
+        {
+            hostile = _rewrites.TryGetValue(host, out rw);
+        }
+
+        if (hostile)
+        {
+            // A hostile peer: its answer changed, and signed again with its
+            // key when it was signed.
+            var hl = new HeaderList();
+            foreach (var (k, v) in res.Headers)
+            {
+                hl.Add(k, v);
+            }
+
+            if (rw.Rewrite(uri.AbsolutePath, hl, res.Body.ToArray()) is { } changed)
+            {
+                if (hl.Get(Signing.HeaderSignature) is not null)
+                {
+                    hl.Set(Signing.HeaderSignature, Signing.SignResponse(rw.Key(), headers.Get(Signing.HeaderNonce) ?? "", res.Status,
+                        Signing.MediaType(hl.Get("Content-Type")) is { Length: > 0 } t ? t : null, changed));
+                }
+
+                res = new MsfpResponse { Status = res.Status, Headers = hl.Items, Body = changed };
+            }
+        }
         var output = new HttpResponseMessage((HttpStatusCode)res.Status) { Content = new ByteArrayContent(res.Body.ToArray()) };
         foreach (var (k, v) in res.Headers)
         {
-            if (!output.Headers.TryAddWithoutValidation(k, v))
+            if (k.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+            {
+                output.Content.Headers.ContentLength = long.Parse(v, System.Globalization.CultureInfo.InvariantCulture);
+            }
+            else if (!output.Headers.TryAddWithoutValidation(k, v))
             {
                 output.Content.Headers.TryAddWithoutValidation(k, v);
             }
@@ -273,13 +355,13 @@ internal sealed class TestServer : IDisposable
     public static async Task<TestServer> StartAsync(Network net, string address, string? name = null, long unix = 1800000000,
         ScriptedRandom? random = null, IReadOnlyList<string>? parts = null, IReadOnlyList<string>? pins = null,
         string prefix = "", bool discovery = false, FakeTime? clock = null, IStore? store = null, HttpMessageHandler? transport = null,
-        IDialer? dialer = null, CallLimits? limits = null)
+        IDialer? dialer = null, CallLimits? limits = null, Func<MsfpConfig, MsfpConfig>? with = null)
     {
         store ??= new MemoryStore();
         clock ??= new FakeTime(unix);
         random ??= new ScriptedRandom();
         var events = new EventLog();
-        var engine = await MsfpEngine.OpenAsync(new MsfpConfig
+        var config = new MsfpConfig
         {
             Address = address,
             Store = store,
@@ -294,7 +376,8 @@ internal sealed class TestServer : IDisposable
             Pins = pins,
             Prefix = prefix,
             Discovery = discovery,
-        });
+        };
+        var engine = await MsfpEngine.OpenAsync(with is null ? config : with(config));
         var s = new TestServer { Engine = engine, Store = store, Clock = clock, Random = random, Events = events, Address = address };
         net.Add(s.Host, engine);
         return s;
