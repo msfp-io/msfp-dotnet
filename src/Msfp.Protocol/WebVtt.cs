@@ -46,7 +46,7 @@ public static partial class WebVtt
 
         // Bytes that aren't UTF-8 read as U+FFFD, which cue text drops.
         var text = Utf8.GetString(input).Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
-        if (text.StartsWith('﻿'))
+        if (text.StartsWith('\uFEFF'))
         {
             text = text[1..]; // one byte order mark
         }
@@ -272,7 +272,7 @@ public static partial class WebVtt
         var b = new StringBuilder(s.Length);
         foreach (var c in s)
         {
-            if (c is '�' or '؜' or '‎' or '‏' or (>= '‪' and <= '‮') or (>= '⁦' and <= '⁩'))
+            if (c is '\uFFFD' or '\u061C' or '\u200E' or '\u200F' or (>= '\u202A' and <= '\u202E') or (>= '\u2066' and <= '\u2069'))
             {
                 continue;
             }
