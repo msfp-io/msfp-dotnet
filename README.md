@@ -169,7 +169,10 @@ the second, compare the fingerprints both print, and `accept <id>` in the
 first. Then `offer <id>` in the first shares the films; `want <id>` in the
 second reads them, `titles <id>` lists them, and `play <id> <key>` prints a
 URL that `curl -k` or `ffplay -tls_verify 0` plays through the second
-server. The comment at the top of
+server; `pause <playback>`, `resume <playback>` and `stop <playback>`
+follow, and until the stop the example reports the playback every
+minute, as a host must (a peer ends a playback it hears nothing of for 2
+minutes). The comment at the top of
 [Program.cs](examples/ShareFolder/Program.cs) lists every command.
 
 ## Versions

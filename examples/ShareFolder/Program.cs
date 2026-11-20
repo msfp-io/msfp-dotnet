@@ -32,6 +32,9 @@
 //   play <id> <key>    play a peer's title: prints a URL that curl -k or ffplay -tls_verify 0 plays
 //                      through this server (anyone who has it may, for as long as the playback
 //                      lasts: an example, not a viewer's page)
+//   pause <playback>   say the viewer paused (resume <playback>: resumed); a playback is
+//                      reported to its peer every minute until stopped, since a peer ends
+//                      one it hears nothing of for 2 minutes
 //   stop <playback>    end a playback
 //   rescan             tell the engine the folder changed
 //   quit
@@ -126,6 +129,7 @@ await app.StartAsync();
 // The engine's background work: moves, scheduled hellos, readings, keys' time.
 using var stop = new CancellationTokenSource();
 _ = engine.RunAsync(stop.Token);
+var watches = new Watches(engine);
 var me = await engine.ServerAsync();
 Console.WriteLine($"this server: {me.Address} {me.Fingerprint}");
 
@@ -212,10 +216,16 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
                         AudioCodecs = ["aac", "mp3", "opus", "ac3"],
                     },
                 });
+                watches.Start(pb.Id);
                 var name = pb.Protocol == "hls" ? "master.m3u8" : "file";
                 Console.WriteLine($"{address}/watch/{pb.Id}/{name}  ({pb.Method}, {pb.Protocol}; stop {pb.Id})");
                 break;
+            case "pause":
+            case "resume":
+                Console.WriteLine(watches.Pause(arg, cmd == "pause") ? cmd + "d" : "no such playback here");
+                break;
             case "stop":
+                watches.Stop(arg);
                 await engine.StopAsync(arg, -1);
                 Console.WriteLine("stopped");
                 break;
@@ -344,4 +354,103 @@ internal sealed class ConsoleNotifier : INotifier
     public void Notify(MsfpEvent e) => Console.WriteLine(e is PeerWaiting w
         ? $"\n{w.Name} used your code; its fingerprint is {w.Fingerprint}. Compare, then: accept {w.Peer}"
         : $"\n{e}");
+}
+
+/// <summary>
+/// The playbacks of peers' titles open here, each reported to its peer until
+/// stopped (MSFP playback section 3): at once, on a pause or a resume, and
+/// every minute (the engine sends one report per 45 seconds at most). A real
+/// host reports what its player says; this example has none, so the time
+/// played stands for the position.
+/// </summary>
+internal sealed class Watches(MsfpEngine engine)
+{
+    private readonly object _lock = new();
+    private readonly Dictionary<string, Watch> _open = new(StringComparer.Ordinal);
+
+    public void Start(string id)
+    {
+        var w = new Watch();
+        lock (_lock)
+        {
+            _open[id] = w;
+        }
+
+        engine.Progress(id, 0, false);
+        _ = Task.Run(async () =>
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+            try
+            {
+                while (await timer.WaitForNextTickAsync(w.Stop.Token))
+                {
+                    if (Where(id) is not { } at)
+                    {
+                        return;
+                    }
+
+                    engine.Progress(id, at.PositionMs, at.Paused);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        });
+    }
+
+    /// <summary>Says the viewer paused or resumed: told to the peer at once.</summary>
+    public bool Pause(string id, bool paused)
+    {
+        if (Where(id) is not { } at)
+        {
+            return false;
+        }
+
+        lock (_lock)
+        {
+            if (_open.TryGetValue(id, out var w) && w.Paused != paused)
+            {
+                (w.PositionMs, w.Paused, w.Since) = (at.PositionMs, paused, DateTimeOffset.UtcNow);
+            }
+        }
+
+        engine.Progress(id, at.PositionMs, paused);
+        return true;
+    }
+
+    public void Stop(string id)
+    {
+        lock (_lock)
+        {
+            if (_open.Remove(id, out var w))
+            {
+                w.Stop.Cancel();
+            }
+        }
+    }
+
+    private (long PositionMs, bool Paused)? Where(string id)
+    {
+        lock (_lock)
+        {
+            if (!_open.TryGetValue(id, out var w))
+            {
+                return null;
+            }
+
+            return w.Paused ? (w.PositionMs, true)
+                : (w.PositionMs + (long)(DateTimeOffset.UtcNow - w.Since).TotalMilliseconds, false);
+        }
+    }
+
+    private sealed class Watch
+    {
+        public CancellationTokenSource Stop { get; } = new();
+
+        public long PositionMs { get; set; }
+
+        public bool Paused { get; set; }
+
+        public DateTimeOffset Since { get; set; } = DateTimeOffset.UtcNow;
+    }
 }
