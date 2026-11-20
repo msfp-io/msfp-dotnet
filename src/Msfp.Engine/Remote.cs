@@ -603,6 +603,12 @@ public sealed partial class MsfpEngine
     /// by RunAsync's work of each second when no report comes at the time. It
     /// returns at once. A 410 from the peer ends the playback
     /// (<see cref="RemotePlaybackEnded"/>).
+    /// <para>
+    /// The peer ends a playback it hears nothing of for 2 minutes (playback
+    /// section 6.3): while a viewer is on it, paused too, call Progress at
+    /// least every minute, whatever the player reports. Calls cost nothing
+    /// more: the peer still gets one report per 45 seconds at most.
+    /// </para>
     /// </summary>
     /// <param name="id">The engine's ID of the playback.</param>
     /// <param name="positionMs">Where the viewer is.</param>
