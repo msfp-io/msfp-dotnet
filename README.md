@@ -1,3 +1,5 @@
+<img src="https://raw.githubusercontent.com/msfp-io/msfp-dotnet/main/logo.png" alt="" width="128" align="right">
+
 # msfp-dotnet
 
 The MSFP engine for .NET. [MSFP](https://github.com/msfp-io/msfp-spec), the
