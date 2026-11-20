@@ -61,13 +61,14 @@ var app = builder.Build();
 
 using var store = JsonFileStore.Open(data);
 var folder = films is null ? null : new Folder(films);
+var notifier = new ConsoleNotifier();
 using var engine = await MsfpEngine.OpenAsync(new MsfpConfig
 {
     Address = address,
     Store = store,
     AllowLoopback = loopback,
     Pins = [Pins.Pin(cert)],
-    Notifier = new ConsoleNotifier(),
+    Notifier = notifier,
     Logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("msfp"),
     Parts = ["catalog", "playback", "media", "video"],
     Catalog = folder,
@@ -130,6 +131,7 @@ await app.StartAsync();
 using var stop = new CancellationTokenSource();
 _ = engine.RunAsync(stop.Token);
 var watches = new Watches(engine);
+notifier.RemotePlaybackEnded = watches.Stop;
 var me = await engine.ServerAsync();
 Console.WriteLine($"this server: {me.Address} {me.Fingerprint}");
 
@@ -351,7 +353,20 @@ internal sealed class AspNetSink(HttpResponse response) : IResponseSink
 /// <summary>Prints the engine's events.</summary>
 internal sealed class ConsoleNotifier : INotifier
 {
-    public void Notify(MsfpEvent e) => Console.WriteLine(e is PeerWaiting w
+    /// <summary>Called with a remote playback's ID when it ends, on the peer's side or here: no more reports.</summary>
+    public Action<string>? RemotePlaybackEnded { get; set; }
+
+    public void Notify(MsfpEvent e)
+    {
+        if (e is RemotePlaybackEnded r)
+        {
+            RemotePlaybackEnded?.Invoke(r.Playback);
+        }
+
+        Print(e);
+    }
+
+    private static void Print(MsfpEvent e) => Console.WriteLine(e is PeerWaiting w
         ? $"\n{w.Name} used your code; its fingerprint is {w.Fingerprint}. Compare, then: accept {w.Peer}"
         : $"\n{e}");
 }
