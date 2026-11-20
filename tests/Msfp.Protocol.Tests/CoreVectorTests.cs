@@ -66,6 +66,10 @@ public sealed class CoreVectorTests
         foreach (var (name, c) in TestVectors.Load("keys.json")["certificates"]!.AsObject())
         {
             var spki = Convert.FromHexString(c!["spki"]!.GetValue<string>());
+            // An Ed25519 SubjectPublicKeyInfo (RFC 8410): a fixed DER prefix, then the key.
+            var fromSeed = Convert.FromHexString("302a300506032b6570032100")
+                .Concat(MsfpKey.FromSeed(Convert.FromHexString(c["seed"]!.GetValue<string>())).Public()).ToArray();
+            Assert.True(spki.SequenceEqual(fromSeed), name);
             Assert.True(Base64UrlText.Encode(System.Security.Cryptography.SHA256.HashData(spki)) == c["pin"]!.GetValue<string>(), name);
             Assert.True(Pins.Valid(c["pin"]!.GetValue<string>()));
         }
