@@ -796,6 +796,13 @@ public sealed partial class MsfpEngine
         {
             var g = await GroupOfAsync(tx, id).ConfigureAwait(false);
             var s = StateOf(g);
+            // Asked for by the operator: no way in is said first, whatever
+            // else would skip the member (groups section 6).
+            if (to is not null && !WayIn(id, await tx.PeersAsync().ConfigureAwait(false), ""))
+            {
+                throw new MsfpException(MsfpError.NoWayIn);
+            }
+
             foreach (var m in s.Members.Values)
             {
                 if (m.Id == g.Me || (to is not null && !to.Contains(m.Id)) || m.EncryptionKey is null ||
