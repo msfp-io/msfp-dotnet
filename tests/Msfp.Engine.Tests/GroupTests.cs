@@ -572,4 +572,54 @@ public sealed class GroupTests
         Assert.False((await a.Engine.GroupAsync(g.Id)).NoWayIn);
         Assert.Equal(MsfpError.NoWayIn, await ErrorAsync(() => b.Engine.RequestMemberAsync(g.Id, MemberNamed(gb, "N")!.Id)));
     }
+
+    // A member back in (groups section 2): cut off once its pairing with the
+    // owner ended, B uses a new code for the group, by pair; cut off again,
+    // then paired by hand, it uses one through group-join. Each time the link
+    // gains the group, nobody signs joined again, and events flow again.
+    [Fact]
+    public async Task BackIn()
+    {
+        var net = new Network();
+        using var a = await ServerAsync(net, "A");
+        using var b = await ServerAsync(net, "B");
+        var g = await a.Engine.CreateGroupAsync("Family");
+        await JoinGroupAsync(a, b, g.Id);
+        async Task CutAsync()
+        {
+            await b.Engine.EndAsync((await PeerNamedAsync(b, "A"))!.Id);
+            await SettleAsync(a, b);
+            Assert.True((await b.Engine.GroupAsync(g.Id)).NoWayIn);
+        }
+
+        async Task BackInAsync(string name)
+        {
+            await SettleAsync(a, b);
+            var ga = await a.Engine.GroupAsync(g.Id);
+            var gb = await b.Engine.GroupAsync(g.Id);
+            Assert.Equal((false, 2, false, 2), (ga.NoWayIn, ga.Members.Count, gb.NoWayIn, gb.Members.Count));
+            await a.Engine.SetGroupSettingsAsync(g.Id, name, GroupSettings.Default);
+            await SettleAsync(a, b);
+            Assert.Equal(name, (await b.Engine.GroupAsync(g.Id)).Name);
+        }
+
+        // By pair: no pairing left with A.
+        await CutAsync();
+        await JoinGroupAsync(a, b, g.Id);
+        await BackInAsync("Friends");
+
+        // Through group-join: paired by hand with A first.
+        await CutAsync();
+        await Kit.LinkAsync(a, b);
+        await SettleAsync(a, b);
+        Assert.True((await b.Engine.GroupAsync(g.Id)).NoWayIn);
+        var (code, _) = await a.Engine.MakeCodeWithAsync(new CodeOptions { Group = g.Id });
+        await b.Engine.RedeemCodeAsync(code);
+        var join = Assert.Single((await a.Engine.GroupAsync(g.Id)).Joins);
+        await a.Engine.AcceptJoinAsync(g.Id, join.Peer);
+        await BackInAsync("Neighbours");
+        // Linked through the group now: the code is refused, as before.
+        (code, _) = await a.Engine.MakeCodeWithAsync(new CodeOptions { Group = g.Id });
+        Assert.Equal(MsfpError.AlreadyMember, await ErrorAsync(() => b.Engine.RedeemCodeAsync(code)));
+    }
 }

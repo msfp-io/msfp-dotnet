@@ -645,7 +645,8 @@ public sealed partial class MsfpEngine
             return Answer.Refuse(ProblemType.Invalid);
         }
 
-        if (await CoMemberAsync(req, id, ct).ConfigureAwait(false) is null || !On(req.Peer!, Versions.PartGroups))
+        var co = await CoMemberAsync(req, id, ct).ConfigureAwait(false);
+        if (co is null || !On(req.Peer!, Versions.PartGroups))
         {
             return Answer.Refuse(ProblemType.NotFound);
         }
@@ -657,6 +658,13 @@ public sealed partial class MsfpEngine
         catch (MsfpException e) when (e.Code != MsfpError.Internal)
         {
             return Answer.Refuse(ProblemType.NotFound);
+        }
+
+        if (co.Via == req.Peer!.Id)
+        {
+            // Pushed by the maker this member used a code with: its yes
+            // (groups section 2, "A member back in").
+            await BackInIfMemberAsync(id!, ct).ConfigureAwait(false);
         }
 
         return Answer.Ok("{}"u8.ToArray());
@@ -839,8 +847,13 @@ public sealed partial class MsfpEngine
         }
 
         var id = Base64UrlText.Encode(c.Group);
-        if (await gt.GroupAsync(id).ConfigureAwait(false) is not null)
+        if (await gt.GroupAsync(id).ConfigureAwait(false) is { } known)
         {
+            // A member back in (groups section 2): the link through the
+            // maker gains the group once it's made.
+            known.Via = peer;
+            known.Joining = NowSecond();
+            await gt.PutGroupAsync(known).ConfigureAwait(false);
             return;
         }
 
@@ -860,8 +873,12 @@ public sealed partial class MsfpEngine
             var ok = true;
             try
             {
-                await ActAsync(id, new GroupEvent { Type = GroupEvents.Joined, NewMember = Base64UrlText.Encode(p.Key), Name = p.Name }, ct)
-                    .ConfigureAwait(false);
+                // A member back in (groups section 2): the link gains the group, nobody signs joined.
+                if (!(await GroupAsync(id, ct).ConfigureAwait(false)).Members.Any(m => m.Peer == p.Id))
+                {
+                    await ActAsync(id, new GroupEvent { Type = GroupEvents.Joined, NewMember = Base64UrlText.Encode(p.Key), Name = p.Name }, ct)
+                        .ConfigureAwait(false);
+                }
             }
             catch (MsfpException e)
             {
@@ -906,6 +923,7 @@ public sealed partial class MsfpEngine
                     await tx.PutPeerAsync(q).ConfigureAwait(false);
                 }
             }, ct).ConfigureAwait(false);
+            await BackInIfMemberAsync(id, ct).ConfigureAwait(false);
             try
             {
                 await SyncWithAsync(id, p, ct).ConfigureAwait(false);
@@ -914,6 +932,39 @@ public sealed partial class MsfpEngine
             {
                 _log.LogInformation(e, "msfp: the group's list couldn't be read from the inviter yet: {Group}", id);
             }
+        }
+    }
+
+    // Ends a member's way back in a group it was already in (groups section
+    // 2, "A member back in"): the link through which it used the code gains
+    // the group, as a newcomer's does when the list names it.
+    private async Task BackInIfMemberAsync(string id, CancellationToken ct)
+    {
+        try
+        {
+            await _store.UpdateAsync(async tx =>
+            {
+                var gt = GroupsOf(tx);
+                if (await gt.GroupAsync(id).ConfigureAwait(false) is not { Via: { } via } g || !StateOf(g).Members.ContainsKey(g.Me))
+                {
+                    return;
+                }
+
+                if (await tx.PeerAsync(via).ConfigureAwait(false) is { } p && p.Groups?.Contains(id) != true)
+                {
+                    (p.Groups ??= []).Add(id);
+                    await tx.PutPeerAsync(p).ConfigureAwait(false);
+                }
+
+                g.Via = null;
+                g.Joining = null;
+                await gt.PutGroupAsync(g).ConfigureAwait(false);
+                await RefreshLinksAsync(tx).ConfigureAwait(false);
+            }, ct).ConfigureAwait(false);
+        }
+        catch (MsfpException e)
+        {
+            _log.LogInformation(e, "msfp: back in a group: the link couldn't gain it: {Group}", id);
         }
     }
 
@@ -1002,7 +1053,11 @@ public sealed partial class MsfpEngine
         var id = Base64UrlText.Encode(c.Group);
         await _store.ReadAsync(async tx =>
         {
-            if (await GroupsOf(tx).GroupAsync(id).ConfigureAwait(false) is not null)
+            // A member back in, through a link that isn't through the group
+            // (groups section 2): only if this server can be called, for the
+            // maker's push says yes.
+            if (await GroupsOf(tx).GroupAsync(id).ConfigureAwait(false) is { } g &&
+                (p.Groups?.Contains(id) == true || SaysUncallable() || !StateOf(g).Members.ContainsKey(g.Me)))
             {
                 throw new MsfpException(MsfpError.AlreadyMember);
             }
@@ -1094,8 +1149,11 @@ public sealed partial class MsfpEngine
                     throw new MsfpException(MsfpError.NotFound);
                 }
 
-                if (s.Banned.ContainsKey(Base64UrlText.Encode(peer.Key)) || s.Members.Values.Any(m => IsMember(m, peer)) ||
-                    g.Joins?.Any(j => j.Peer == peer.Id) == true)
+                // A member is back in through a link that isn't through the
+                // group (section 2), if it can be called: it learns of the yes
+                // from this server's push.
+                var member = s.Members.Values.Any(m => IsMember(m, peer)) && (peer.Groups?.Contains(g.Id) == true || peer.Inbound != Inbound.Yes);
+                if (s.Banned.ContainsKey(Base64UrlText.Encode(peer.Key)) || member || g.Joins?.Any(j => j.Peer == peer.Id) == true)
                 {
                     throw new MsfpException(MsfpError.AlreadyMember);
                 }
@@ -1140,8 +1198,13 @@ public sealed partial class MsfpEngine
             throw new MsfpException(MsfpError.NotPaired);
         }
 
-        await ActAsync(id, new GroupEvent { Type = GroupEvents.Joined, NewMember = Base64UrlText.Encode(p.Key), Name = p.Name }, ct)
-            .ConfigureAwait(false);
+        // A member back in (groups section 2): nobody signs joined.
+        if (g.Members.All(m => m.Peer != p.Id))
+        {
+            await ActAsync(id, new GroupEvent { Type = GroupEvents.Joined, NewMember = Base64UrlText.Encode(p.Key), Name = p.Name }, ct)
+                .ConfigureAwait(false);
+        }
+
         await _store.UpdateAsync(async tx =>
         {
             var gt = GroupsOf(tx);
