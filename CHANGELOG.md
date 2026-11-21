@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.6.0-preview (2026-11-21)
+
+msfp-go v0.6.0 in .NET.
 
 Relations (MSFP core section 7.7, proposal 14): the operator manages why
 two servers are linked, not the link. A link lasts while one relation
