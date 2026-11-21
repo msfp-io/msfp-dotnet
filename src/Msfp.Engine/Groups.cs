@@ -139,10 +139,6 @@ public sealed partial class MsfpEngine
     // for the operator: a code works 30 days at most.
     private static readonly TimeSpan JoinWait = PairingCode.MaxLifetime;
 
-    // A clock far in the future, for replaying kept events: their dates
-    // were checked when they arrived.
-    private static readonly TimeSpan ReplayAhead = TimeSpan.FromDays(365 * 100);
-
     private static string Role(GroupState s, string member) =>
         member == s.Owner ? "owner" : s.Members.TryGetValue(member, out var m) && m.Admin ? "admin" : "member";
 
@@ -157,18 +153,16 @@ public sealed partial class MsfpEngine
 
     private static GroupEnvelope Envelope(StoredMail m) => new() { Mail = m.Mail, Signature = m.Signature };
 
-    // A group's state: its kept events replayed.
-    private GroupState StateOf(GroupRecord g)
-    {
-        var s = new GroupState();
-        var at = Now() + ReplayAhead;
-        foreach (var e in g.Events)
-        {
-            s.Apply(Envelope(e), at);
-        }
+    // A group's kept events: its list, and those a former version held
+    // aside (read as kept ones, groups section 3.2).
+    private static IEnumerable<StoredEvent> KeptEvents(GroupRecord g) => g.Events.Concat(g.Held ?? []);
 
-        return s;
-    }
+    // A stored event's ID: SHA-256 of its payload, base64url.
+    private static string StoredId(StoredEvent e) => GroupEvents.Id(Base64UrlText.Decode(e.Event) ?? []);
+
+    // The state a group's kept events give (groups section 3.5), whatever
+    // order they came in.
+    private static GroupState StateOf(GroupRecord g) => GroupState.Compute(g.Id, KeptEvents(g).Select(Envelope)).State;
 
     private static string Fingerprint(string key) =>
         Base64UrlText.Decode(key, 32) is { } k ? Keys.Fingerprint(k) : "";
@@ -249,17 +243,18 @@ public sealed partial class MsfpEngine
 
     // ---- signing this server's events ------------------------------------
 
-    // Makes this server's next event in a group, on its state, and applies
-    // it there: its seq, and ownerSeq or asOf as its role asks. NoRight
-    // when the rules refuse it.
-    private StoredEvent SignEvent(GroupRecord g, GroupState s, GroupEvent ev)
+    // Makes this server's next event in a group, from its state: its seq,
+    // and ownerSeq or asOf as its role asks. It must count with the events
+    // kept, or it isn't sent: NoRight. Gives the event and the state with it.
+    private (StoredEvent Event, GroupState State) SignEvent(GroupRecord g, GroupState s, GroupEvent ev)
     {
         var key = Current();
         var now = Now();
         ev = ev with
         {
             Group = ev.Type == GroupEvents.Founded ? null : g.Id, Signer = Base64UrlText.Encode(key.Public()), Member = g.Me,
-            Seq = s.Seq(g.Me) + 1, Date = now.ToUnixTimeSeconds(),
+            // Never a seq it signed already, counted or not.
+            Seq = s.Highest(g.Me) + 1, Date = now.ToUnixTimeSeconds(),
         };
         if (s.Owner == g.Me && ev.Type is not (GroupEvents.Profile or GroupEvents.Left or GroupEvents.Rotated or GroupEvents.Revoked))
         {
@@ -270,14 +265,14 @@ public sealed partial class MsfpEngine
             ev = ev with { AsOf = s.OwnerSeq };
         }
 
-        var (env, _) = GroupEvents.Sign(key, ev);
-        var r = s.Apply(env, now);
-        if (r.Verdict != GroupVerdict.Kept)
+        var (env, id) = GroupEvents.Sign(key, ev);
+        var (next, results) = GroupState.Compute(ev.Type == GroupEvents.Founded ? id : g.Id, KeptEvents(g).Select(Envelope).Append(env));
+        if (results.GetValueOrDefault(id) is not { Verdict: GroupVerdict.Counted })
         {
-            throw new MsfpException(MsfpError.NoRight, r.Reason);
+            throw new MsfpException(MsfpError.NoRight, results.GetValueOrDefault(id)?.Reason ?? "");
         }
 
-        return new StoredEvent { Event = env.Event, Signature = env.Signature, Received = now };
+        return (new StoredEvent { Event = env.Event, Signature = env.Signature, Received = now }, next);
     }
 
     // Signs one event of this server in a group, keeps it, and passes it
@@ -310,7 +305,7 @@ public sealed partial class MsfpEngine
                 throw new MsfpException(MsfpError.NotMember);
             }
 
-            sent = SignEvent(g, s, ev);
+            (sent, s) = SignEvent(g, s, ev);
             g.Events.Add(sent);
             await GroupsOf(tx).PutGroupAsync(g).ConfigureAwait(false);
             await AfterEventsAsync(tx, g, s, effects).ConfigureAwait(false);
@@ -337,8 +332,7 @@ public sealed partial class MsfpEngine
 
         var g = new GroupRecord { Me = Base64UrlText.Encode(Current().Public()), Pool = _cfg.NewPairing! with { } };
         await NewMailKeyAsync(g, ct).ConfigureAwait(false);
-        var s = new GroupState();
-        var founded = SignEvent(g, s, new GroupEvent
+        var (founded, s) = SignEvent(g, new GroupState(), new GroupEvent
         {
             Type = GroupEvents.Founded, Name = name, Settings = settings, Nonce = Base64UrlText.Encode(RandomBytes(16)), OwnerSeq = 1,
         });
@@ -365,7 +359,7 @@ public sealed partial class MsfpEngine
         {
             Type = GroupEvents.Profile, Name = Name(), EncryptionKey = Base64UrlText.Encode(pub),
             NextCommitment = Base64UrlText.Encode(OurKeys().Commitment),
-        });
+        }).Event;
     }
 
     // A group's ID and name for a code inviting to it: this server must be

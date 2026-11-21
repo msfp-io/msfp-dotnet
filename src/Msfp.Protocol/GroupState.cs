@@ -3,21 +3,25 @@ using System.Text.Json.Nodes;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// What a copy's events give (groups sections 3.2 to 3.5): members, roles,
-/// settings, bans. Built by applying the events in the order the copy
-/// keeps them; two copies with the same events give the same state.
+/// What a group's kept events give (groups section 3.5): members, roles,
+/// settings, bans. <see cref="Compute"/> replays them in one order that
+/// doesn't depend on how they arrived, so copies that kept the same events
+/// have the same state.
 /// </summary>
 public sealed class GroupState
 {
-    private readonly Dictionary<string, long> _seq = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, Dictionary<long, string>> _payloads = new(StringComparer.Ordinal);
+    // At most this many replays while the cuts change (section 3.5, rule 3).
+    private const int MaxRounds = 8;
+
+    private readonly Dictionary<string, long> _seq = new(StringComparer.Ordinal); // member -> last replayed seq
     private readonly List<(long OwnerSeq, string Target, bool On)> _adminLog = [];
     private readonly Dictionary<string, long> _removedAt = new(StringComparer.Ordinal); // admin -> the last seq that counts
     private readonly Dictionary<string, long> _bannedAt = new(StringComparer.Ordinal);  // banned -> the last seq that counts
     private readonly Dictionary<string, (long Seq, string Key)> _revoked = new(StringComparer.Ordinal); // the key revoked, its last good seq
     private readonly Dictionary<string, List<(long Seq, string Key)>> _keys = new(StringComparer.Ordinal); // keys in force from a seq
-    private readonly Dictionary<string, long> _capCount = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _ids = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _everMember = new(StringComparer.Ordinal); // named by a counted founded or joined
+    private readonly Dictionary<string, long> _highest = new(StringComparer.Ordinal); // member -> its highest seq kept, whatever its verdict
+    private Dictionary<string, int> _capRank = new(StringComparer.Ordinal); // joined event ID -> its rank in its inviter's UTC day
 
     /// <summary>The group's ID: its founded event's; "" before it.</summary>
     public string Id { get; private set; } = "";
@@ -58,10 +62,16 @@ public sealed class GroupState
     /// <summary>The group's count of owner events.</summary>
     public long OwnerSeq { get; private set; }
 
-    /// <summary>A member's last kept seq (0 for none).</summary>
+    /// <summary>A member's last replayed seq (0 for none).</summary>
     public long Seq(string member) => _seq.GetValueOrDefault(member);
 
-    /// <summary>Every member's last kept seq, for group-sync.</summary>
+    /// <summary>
+    /// A member's highest seq kept, counted or not: the member signs its
+    /// next event with the one after it, never twice the same (section 3.2).
+    /// </summary>
+    public long Highest(string member) => Math.Max(_highest.GetValueOrDefault(member), Seq(member));
+
+    /// <summary>Every member's last replayed seq, for group-sync.</summary>
     public Dictionary<string, long> Have() => new(_seq, StringComparer.Ordinal);
 
     /// <summary>Whether a member is the owner or an admin now.</summary>
@@ -97,48 +107,229 @@ public sealed class GroupState
         return k;
     }
 
-    private static GroupApplied Refuse(GroupEvent? ev, string id, string why) => new(GroupVerdict.Refused, ev, id, why);
+    // An event in a replay.
+    private sealed class Entry(GroupEvent ev, string id)
+    {
+        public GroupEvent Event { get; } = ev;
+
+        public string Id { get; } = id;
+
+        public bool Done { get; set; }
+    }
+
+    // What bans, removals of admins and revocations take away from a
+    // member's events after a seq: applied from the start of a replay, so
+    // that the events a cut covers never count, whenever the cutting event
+    // comes (section 3.5, rule 3).
+    private sealed class Cuts
+    {
+        public Dictionary<string, long> Banned { get; } = new(StringComparer.Ordinal);
+
+        public Dictionary<string, long> Removed { get; } = new(StringComparer.Ordinal);
+
+        public Dictionary<string, (long Seq, string Key)> Revoked { get; } = new(StringComparer.Ordinal);
+
+        public bool SameAs(Cuts o) => Same(Banned, o.Banned) && Same(Removed, o.Removed) && Same(Revoked, o.Revoked);
+
+        private static bool Same<T>(Dictionary<string, T> a, Dictionary<string, T> b) =>
+            a.Count == b.Count && a.All(kv => b.TryGetValue(kv.Key, out var v) && EqualityComparer<T>.Default.Equals(v, kv.Value));
+
+        // The cut a counted event makes, after it was replayed on s; with
+        // two on one member, the lower lastSeq holds.
+        public void Add(GroupEvent ev, GroupState s)
+        {
+            switch (ev.Type)
+            {
+                case GroupEvents.Banned:
+                    Lower(Banned, ev.Target!, ev.LastSeq!.Value);
+                    break;
+                case GroupEvents.Admin when ev.On == false && ev.LastSeq is { } last:
+                    Lower(Removed, ev.Target!, last);
+                    break;
+                case GroupEvents.Revoked:
+                    Revoked[ev.Member] = s._revoked[ev.Member];
+                    break;
+            }
+        }
+
+        private static void Lower(Dictionary<string, long> d, string member, long seq)
+        {
+            if (!d.TryGetValue(member, out var old) || seq < old)
+            {
+                d[member] = seq;
+            }
+        }
+    }
 
     /// <summary>
-    /// Keeps an event if the rules allow it (groups sections 3.2 to 3.5),
-    /// now being the copy's clock: <see cref="GroupVerdict.Held"/> when it
-    /// must wait, <see cref="GroupVerdict.Had"/> when it is there already,
-    /// <see cref="GroupVerdict.Refused"/> when the rules refuse it.
+    /// The state a set of kept events gives (groups section 3.5), the same
+    /// whatever order they arrived in, with each event's verdict by its ID.
+    /// group is the group's ID (its founded event's). Envelopes that don't
+    /// read, or are another group's, are left out (<see cref="GroupEvents.Check"/>
+    /// says why).
     /// </summary>
-    public GroupApplied Apply(GroupEnvelope e, DateTimeOffset now)
+    /// <remarks>
+    /// The events are replayed in one order: at each step, the ready event
+    /// with the lowest ID whose rules hold counts; when none's hold, the
+    /// ready one with the lowest ID is replayed without counting. An event
+    /// is ready once its member's earlier events, the owner event it follows
+    /// or names, its member's joined and, for a ban or an admin's removal,
+    /// its target's events up to its lastSeq have been replayed. Bans,
+    /// removals of admins and revocations take away events of their target
+    /// after a seq whenever they come: the replay starts again with them
+    /// applied from the start, until they no longer change.
+    /// </remarks>
+    public static (GroupState State, IReadOnlyDictionary<string, GroupEventResult> Results) Compute(string group, IEnumerable<GroupEnvelope> envelopes)
     {
-        ArgumentNullException.ThrowIfNull(e);
-        if (GroupEvents.Read(e) is not var (ev, b, id))
+        ArgumentNullException.ThrowIfNull(group);
+        ArgumentNullException.ThrowIfNull(envelopes);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var events = new List<Entry>();
+        foreach (var e in envelopes)
         {
-            return Refuse(null, "", "the envelope, the payload or its signature isn't valid");
+            if (GroupEvents.Read(e) is not var (ev, _, id) || (ev.Type == GroupEvents.Founded ? id != group : ev.Group != group) || !seen.Add(id))
+            {
+                continue;
+            }
+
+            events.Add(new Entry(ev, id));
         }
 
-        if (_ids.Contains(id))
+        events.Sort((a, b) => string.CompareOrdinal(a.Id, b.Id));
+
+        // The daily cap: each inviter's joined events of a UTC day, in date
+        // then ID order (section 3.5); the ID order is the list's, and
+        // OrderBy is stable.
+        var capRank = new Dictionary<string, int>(StringComparer.Ordinal);
+        var days = events.Where(k => k.Event.Type == GroupEvents.Joined)
+            .GroupBy(k => k.Event.Member + " " + GroupEvents.Day(k.Event.Date), StringComparer.Ordinal);
+        foreach (var day in days)
         {
-            return new(GroupVerdict.Had, ev, id, "");
+            var rank = 0;
+            foreach (var k in day.OrderBy(k => k.Event.Date))
+            {
+                capRank[k.Id] = rank++;
+            }
         }
 
-        if (ev.Seq < 1 || ev.Date < 1 || ev.Type.Length == 0 || ev.Member.Length == 0)
+        var cuts = new Cuts();
+        var (s, results, next) = Replay(events, cuts, capRank);
+        for (var round = 1; round < MaxRounds && !next.SameAs(cuts); round++)
         {
-            return Refuse(ev, id, "a common member is missing");
+            cuts = next;
+            (s, results, next) = Replay(events, cuts, capRank);
         }
 
-        if (ev.Date > now.ToUnixTimeSeconds() + 300)
+        return (s, results);
+    }
+
+    // Replays the events once, with the cuts applied from the start, and
+    // gives the cuts its counted events make.
+    private static (GroupState State, Dictionary<string, GroupEventResult> Results, Cuts Next) Replay(List<Entry> events, Cuts cuts, Dictionary<string, int> capRank)
+    {
+        var s = new GroupState { _capRank = capRank };
+        foreach (var (m, seq) in cuts.Banned)
         {
-            return Refuse(ev, id, "dated more than 5 minutes in the future");
+            s._bannedAt[m] = seq;
         }
 
-        var text = Convert.ToBase64String(b);
+        foreach (var (m, seq) in cuts.Removed)
+        {
+            s._removedAt[m] = seq;
+        }
+
+        foreach (var (m, r) in cuts.Revoked)
+        {
+            s._revoked[m] = r;
+        }
+
+        var next = new Cuts();
+        var bySeq = events.ToLookup(k => (k.Event.Member, k.Event.Seq));
+        foreach (var k in events)
+        {
+            k.Done = false;
+        }
+
+        var results = new Dictionary<string, GroupEventResult>(StringComparer.Ordinal);
+        for (var final = false; ;)
+        {
+            var progressed = false;
+            foreach (var k in events)
+            {
+                if (k.Done || s.Step(k, bySeq, final) is not { } r)
+                {
+                    continue;
+                }
+
+                final = false;
+                k.Done = progressed = true;
+                results[k.Id] = new GroupEventResult(k.Event, r.Verdict, r.Reason);
+                if (r.Verdict == GroupVerdict.Counted)
+                {
+                    next.Add(k.Event, s);
+                }
+
+                break; // again from the lowest ID
+            }
+
+            if (!progressed)
+            {
+                if (final)
+                {
+                    break;
+                }
+
+                // No ready event can count: the lowest ready one is refused.
+                final = true;
+            }
+        }
+
+        foreach (var k in events)
+        {
+            if (!k.Done)
+            {
+                results[k.Id] = new GroupEventResult(k.Event, GroupVerdict.Pending, "waiting for events it needs");
+            }
+
+            if (results[k.Id].Verdict != GroupVerdict.Forged && k.Event.Seq > s._highest.GetValueOrDefault(k.Event.Member))
+            {
+                s._highest[k.Event.Member] = k.Event.Seq;
+            }
+        }
+
+        return (s, results, next);
+    }
+
+    // Whether an event is its member's: signed with the member's key in
+    // force at its seq, or, for rotated, a statement from that key to the
+    // signer that verifies (section 3.2).
+    private bool SignedByMember(GroupEvent ev)
+    {
+        var cur = KeyAt(ev.Member, ev.Seq);
+        if (ev.Type != GroupEvents.Rotated)
+        {
+            return ev.Signer == cur;
+        }
+
+        return ev.Statement is { } st && Text(st, "oldKey") == cur && Text(st, "newKey") == ev.Signer && VerifiedRotation(st) is not null;
+    }
+
+    // Replays one event: null when it isn't replayed at this turn, because
+    // it isn't ready, or its rules don't hold now while other events may
+    // count (with final, it is refused instead).
+    private (GroupVerdict Verdict, string Reason)? Step(Entry k, ILookup<(string, long), Entry> bySeq, bool final)
+    {
+        var (ev, id) = (k.Event, k.Id);
         if (ev.Type == GroupEvents.Founded)
         {
             if (Id.Length > 0)
             {
-                return Refuse(ev, id, "a second founded event");
+                return (GroupVerdict.Refused, "a second founded event");
             }
 
-            if (ev.Seq != 1 || ev.Member != ev.Signer || ev.OwnerSeq != 1 || ev.Group is not null)
+            if (ev.Seq != 1 || ev.Member != ev.Signer || ev.OwnerSeq != 1 || !string.IsNullOrEmpty(ev.Group))
             {
-                return Refuse(ev, id, "founded: seq 1, ownerSeq 1, by the founder's own key");
+                return (GroupVerdict.Forged, "founded: seq 1, ownerSeq 1, by the founder's own key");
             }
 
             Id = id;
@@ -147,86 +338,123 @@ public sealed class GroupState
             Name = Music.CleanText(ev.Name ?? "", PairingCode.MaxGroupName);
             ApplySettings(ev.Settings);
             Members[ev.Member] = new GroupMember { Id = ev.Member, Key = ev.Member, Joined = ev.Date, JoinedId = id };
-            KeepEvent(ev, text, id);
-            return new(GroupVerdict.Kept, ev, id, "");
+            _everMember.Add(ev.Member);
+            KeepEvent(ev);
+            return (GroupVerdict.Counted, "");
         }
 
-        if (Id.Length == 0 || ev.Group != Id)
+        if (Id.Length == 0 || ev.Seq > Seq(ev.Member) + 1)
         {
-            return Refuse(ev, id, "another group's event");
+            return null; // pending: the founded event, or the member's earlier events
+        }
+
+        if (!SignedByMember(ev))
+        {
+            return (GroupVerdict.Forged, "not signed by its member's key in force at its seq");
+        }
+
+        if (ev.Seq <= Seq(ev.Member))
+        {
+            // Its seq was replayed: another payload of the member's with
+            // that seq, met below.
+            return (GroupVerdict.Refused, "equivocation: two events with one seq");
+        }
+
+        if (!_everMember.Contains(ev.Member))
+        {
+            return null; // pending: its joined hasn't counted yet
+        }
+
+        (GroupVerdict, string)? Refuse(string why)
+        {
+            KeepEvent(ev);
+            return (GroupVerdict.Refused, why);
+        }
+
+        // What may hold later: the event waits while others can count.
+        (GroupVerdict, string)? Fail(string why) => final ? Refuse(why) : null;
+
+        // Equivocation (section 3.2): another payload of the member's own
+        // with this seq: neither counts, the member is excluded.
+        foreach (var other in bySeq[(ev.Member, ev.Seq)])
+        {
+            if (other.Id != id && SignedByMember(other.Event))
+            {
+                if (!Excluded.Contains(ev.Member))
+                {
+                    Excluded.Add(ev.Member);
+                    Remove(ev.Member);
+                }
+
+                return Refuse("equivocation: two events with one seq");
+            }
         }
 
         if (Dissolved)
         {
-            return Refuse(ev, id, "the group is dissolved");
+            return Refuse("the group is dissolved");
         }
 
         if (Excluded.Contains(ev.Member))
         {
-            return Refuse(ev, id, "its member was excluded");
-        }
-
-        if (_payloads.TryGetValue(ev.Member, out var kept) && kept.TryGetValue(ev.Seq, out var prev) && prev != text)
-        {
-            // Equivocation (groups section 3.2): the member excluded.
-            Excluded.Add(ev.Member);
-            Remove(ev.Member);
-            return Refuse(ev, id, "equivocation: two events with one seq");
-        }
-
-        var last = Seq(ev.Member);
-        if (ev.Seq > last + 1)
-        {
-            return new(GroupVerdict.Held, ev, id, "");
-        }
-
-        if (ev.Seq <= last)
-        {
-            return new(GroupVerdict.Had, ev, id, "");
+            return Refuse("its member was excluded");
         }
 
         if (!Members.ContainsKey(ev.Member) && ev.Type != GroupEvents.Left)
         {
-            return Refuse(ev, id, "its signer isn't a member");
-        }
-
-        if (KeyAt(ev.Member, ev.Seq) != ev.Signer && ev.Type != GroupEvents.Rotated)
-        {
-            return Refuse(ev, id, "signer isn't the member's key at that seq");
+            return Fail("its signer isn't a member");
         }
 
         if (_removedAt.TryGetValue(ev.Member, out var removed) && ev.Seq > removed && ev.Type is GroupEvents.Joined or GroupEvents.Banned)
         {
-            return Refuse(ev, id, "signed after its signer's role was removed");
+            return Refuse("signed after its signer's role was removed");
         }
 
         if (_bannedAt.TryGetValue(ev.Member, out var banned) && ev.Seq > banned)
         {
-            return Refuse(ev, id, "signed after its signer was banned");
+            return Refuse("signed after its signer was banned");
         }
 
-        if (_revoked.TryGetValue(ev.Member, out var r) && ev.Signer == r.Key && ev.Seq > r.Seq)
+        // A revoked event is exempt from its own key's cut: it is how the
+        // member says the key is gone.
+        if (_revoked.TryGetValue(ev.Member, out var r) && ev.Signer == r.Key && ev.Seq > r.Seq && ev.Type != GroupEvents.Revoked)
         {
-            return Refuse(ev, id, "signed with a revoked key after its last good event");
+            return Refuse("signed with a revoked key after its last good event");
         }
 
         var owner = ev.Member == Owner;
         var ownerEvent = owner && IsOwnerEvent(ev.Type);
-        if (ownerEvent && ev.OwnerSeq != OwnerSeq + 1)
+        if (ownerEvent)
         {
-            return ev.OwnerSeq > OwnerSeq + 1 ? new(GroupVerdict.Held, ev, id, "") : Refuse(ev, id, "an owner event whose ownerSeq was taken");
+            var ownerSeq = ev.OwnerSeq ?? 0;
+            if (ownerSeq > OwnerSeq + 1)
+            {
+                return null; // pending: the owner event before it
+            }
+
+            if (ownerSeq != OwnerSeq + 1)
+            {
+                return Refuse("an owner event whose ownerSeq was taken");
+            }
         }
 
         var asOf = ev.AsOf ?? 0;
         if (!owner && asOf > OwnerSeq)
         {
-            return new(GroupVerdict.Held, ev, id, "");
+            return null; // pending: the owner event its asOf names
         }
 
-        var admin = !owner && asOf > 0 && AdminAsOf(ev.Member, asOf);
+        // A ban and the removal of an admin wait for their target's events
+        // up to their lastSeq: those count (section 3.5).
+        if ((ev.Type == GroupEvents.Banned || (ev.Type == GroupEvents.Admin && ev.On == false)) && ev.LastSeq is { } upTo && Seq(ev.Target ?? "") < upTo)
+        {
+            return null;
+        }
+
+        var admin = !owner && asOf > 0 && asOf <= OwnerSeq && AdminAsOf(ev.Member, asOf);
         if (ApplyType(ev, id, owner, admin) is { } why)
         {
-            return Refuse(ev, id, why);
+            return Fail(why);
         }
 
         if (ownerEvent)
@@ -234,24 +462,14 @@ public sealed class GroupState
             OwnerSeq = ev.OwnerSeq!.Value;
         }
 
-        KeepEvent(ev, text, id);
-        return new(GroupVerdict.Kept, ev, id, "");
+        KeepEvent(ev);
+        return (GroupVerdict.Counted, "");
     }
 
     private static bool IsOwnerEvent(string type) =>
         type is not (GroupEvents.Profile or GroupEvents.Rotated or GroupEvents.Revoked or GroupEvents.Left);
 
-    private void KeepEvent(GroupEvent ev, string text, string id)
-    {
-        _seq[ev.Member] = ev.Seq;
-        if (!_payloads.TryGetValue(ev.Member, out var kept))
-        {
-            _payloads[ev.Member] = kept = [];
-        }
-
-        kept[ev.Seq] = text;
-        _ids.Add(id);
-    }
+    private void KeepEvent(GroupEvent ev) => _seq[ev.Member] = ev.Seq;
 
     private void Remove(string member)
     {
@@ -311,9 +529,9 @@ public sealed class GroupState
                     return "newMember isn't a key";
                 }
 
-                if (Banned.ContainsKey(ev.NewMember!))
+                if (Banned.ContainsKey(ev.NewMember!) || Excluded.Contains(ev.NewMember!))
                 {
-                    return "the newcomer is banned";
+                    return "the newcomer is banned, or excluded";
                 }
 
                 if (Member(ev.NewMember))
@@ -321,13 +539,14 @@ public sealed class GroupState
                     return "the newcomer is a member already";
                 }
 
-                var day = ev.Member + " " + GroupEvents.Day(ev.Date);
-                if (_capCount.GetValueOrDefault(day) >= Settings.CapPerDay)
+                // The inviter's joined events of a UTC day beyond the cap,
+                // by date then ID, don't count (section 3.5).
+                if (_capRank.GetValueOrDefault(id) >= Settings.CapPerDay)
                 {
                     return "over the inviter's daily cap";
                 }
 
-                _capCount[day] = _capCount.GetValueOrDefault(day) + 1;
+                _everMember.Add(ev.NewMember!);
                 Members[ev.NewMember!] = new GroupMember
                 {
                     Id = ev.NewMember!, Key = ev.NewMember!, Name = Music.CleanText(ev.Name ?? "", PairingCode.MaxGroupName),
@@ -547,19 +766,7 @@ public sealed class GroupState
             return "the rotation isn't from the member's key to the signer";
         }
 
-        var old = Base64UrlText.Decode(oldText, 32);
-        var nu = Base64UrlText.Decode(newText, 32);
-        var commitmentText = Text(st, "nextCommitment");
-        var commitment = string.IsNullOrEmpty(commitmentText) ? null : Base64UrlText.Decode(commitmentText, 32);
-        var os = Base64UrlText.Decode(Text(st, "oldSignature"), 64);
-        var ns = Base64UrlText.Decode(Text(st, "newSignature"), 64);
-        if (old is null || nu is null || os is null || ns is null || Integer(st, "date") is not { } date || !Ed25519Strict.ValidKey(nu))
-        {
-            return "the rotation statement doesn't verify";
-        }
-
-        var msg = Rotations.RotationStatement(old, nu, commitment, date);
-        if (!Ed25519Strict.Verify(old, msg, os) || !Ed25519Strict.Verify(nu, msg, ns))
+        if (VerifiedRotation(st) is not var (nu, commitment))
         {
             return "the rotation statement doesn't verify";
         }
@@ -579,13 +786,32 @@ public sealed class GroupState
             _keys[ev.Member] = list = [];
         }
 
-        list.Add((ev.Seq, newText));
+        list.Add((ev.Seq, newText!));
         if (m is not null)
         {
             m.Key = newText;
         }
 
         return null;
+    }
+
+    // A rotation statement that verifies as core section 12.2 says: its new
+    // key and next commitment; null when it doesn't.
+    private static (byte[] NewKey, byte[]? Commitment)? VerifiedRotation(JsonObject st)
+    {
+        var old = Base64UrlText.Decode(Text(st, "oldKey"), 32);
+        var nu = Base64UrlText.Decode(Text(st, "newKey"), 32);
+        var commitmentText = Text(st, "nextCommitment");
+        var commitment = string.IsNullOrEmpty(commitmentText) ? null : Base64UrlText.Decode(commitmentText, 32);
+        var os = Base64UrlText.Decode(Text(st, "oldSignature"), 64);
+        var ns = Base64UrlText.Decode(Text(st, "newSignature"), 64);
+        if (old is null || nu is null || os is null || ns is null || Integer(st, "date") is not { } date || !Ed25519Strict.ValidKey(nu))
+        {
+            return null;
+        }
+
+        var msg = Rotations.RotationStatement(old, nu, commitment, date);
+        return Ed25519Strict.Verify(old, msg, os) && Ed25519Strict.Verify(nu, msg, ns) ? (nu, commitment) : null;
     }
 
     // revoked (section 3.3): the statement verifies as core section 12.6

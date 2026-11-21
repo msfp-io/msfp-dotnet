@@ -396,11 +396,11 @@ public sealed record GroupRecord
     [JsonPropertyName("via"), OmitEmpty]
     public string? Via { get; set; }
 
-    /// <summary>The events kept, in the order kept.</summary>
+    /// <summary>The events kept, counted or not, in the order kept: the state is their replay (groups section 3.5).</summary>
     [JsonPropertyName("events")]
     public List<StoredEvent> Events { get; set; } = [];
 
-    /// <summary>Events waiting for earlier ones.</summary>
+    /// <summary>Events a former version held until what they follow arrived: read as kept events, no longer written.</summary>
     [JsonPropertyName("held"), OmitEmpty]
     public List<StoredEvent>? Held { get; set; }
 

@@ -22,8 +22,7 @@ of the former version 1. The vectors are the spec's `vectors/v0/`, and
   `Read`, `SealMail`, `ReadMail`, `PeekMail`, `OpenMail`, `MailKeyPair`,
   `MailId`, `JoinProof`, `CheckJoinProof`), `GroupEnvelope`,
   `GroupEvent`, `GroupMail`, `SealedContent`, `GroupSettings`,
-  `GroupState` (`Apply` gives a `GroupApplied` with a `GroupVerdict`:
-  Kept, Held, Had or Refused; `Successor`, `Seq`, `Have`, `IsAdmin`,
+  `GroupState` (`Successor`, `Seq`, `Highest`, `Have`, `IsAdmin`,
   `WasBanned`), `GroupMember`. Mail is sealed with HPKE (RFC 9180 base
   mode, DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, AES-128-GCM).
 - `Msfp.Engine`, groups (MSFP groups part): `CreateGroupAsync`,
@@ -57,6 +56,19 @@ of the former version 1. The vectors are the spec's `vectors/v0/`, and
   pairing (MSFP groups section 8.4): `RedeemCodeAsync` calls `group-join`
   instead of `pair`, `ReadCodeAsync` no longer refuses such a code.
   Unanswered, a join is dropped after 30 days on both sides.
+- A group's state is the same for every copy that kept the same events,
+  whatever order they arrived in (MSFP groups sections 3.2 and 3.5, as
+  msfp-go): `GroupState.Compute(group, envelopes)` replays them all and
+  gives the state with a `GroupEventResult` per event ID, whose
+  `GroupVerdict` is Counted, Refused, Pending or Forged;
+  `GroupEvents.Check` is what a copy checks before keeping an event (a
+  `GroupCheck`). `GroupState.Apply`, `GroupApplied` and the verdicts
+  Kept, Held and Had are gone; `GroupState.Highest` gives the seq a
+  member signs next. Events that don't count are kept and passed on too,
+  and Forged ones, and Pending ones after 30 days, dropped;
+  `GroupRecord.Held` is no longer written (its events are read as kept
+  ones). Signed by someone else than the member, an event can no longer
+  exclude it.
 - A stranger is heard on `pair` (a code live) and `group-pair` (a member
   of one of this server's groups) only: on any other call it gets the
   plain 404, as in msfp-go.

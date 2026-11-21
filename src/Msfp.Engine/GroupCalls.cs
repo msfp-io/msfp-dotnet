@@ -21,8 +21,8 @@ public sealed partial class MsfpEngine
 
     // ---- receiving events and mail ------------------------------------------
 
-    // Keeps what a member passed on: events (in any order: those that wait
-    // for earlier ones are held) and mail; what was new is passed on to the
+    // Keeps what a member passed on: events (in any order, counted or not:
+    // the state is their replay) and mail; what was new is passed on to the
     // others, but from.
     private async Task ReceiveAsync(string id, IReadOnlyList<GroupEnvelope> events, IReadOnlyList<GroupEnvelope> mail, string from, CancellationToken ct)
     {
@@ -38,40 +38,46 @@ public sealed partial class MsfpEngine
             told.Clear();
             var types = new List<string>();
             var g = await GroupOfAsync(tx, id).ConfigureAwait(false);
-            var s = StateOf(g);
-            var wasMember = s.Members.ContainsKey(g.Me);
+            var wasMember = StateOf(g).Members.ContainsKey(g.Me);
             var now = Now();
-            var pending = new List<StoredEvent>(g.Held ?? []);
-            pending.AddRange(events.Select(e => new StoredEvent { Event = e.Event, Signature = e.Signature, Received = now }));
-            for (var progress = true; progress;)
+
+            // Every event that passes section 3.2's checks is kept and
+            // passed on, counted or not: the state is what they all give,
+            // whatever order they came in (groups section 3.5).
+            var all = KeptEvents(g).ToList();
+            var known = all.Select(StoredId).ToHashSet(StringComparer.Ordinal);
+            var added = new List<StoredEvent>();
+            foreach (var e in events)
             {
-                progress = false;
-                var still = new List<StoredEvent>();
-                foreach (var p in pending)
+                if (GroupEvents.Check(e, id, now) is { Kept: true } c && known.Add(c.Id))
                 {
-                    var r = s.Apply(Envelope(p), now);
-                    switch (r.Verdict)
-                    {
-                        case GroupVerdict.Kept:
-                            if (!types.Contains(r.Event!.Type))
-                            {
-                                types.Add(r.Event.Type);
-                            }
-
-                            g.Events.Add(p);
-                            newEvents.Add(p);
-                            progress = true;
-                            break;
-                        case GroupVerdict.Held when now - p.Received < GroupEvents.HeldFor:
-                            still.Add(p);
-                            break;
-                    }
+                    added.Add(new StoredEvent { Event = e.Event, Signature = e.Signature, Received = now });
                 }
-
-                pending = still;
             }
 
-            g.Held = pending.Count > 0 ? pending : null;
+            all.AddRange(added);
+            var (s, results) = GroupState.Compute(id, all.Select(Envelope));
+            GroupVerdict? VerdictOf(StoredEvent e) => results.GetValueOrDefault(StoredId(e))?.Verdict;
+
+            // Dropped: events not their member's, and those that waited
+            // too long for what they need.
+            g.Events = all.Where(e => VerdictOf(e) != GroupVerdict.Forged &&
+                !(VerdictOf(e) == GroupVerdict.Pending && now - e.Received >= GroupEvents.HeldFor)).ToList();
+            g.Held = null;
+            foreach (var e in added)
+            {
+                var r = results.GetValueOrDefault(StoredId(e));
+                if (r?.Verdict == GroupVerdict.Forged)
+                {
+                    continue;
+                }
+
+                newEvents.Add(e);
+                if (r?.Verdict == GroupVerdict.Counted && !types.Contains(r.Event.Type))
+                {
+                    types.Add(r.Event.Type);
+                }
+            }
             foreach (var env in mail)
             {
                 if (KeepMail(g, s, env) is { } m)

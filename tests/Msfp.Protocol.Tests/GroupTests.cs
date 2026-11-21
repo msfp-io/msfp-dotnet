@@ -4,8 +4,8 @@ using System.Text.Json.Nodes;
 namespace Msfp.Protocol.Tests;
 
 /// <summary>
-/// The groups part against msfp-spec's vectors/v0/groups.json: each
-/// event's verdict, the state they give, the code with a group, the mail,
+/// The groups part against msfp-spec's vectors/v0/groups.json: its events
+/// judged as one set, the state they give, the code with a group, the mail,
 /// the join proof (msfp-go's wire/groups_test.go).
 /// </summary>
 public sealed class GroupTests
@@ -16,21 +16,34 @@ public sealed class GroupTests
         var v = TestVectors.Load("groups.json");
         var keys = v["keys"]!.AsObject().ToDictionary(k => k.Key, k => k.Value!.GetValue<string>());
         var now = DateTimeOffset.FromUnixTimeSeconds(v["now"]!.GetValue<long>());
-        var s = new GroupState();
+        var group = v.Str("group");
         var failures = new List<string>();
         var events = v["events"]!.AsArray().Select(e => e!.AsObject()).ToList();
+        var kept = new List<GroupEnvelope>();
         foreach (var e in events)
         {
             Assert.Equal(e.Str("event"), Base64UrlText.Encode(Encoding.UTF8.GetBytes(e.Str("payload"))));
-            var got = s.Apply(new GroupEnvelope { Event = e.Str("event"), Signature = e.Str("signature") }, now);
-            if ((got.Verdict == GroupVerdict.Kept) != e.Valid())
+            var ev = new GroupEnvelope { Event = e.Str("event"), Signature = e.Str("signature") };
+            var check = GroupEvents.Check(ev, group, now);
+            if (check.Kept)
             {
-                failures.Add($"{e.Str("name")}: {got.Verdict} ({got.Reason}), the vector says valid {e.Valid()}");
+                kept.Add(ev);
             }
 
-            if (got.Id.Length > 0 && got.Id != e.Str("id"))
+            if (check.Id.Length > 0 && check.Id != e.Str("id"))
             {
-                failures.Add($"{e.Str("name")}: id {got.Id}, want {e.Str("id")}");
+                failures.Add($"{e.Str("name")}: id {check.Id}, want {e.Str("id")}");
+            }
+        }
+
+        // valid: the event counts in the state the whole set gives.
+        var (s, results) = GroupState.Compute(group, kept);
+        foreach (var e in events)
+        {
+            var r = results.GetValueOrDefault(e.Str("id"));
+            if ((r?.Verdict == GroupVerdict.Counted) != e.Valid())
+            {
+                failures.Add($"{e.Str("name")}: {r?.Verdict.ToString() ?? "not kept"} ({r?.Reason}), the vector says valid {e.Valid()}");
             }
         }
 
@@ -125,14 +138,14 @@ public sealed class GroupTests
         var now = DateTimeOffset.FromUnixTimeSeconds(1800000000);
         var aId = Base64UrlText.Encode(a.Public());
         var bId = Base64UrlText.Encode(b.Public());
-        var s = new GroupState();
         var (founded, gid) = GroupEvents.Sign(a, new GroupEvent
         {
             Type = GroupEvents.Founded, Signer = aId, Member = aId, Seq = 1, Date = 1800000000, OwnerSeq = 1, Name = "Family",
             Settings = GroupSettings.Default, Nonce = Base64UrlText.Encode(new byte[16]),
         });
-        Assert.Equal(GroupVerdict.Kept, s.Apply(founded, now).Verdict);
-        Assert.Equal(GroupVerdict.Had, s.Apply(founded, now).Verdict);
+        Assert.True(GroupEvents.Check(founded, gid, now).Kept);
+        var (s, results) = GroupState.Compute(gid, [founded, founded]);
+        Assert.Equal(GroupVerdict.Counted, Assert.Single(results).Value.Verdict); // once, however often it came
         Assert.Equal(gid, s.Id);
         var rot = Rotations.SignRotation(a, a2, null, now);
         var statement = new JsonObject
@@ -141,15 +154,18 @@ public sealed class GroupTests
             ["oldSignature"] = Base64UrlText.Encode(rot.OldSignature), ["newSignature"] = Base64UrlText.Encode(rot.NewSignature),
         };
         var a2Id = Base64UrlText.Encode(a2.Public());
-        var (rotated, _) = GroupEvents.Sign(a2, new GroupEvent { Group = gid, Type = GroupEvents.Rotated, Signer = a2Id, Member = aId, Seq = 2, Date = 1800000000, Statement = statement });
-        // The invitation under the old key, after the rotation, is refused; under the new one, kept.
-        var (joinedOld, _) = GroupEvents.Sign(a, new GroupEvent { Group = gid, Type = GroupEvents.Joined, Signer = aId, Member = aId, Seq = 3, Date = 1800000000, OwnerSeq = 2, NewMember = bId, Name = "B" });
-        var (joinedNew, _) = GroupEvents.Sign(a2, new GroupEvent { Group = gid, Type = GroupEvents.Joined, Signer = a2Id, Member = aId, Seq = 3, Date = 1800000000, OwnerSeq = 2, NewMember = bId, Name = "B" });
-        Assert.Equal(GroupVerdict.Held, s.Apply(joinedNew, now).Verdict);
-        Assert.Equal(GroupVerdict.Kept, s.Apply(rotated, now).Verdict);
+        var (rotated, rotatedId) = GroupEvents.Sign(a2, new GroupEvent { Group = gid, Type = GroupEvents.Rotated, Signer = a2Id, Member = aId, Seq = 2, Date = 1800000000, Statement = statement });
+        // The invitation under the old key, after the rotation, is forged; under the new one, it counts.
+        var (joinedOld, oldId) = GroupEvents.Sign(a, new GroupEvent { Group = gid, Type = GroupEvents.Joined, Signer = aId, Member = aId, Seq = 3, Date = 1800000000, OwnerSeq = 2, NewMember = bId, Name = "B" });
+        var (joinedNew, newId) = GroupEvents.Sign(a2, new GroupEvent { Group = gid, Type = GroupEvents.Joined, Signer = a2Id, Member = aId, Seq = 3, Date = 1800000000, OwnerSeq = 2, NewMember = bId, Name = "B" });
+        (_, results) = GroupState.Compute(gid, [founded, joinedNew]);
+        Assert.Equal(GroupVerdict.Pending, results[newId].Verdict); // the rotation isn't there
+        (s, results) = GroupState.Compute(gid, [joinedOld, joinedNew, rotated, founded]);
+        Assert.Equal(GroupVerdict.Counted, results[rotatedId].Verdict);
         Assert.Equal(a2Id, s.Members[aId].Key);
-        Assert.Equal(GroupVerdict.Refused, s.Apply(joinedOld, now).Verdict);
-        Assert.Equal(GroupVerdict.Kept, s.Apply(joinedNew, now).Verdict);
+        Assert.Equal(GroupVerdict.Forged, results[oldId].Verdict);
+        Assert.Equal(GroupVerdict.Counted, results[newId].Verdict);
+        Assert.Empty(s.Excluded); // an old key's event is no equivocation
         Assert.Equal(bId, s.Successor());
         Assert.Equal("B", s.Members[bId].Name);
     }
@@ -162,22 +178,65 @@ public sealed class GroupTests
         var other = MsfpKey.Generate();
         var now = DateTimeOffset.FromUnixTimeSeconds(1800000000);
         var aId = Base64UrlText.Encode(a.Public());
-        var s = new GroupState();
         var (founded, gid) = GroupEvents.Sign(a, new GroupEvent
         {
             Type = GroupEvents.Founded, Signer = aId, Member = aId, Seq = 1, Date = 1800000000, OwnerSeq = 1, Name = "F",
             Settings = GroupSettings.Default, Nonce = Base64UrlText.Encode(new byte[16]),
         });
-        Assert.Equal(GroupVerdict.Kept, s.Apply(founded, now).Verdict);
         JsonObject Statement(MsfpKey k)
         {
             var r = Rotations.SignRevocation(k, now);
             return new JsonObject { ["key"] = Base64UrlText.Encode(r.Key), ["date"] = r.Date, ["signature"] = Base64UrlText.Encode(r.Signature) };
         }
 
-        var (foreign, _) = GroupEvents.Sign(a, new GroupEvent { Group = gid, Type = GroupEvents.Revoked, Signer = aId, Member = aId, Seq = 2, Date = 1800000000, LastSeq = 1, Statement = Statement(other) });
-        Assert.Equal(GroupVerdict.Refused, s.Apply(foreign, now).Verdict);
-        var (own, _) = GroupEvents.Sign(a, new GroupEvent { Group = gid, Type = GroupEvents.Revoked, Signer = aId, Member = aId, Seq = 2, Date = 1800000000, LastSeq = 1, Statement = Statement(a) });
-        Assert.Equal(GroupVerdict.Kept, s.Apply(own, now).Verdict);
+        var (foreign, foreignId) = GroupEvents.Sign(a, new GroupEvent { Group = gid, Type = GroupEvents.Revoked, Signer = aId, Member = aId, Seq = 2, Date = 1800000000, LastSeq = 1, Statement = Statement(other) });
+        Assert.Equal(GroupVerdict.Refused, GroupState.Compute(gid, [founded, foreign]).Results[foreignId].Verdict);
+        var (own, ownId) = GroupEvents.Sign(a, new GroupEvent { Group = gid, Type = GroupEvents.Revoked, Signer = aId, Member = aId, Seq = 2, Date = 1800000000, LastSeq = 1, Statement = Statement(a) });
+        Assert.Equal(GroupVerdict.Counted, GroupState.Compute(gid, [founded, own]).Results[ownId].Verdict);
+    }
+
+    // The vectors' events, in any order: the same state and the same
+    // verdicts (groups section 3.5).
+    [Fact]
+    public void OrderIndependent()
+    {
+        var v = TestVectors.Load("groups.json");
+        var group = v.Str("group");
+        var envs = v["events"]!.AsArray().Select(e => e!.AsObject()).Select(e => new GroupEnvelope { Event = e.Str("event"), Signature = e.Str("signature") }).ToList();
+        static string Summary(GroupState s, IReadOnlyDictionary<string, GroupEventResult> r) => string.Join("\n",
+            s.Owner, s.Heir, s.OwnerSeq, s.Settings, s.Name, s.Banned.Count,
+            string.Join(",", s.Members.Values.Select(m => $"{m.Id}:{m.Admin}:{m.Key}").Order(StringComparer.Ordinal)),
+            string.Join(",", s.Excluded.Order(StringComparer.Ordinal)),
+            string.Join(",", r.Select(x => $"{x.Key}:{x.Value.Verdict}").Order(StringComparer.Ordinal)));
+        var (state, results) = GroupState.Compute(group, envs);
+        var want = Summary(state, results);
+        var rng = new Random(12);
+        for (var i = 0; i < 50; i++)
+        {
+            var shuffled = envs.ToArray();
+            rng.Shuffle(shuffled);
+            (state, results) = GroupState.Compute(group, shuffled);
+            Assert.Equal(want, Summary(state, results));
+        }
+    }
+
+    // A member signs its next event after its highest seq kept, counted or
+    // not; group-sync's seq is the last one replayed.
+    [Fact]
+    public void HighestCountsEveryKeptSeq()
+    {
+        var a = MsfpKey.Generate();
+        var aId = Base64UrlText.Encode(a.Public());
+        var (founded, gid) = GroupEvents.Sign(a, new GroupEvent
+        {
+            Type = GroupEvents.Founded, Signer = aId, Member = aId, Seq = 1, Date = 1800000000, OwnerSeq = 1, Name = "F",
+            Settings = GroupSettings.Default, Nonce = Base64UrlText.Encode(new byte[16]),
+        });
+        // seq 3 waits for a seq 2 that never came.
+        var (later, laterId) = GroupEvents.Sign(a, new GroupEvent { Group = gid, Type = GroupEvents.Profile, Signer = aId, Member = aId, Seq = 3, Date = 1800000000, Name = "A" });
+        var (s, results) = GroupState.Compute(gid, [founded, later]);
+        Assert.Equal(GroupVerdict.Pending, results[laterId].Verdict);
+        Assert.Equal(1, s.Seq(aId));
+        Assert.Equal(3, s.Highest(aId));
     }
 }

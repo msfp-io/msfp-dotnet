@@ -285,28 +285,47 @@ public sealed record GroupMember
     internal string JoinedId { get; init; } = "";
 }
 
-/// <summary>What <see cref="GroupState.Apply"/> made of an event.</summary>
+/// <summary>
+/// What a group's state makes of an event a member keeps (groups sections
+/// 3.2 and 3.5), given by <see cref="GroupState.Compute"/>.
+/// </summary>
 public enum GroupVerdict
 {
-    /// <summary>Kept: it counts now.</summary>
-    Kept,
+    /// <summary>It counts in the state.</summary>
+    Counted,
 
-    /// <summary>Held: its predecessors, or the owner event its asOf names, haven't arrived.</summary>
-    Held,
-
-    /// <summary>This copy has it already.</summary>
-    Had,
-
-    /// <summary>Refused by the rules.</summary>
+    /// <summary>
+    /// Its rules don't hold. It is kept and passed on all the same,
+    /// changing nothing: with events that arrive later, it may count.
+    /// </summary>
     Refused,
+
+    /// <summary>
+    /// What it needs isn't there yet: its member's earlier events, the
+    /// owner event it names, its member's joined, a ban's target's events
+    /// up to its lastSeq. Kept, and dropped after <see cref="GroupEvents.HeldFor"/>.
+    /// </summary>
+    Pending,
+
+    /// <summary>Not signed by its member's key in force at its seq (section 3.2). Not kept.</summary>
+    Forged,
 }
 
-/// <summary>An event judged by <see cref="GroupState.Apply"/>.</summary>
-/// <param name="Verdict">What was made of it.</param>
-/// <param name="Event">The event read; null when its envelope or payload wasn't one.</param>
-/// <param name="Id">Its ID ("" when its envelope wasn't one).</param>
-/// <param name="Reason">Why it was refused, for logs ("" otherwise).</param>
-public sealed record GroupApplied(GroupVerdict Verdict, GroupEvent? Event, string Id, string Reason);
+/// <summary>One event's verdict in a group's state.</summary>
+/// <param name="Event">The event read.</param>
+/// <param name="Verdict">What the state makes of it.</param>
+/// <param name="Reason">Why it doesn't count, for logs ("" when it counts).</param>
+public sealed record GroupEventResult(GroupEvent Event, GroupVerdict Verdict, string Reason);
+
+/// <summary>What <see cref="GroupEvents.Check"/> made of an envelope: whether a member keeps it (groups section 3.2).</summary>
+/// <param name="Event">The event read; null when its envelope, payload or signature isn't valid.</param>
+/// <param name="Id">Its ID ("" when it didn't read).</param>
+/// <param name="Reason">Why it isn't kept ("" when it is).</param>
+public sealed record GroupCheck(GroupEvent? Event, string Id, string Reason)
+{
+    /// <summary>Whether the event passes section 3.2's checks: a member keeps it and passes it on.</summary>
+    public bool Kept => Reason.Length == 0;
+}
 
 /// <summary>Events, mail and the join proof of the groups part.</summary>
 public static class GroupEvents
@@ -328,7 +347,7 @@ public static class GroupEvents
     /// <summary>How long a mail is carried at most.</summary>
     public static readonly TimeSpan MailLifetime = TimeSpan.FromDays(30);
 
-    /// <summary>How long an event waits for its predecessors.</summary>
+    /// <summary>How long an event stays <see cref="GroupVerdict.Pending"/> before it is dropped (groups section 3.2).</summary>
     public static readonly TimeSpan HeldFor = TimeSpan.FromDays(30);
 
     private const string EventLabel = "msfp-group-event-1\n";
@@ -387,6 +406,38 @@ public static class GroupEvents
         }
 
         return (ev, b, Id(b));
+    }
+
+    /// <summary>
+    /// Reads an envelope as a member keeps it (groups section 3.2): well
+    /// formed, signed under its signer, of the group (founded: its ID is
+    /// group), dated at most 5 minutes after now. Whether it counts is
+    /// <see cref="GroupState.Compute"/>'s.
+    /// </summary>
+    public static GroupCheck Check(GroupEnvelope e, string group, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(e);
+        if (Read(e) is not var (ev, _, id))
+        {
+            return new(null, "", "the envelope, the payload or its signature isn't valid");
+        }
+
+        if (ev.Seq < 1 || ev.Date < 1 || ev.Type.Length == 0 || ev.Member.Length == 0)
+        {
+            return new(ev, id, "a common member is missing");
+        }
+
+        if (ev.Date > now.ToUnixTimeSeconds() + 300)
+        {
+            return new(ev, id, "dated more than 5 minutes in the future");
+        }
+
+        if (ev.Type == Founded ? id != group : ev.Group != group)
+        {
+            return new(ev, id, ev.Type == Founded ? "another group's founded event" : "another group's event");
+        }
+
+        return new(ev, id, "");
     }
 
     /// <summary>Reads an envelope's event without checking it: for a held event's member and seq.</summary>
