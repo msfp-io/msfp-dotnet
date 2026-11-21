@@ -25,7 +25,7 @@ it writes none of the protocol itself.
   This library follows the same design as the Go engine,
   [msfp-go](https://github.com/msfp-io/msfp-go), in .NET's own style.
 
-**Status: 0.7.0-preview, not released.** The protocol layer is complete
+**Status: 0.7.1-preview, not released.** The protocol layer is complete
 and passes every test vector of MSFP version 0. The engine pairs (keys,
 codes, `pair`, `hello`, accepting and ending, signed answers, limits),
 rotates and revokes its key (with its next key, or replaced without it),

@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.7.1-preview (2026-11-21)
+
+msfp-go v0.7.1 in .NET.
 
 ### Added
 
