@@ -1268,6 +1268,35 @@ public sealed partial class MsfpEngine
 
     // Tells this server's groups that its key was stolen: a revoked event
     // in each, signed with that key, its last good event the last before now.
+    // A peer took this server's new key (its rotate answered rotated): a
+    // group-sync with it, for each group they share, pushes the events it
+    // lacks. Those signed for the change (rotated; revoked, after a stolen
+    // key) were pushed while it still knew the old key, or held this server
+    // suspended (core section 12.6), and may have been refused; without
+    // this, they and every event after them would wait for the next round
+    // of group-sync.
+    private void SyncGroupsSoon(string peerId) => Background(async ct =>
+    {
+        PeerRecord? p = null;
+        await _store.ReadAsync(async tx => p = await tx.PeerAsync(peerId).ConfigureAwait(false), ct).ConfigureAwait(false);
+        if (p is null || p.State != PeerState.Paired)
+        {
+            return;
+        }
+
+        foreach (var id in p.Groups?.ToList() ?? [])
+        {
+            try
+            {
+                await SyncWithAsync(id, p, ct).ConfigureAwait(false);
+            }
+            catch (MsfpException e)
+            {
+                _log.LogDebug(e, "msfp: a group sync after a rotation failed: {Group} {Peer}", id, peerId);
+            }
+        }
+    });
+
     private async Task GroupsRevokedAsync(Revocation r, CancellationToken ct)
     {
         var statement = new JsonObject

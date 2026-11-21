@@ -461,6 +461,7 @@ public sealed partial class MsfpEngine
         if (moved)
         {
             _log.LogInformation("msfp: a peer moved to this server's new key: {Peer}", id);
+            SyncGroupsSoon(id);
         }
 
         TellEnded(events);

@@ -169,6 +169,56 @@ public sealed class GroupTests
         Assert.Equal((await a.Engine.ServerAsync()).Fingerprint, owner.Fingerprint);
     }
 
+    // A's key is stolen while B is in its group: B follows A to its next key
+    // and keeps A's revoked and rotated events, so A's next owner event,
+    // signed under the new key, counts there (groups 3.3; core 12.6). The
+    // events are pushed again once B was told of the rotation: their first
+    // push may reach B while it still holds A suspended, and be refused.
+    [Fact]
+    public async Task KeyStolen()
+    {
+        var net = new Network();
+        using var a = await ServerAsync(net, "A");
+        using var b = await ServerAsync(net, "B");
+        var g = await a.Engine.CreateGroupAsync("Family");
+        await JoinGroupAsync(a, b, g.Id);
+        // A's pushes reach B after its revoke, and before its rotate: B,
+        // holding A suspended, refuses them itself (core section 12.6), as
+        // when they race the revoke and rotate calls.
+        var revoked = new TaskCompletionSource();
+        var refused = 0;
+        net.Add("b.example.org", async r =>
+        {
+            if (r.Target.EndsWith("/group-push", StringComparison.Ordinal) && !revoked.Task.IsCompleted)
+            {
+                await revoked.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                var answer = await b.Engine.HandleFederationAsync(r);
+                if (answer.Status == 404)
+                {
+                    Interlocked.Increment(ref refused);
+                }
+
+                return answer;
+            }
+
+            var a2 = await b.Engine.HandleFederationAsync(r);
+            if (r.Target.EndsWith("/revoke", StringComparison.Ordinal))
+            {
+                revoked.TrySetResult();
+            }
+
+            return a2;
+        });
+        Assert.True(await a.Engine.KeyStolenAsync());
+        await SettleAsync(a, b);
+        Assert.True(refused >= 1, "no push was refused: the test didn't reproduce the race");
+        await a.Engine.SetGroupSettingsAsync(g.Id, "Family and friends", GroupSettings.Default);
+        await SettleAsync(a, b);
+        var gb = await b.Engine.GroupAsync(g.Id);
+        Assert.Equal("Family and friends", gb.Name);
+        Assert.Equal((await a.Engine.ServerAsync()).Fingerprint, gb.Members.Single(m => m.Role == "owner").Fingerprint);
+    }
+
     // B offers its films to the group, with a pool of one stream: N, linked
     // to B through the group alone, sees them and plays one; a second is
     // refused while the first plays (groups section 9).

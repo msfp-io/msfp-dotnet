@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- After a stolen key, a member's group events could stay missing on some
+  members for up to 10 minutes (until the next `group-sync`), and every
+  event after them with them: the `revoked` and `rotated` events were
+  pushed while the peers' `revoke` and `rotate` calls were on their way,
+  and a peer that still held this server suspended refused them. Now, as
+  soon as a peer moves to this server's new key, the engine runs
+  `group-sync` with it for each group they share, which pushes what it
+  lacks. The same covers a plain rotation.
+
 ## v0.4.0-preview (2026-11-20)
 
 The major.minor version is msfp-go's: this is msfp-go v0.4.0 in .NET
