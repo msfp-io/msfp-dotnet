@@ -259,28 +259,53 @@ public sealed class GroupTests
             await ErrorAsync(() => n.Engine.PlayAsync(onN.Id, new PlayRequest { Title = "movie/tmdb/949" })));
     }
 
-    // "Accept members": a request is accepted by the server itself once its
-    // sender has been in the group the group's days; before, it waits.
+    // Automatically accepting new members (groups section 4.1): B accepts a
+    // newcomer's request at once; C, which doesn't, keeps it waiting.
     [Fact]
-    public async Task AcceptAfterDays()
+    public async Task AcceptNewMembers()
     {
         var net = new Network();
-        var clock = new FakeTime(1800000000);
-        using var a = await ServerAsync(net, "A", clock);
-        using var b = await ServerAsync(net, "B", clock);
-        using var n = await ServerAsync(net, "N", clock);
+        using var a = await ServerAsync(net, "A");
+        using var b = await ServerAsync(net, "B");
+        using var c = await ServerAsync(net, "C");
+        using var n = await ServerAsync(net, "N");
         var g = await a.Engine.CreateGroupAsync("Family");
         await JoinGroupAsync(a, b, g.Id);
+        await JoinGroupAsync(a, c, g.Id, b);
         await b.Engine.SetGroupAnswerAsync(g.Id, true);
-        await JoinGroupAsync(a, n, g.Id, b);
-        await SettleAsync(a, b, n);
-        var request = Assert.Single((await b.Engine.GroupAsync(g.Id)).Requests);
-        Assert.False(request.Waited);
-        clock.Advance(TimeSpan.FromDays(3) + TimeSpan.FromMinutes(1));
-        await b.Engine.SyncGroupsNowAsync(true, CancellationToken.None);
-        await SettleAsync(a, b, n);
+        await JoinGroupAsync(a, n, g.Id, b, c);
+        await SettleAsync(a, b, c, n);
         Assert.Equal(PeerState.Paired, (await PeerNamedAsync(b, "N"))?.State);
-        Assert.Empty((await b.Engine.GroupAsync(g.Id)).Requests);
+        Assert.DoesNotContain((await b.Engine.GroupAsync(g.Id)).Requests, r => r.Name == "N");
+        Assert.Contains((await c.Engine.GroupAsync(g.Id)).Requests, r => r.Name == "N");
+    }
+
+    // What a group shows here, as one choice for the whole group: everything
+    // its members offer, by default; a hidden library is read no more.
+    [Fact]
+    public async Task Shows()
+    {
+        var net = new Network();
+        var h = HostKit.FilmHost();
+        h.Libs = [new Library { Id = "films", Name = "Films", Kind = "movies" }];
+        var (a, b, n, g) = await TrioAsync(net, c => c with { Catalog = h, Playback = h, Media = h, SheetEncoder = new TestSheets() });
+        using var _a = a;
+        using var _b = b;
+        using var _n = n;
+        var gb = await b.Engine.GroupAsync(g.Id);
+        await b.Engine.AcceptRequestAsync(g.Id, Assert.Single(gb.Requests).Mail);
+        await SettleAsync(a, b, n);
+        await b.Engine.SetGroupOffersAsync(g.Id, ["films"]);
+        var onN = (await PeerNamedAsync(n, "B"))!;
+        await n.Engine.CheckAsync(onN.Id);
+        Assert.True(await n.Engine.ReadNowAsync(onN.Id) > 0);
+        var bm = (await n.Engine.GroupShowsAsync(g.Id)).Members.Single(m => m.Name == "B");
+        Assert.Equal(onN.Id, bm.Peer);
+        var lib = Assert.Single(bm.Libraries);
+        Assert.Equal(("Films", true), (lib.Name, lib.Shown));
+        await n.Engine.SetGroupShowsAsync(g.Id, [new HiddenLibrary(bm.Member, lib.Id)]);
+        Assert.Equal(0, await n.Engine.ReadNowAsync(onN.Id));
+        Assert.False((await n.Engine.GroupShowsAsync(g.Id)).Members.Single(m => m.Name == "B").Libraries[0].Shown);
     }
 
     // A newcomer that can't be called: the member accepting answers by mail,

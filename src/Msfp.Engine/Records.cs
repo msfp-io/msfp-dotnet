@@ -377,6 +377,13 @@ public sealed record PeerRecord
     public string? JoiningGroup { get; set; }
 }
 
+/// <summary>A member's library a group doesn't show here.</summary>
+/// <param name="Member">The member's ID in the group.</param>
+/// <param name="Library">The library's public ID.</param>
+public sealed record HiddenLibrary(
+    [property: JsonPropertyName("member")] string Member,
+    [property: JsonPropertyName("library")] string Library);
+
 /// <summary>A group's pool, as a link through it uses it (MSFP groups section 9).</summary>
 public sealed record GroupPool
 {
@@ -424,9 +431,13 @@ public sealed record GroupRecord
     [JsonPropertyName("mailKey")]
     public byte[] MailKey { get; set; } = [];
 
-    /// <summary>Requests are accepted by the server itself once the requester waited the group's days ("accept members"); false: "ask me".</summary>
+    /// <summary>This server automatically accepts new members, at once; false: each request waits for its operator (MSFP groups section 4.1).</summary>
     [JsonPropertyName("accept"), OmitEmpty]
     public bool Accept { get; set; }
+
+    /// <summary>The members' libraries this server doesn't show from the group: it shows everything else they offer it.</summary>
+    [JsonPropertyName("hidden"), OmitEmpty]
+    public List<HiddenLibrary>? Hidden { get; set; }
 
     /// <summary>The host libraries this server offers the group.</summary>
     [JsonPropertyName("offers"), OmitEmpty]

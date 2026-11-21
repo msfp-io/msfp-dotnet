@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+As msfp-go.
+
+### Added
+
+- What this server shows from a group is one choice for the whole group:
+  everything its members offer it, but the libraries hidden with
+  `SetGroupShowsAsync`; `GroupShowsAsync` lists each member's libraries
+  and whether they're shown. What is read of a server is what it is shown
+  individually (`SetWantsAsync`, while the individual relation holds) plus
+  what its groups show of it.
+
+### Changed
+
+- Automatically accepting new members (`SetGroupAnswerAsync` true) accepts
+  a request as soon as it arrives: the group's `waitDays` changes nothing
+  (groups section 4.1). Requests that waited before it was turned on keep
+  waiting for the operator.
+- `SetWantsAsync` no longer counts for a server known only through a
+  group: what its groups show does.
+
+
 ## v0.6.0-preview (2026-11-21)
 
 msfp-go v0.6.0 in .NET.

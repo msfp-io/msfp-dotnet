@@ -249,9 +249,9 @@ public sealed partial class MsfpEngine
         return output;
     }
 
-    // Whether a member has been in the group its days (groups section 4.1).
-    private bool Waited(GroupState s, string member) =>
-        s.Members.TryGetValue(member, out var m) && Now().ToUnixTimeSeconds() >= m.Joined + (s.Settings.WaitDays * 86400);
+    // A member automatically accepted is accepted at once: the group's
+    // waitDays changes nothing (groups section 4.1).
+    private static bool Waited(GroupState s, string member) => s.Members.ContainsKey(member);
 
     /// <summary>The groups this server is in.</summary>
     /// <exception cref="MsfpException"><see cref="MsfpError.NoGroups"/>: the store keeps none.</exception>

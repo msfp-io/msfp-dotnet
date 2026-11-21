@@ -459,11 +459,15 @@ public sealed partial class MsfpEngine
     {
         var id = p.Id;
         var libs = new List<string>();
-        if ((p.Wants ?? []).Any(w => w.Wanted))
+        // What is read: what this server shows of it individually, while the
+        // individual relation holds, and what its groups show of it.
+        var individual = Individual(p);
+        var (shows, grouped) = await ShownByAsync(p, ct).ConfigureAwait(false);
+        if (grouped || (individual && (p.Wants ?? []).Any(w => w.Wanted)))
         {
             foreach (var w in await TheirLibrariesAsync(p, background, ct).ConfigureAwait(false))
             {
-                if (w.Wanted && !w.Gone)
+                if (!w.Gone && ((w.Wanted && individual) || (grouped && shows(w.Id))))
                 {
                     libs.Add(w.Id);
                 }
