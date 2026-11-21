@@ -24,6 +24,20 @@ public sealed class PairingTests
         return (net, a, b, await a.Engine.PeerAsync(onA.Id), await b.Engine.PeerAsync(onB.Id));
     }
 
+    // A live code's text again: the same code, redeemable; none for a code
+    // withdrawn.
+    [Fact]
+    public async Task CodeText()
+    {
+        var (_, a, b) = await TwoAsync();
+        var (code, view) = await a.Engine.MakeCodeWithAsync(new CodeOptions { Note = "x" });
+        Assert.Equal(code, await a.Engine.CodeTextAsync(view.Id));
+        await a.Engine.DeleteCodeAsync(view.Id);
+        var e = await Assert.ThrowsAsync<MsfpException>(() => a.Engine.CodeTextAsync(view.Id));
+        Assert.Equal(MsfpError.NotFound, e.Code);
+        _ = b;
+    }
+
     [Fact]
     public async Task PairAcceptHello()
     {

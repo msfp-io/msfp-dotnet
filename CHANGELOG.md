@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `CodeTextAsync`: a live code's text again, to copy or send once more,
+  built with this server's address and key now (as msfp-go v0.7.1).
+
 ## v0.7.0-preview (2026-11-21)
 
 msfp-go v0.7.0 in .NET.

@@ -117,6 +117,41 @@ public sealed partial class MsfpEngine
         return (code.ToString(), ToView(c));
     }
 
+    /// <summary>
+    /// A live code's text again, to copy or send once more: from its record,
+    /// with this server's address and key now (a code is no secret from
+    /// whoever can make another; it still needs the operator's acceptance and
+    /// the fingerprint check).
+    /// </summary>
+    /// <exception cref="MsfpException"><see cref="MsfpError.NotFound"/> (no such live code),
+    /// <see cref="MsfpError.NoCodes"/> (this server can't be called).</exception>
+    public async Task<string> CodeTextAsync(string id, CancellationToken ct = default)
+    {
+        CodeRecord? c = null;
+        await _store.ReadAsync(async tx =>
+            c = (await tx.CodesAsync().ConfigureAwait(false)).FirstOrDefault(x => x.Id == id), ct).ConfigureAwait(false);
+        if (c?.Secret is null || c.Expires <= Now())
+        {
+            throw new MsfpException(MsfpError.NotFound);
+        }
+
+        var rec = await ServerRecordAsync(ct).ConfigureAwait(false);
+        if (rec.Uncallable || SaysUncallable())
+        {
+            throw new MsfpException(MsfpError.NoCodes);
+        }
+
+        var secret = await _sealer.OpenAsync(c.Secret, SealContext.Code, ct).ConfigureAwait(false);
+        byte[]? group = null;
+        var groupName = "";
+        if (!string.IsNullOrEmpty(c.Group))
+        {
+            (group, groupName) = await GroupForCodeAsync(c.Group, ct).ConfigureAwait(false);
+        }
+
+        return new PairingCode(Named(), Current().Public(), secret, c.Expires) { Group = group, GroupName = groupName }.ToString();
+    }
+
     private static CodeView ToView(CodeRecord c) =>
         new(c.Id, c.Note ?? "", c.Created, c.Expires) { Uses = c.Uses == 0 ? 1 : c.Uses, Group = c.Group ?? "" };
 
