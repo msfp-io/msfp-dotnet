@@ -252,6 +252,11 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
                 foreach (var g in await engine.GroupsAsync())
                 {
                     Console.WriteLine($"group {g.Id} \"{g.Name}\" {g.Role}");
+                    if (g.NoWayIn)
+                    {
+                        Console.WriteLine("  no way in: no pairing through this group");
+                    }
+
                     foreach (var m in g.Members)
                     {
                         Console.WriteLine($"  member {m.Id} \"{m.Name}\" {m.Role} peer={m.Peer}");
