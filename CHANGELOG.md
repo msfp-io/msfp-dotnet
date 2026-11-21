@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.7.0-preview (2026-11-21)
 
-As msfp-go.
+msfp-go v0.7.0 in .NET.
 
 ### Added
 
@@ -12,6 +12,9 @@ As msfp-go.
   and whether they're shown. What is read of a server is what it is shown
   individually (`SetWantsAsync`, while the individual relation holds) plus
   what its groups show of it.
+
+- `PeerView.JoiningGroup`: a server waiting with one of our group's
+  invites is a request to join that group, for the panel to show there.
 
 ### Changed
 
