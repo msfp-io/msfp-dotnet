@@ -43,6 +43,8 @@
 //   pair <group> <mail>          accept a member's request; refuse <group> <mail> refuses it
 //   join-accept <group> <peer>   accept a peer already paired that used our group code
 //   admin <group> <member>       name a member admin (the owner only)
+//   ban <group> <member>         ban a member
+//   dissolve <group>             end the group and the pairings only it made
 //   group-offer <group>          share the films with the group
 //   auto <group> on|off          accept the group's members by itself
 //   leave <group>                leave the group
@@ -275,6 +277,7 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
             case "refuse":
             case "join-accept":
             case "admin":
+            case "ban":
             case "auto":
                 var groupAndRest = arg.Split(' ', 2);
                 var rest = groupAndRest.Length > 1 ? groupAndRest[1] : "";
@@ -284,6 +287,7 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
                     "refuse" => engine.RefuseRequestAsync(groupAndRest[0], rest),
                     "join-accept" => engine.AcceptJoinAsync(groupAndRest[0], rest),
                     "admin" => engine.SetAdminAsync(groupAndRest[0], rest, true),
+                    "ban" => engine.BanAsync(groupAndRest[0], rest),
                     _ => engine.SetGroupAnswerAsync(groupAndRest[0], rest == "on"),
                 });
                 Console.WriteLine("done");
@@ -295,6 +299,10 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
             case "leave":
                 await engine.LeaveGroupAsync(arg);
                 Console.WriteLine("left");
+                break;
+            case "dissolve":
+                await engine.DissolveGroupAsync(arg, keepPairings: false);
+                Console.WriteLine("dissolved");
                 break;
             case "peers":
                 engine.PanelOpen();
@@ -315,7 +323,7 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
                 Console.WriteLine("code [note] | preview <code> | redeem <code> | accept <id> | peers | check <id> | end <id> | server | " +
                     "rotate [key] | stolen [key|none] | confirm <id> | address <url> | uncallable on|off | offer <id> | want <id> | " +
                     "titles <id> | play <id> <key> | stop <playback> | rescan | group-create <name> | groups | invite <group> | pair <group> <mail> | " +
-                    "refuse <group> <mail> | join-accept <group> <peer> | admin <group> <member> | group-offer <group> | auto <group> on|off | leave <group> | quit");
+                    "refuse <group> <mail> | join-accept <group> <peer> | admin <group> <member> | ban <group> <member> | dissolve <group> | group-offer <group> | auto <group> on|off | leave <group> | quit");
                 break;
         }
     }
