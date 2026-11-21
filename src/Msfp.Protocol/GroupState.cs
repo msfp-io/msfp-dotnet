@@ -589,8 +589,9 @@ public sealed class GroupState
     }
 
     // revoked (section 3.3): the statement verifies as core section 12.6
-    // says; the member's events signed with the revoked key after lastSeq
-    // don't count. With two, the lower lastSeq holds.
+    // says, and its key is one of the member's; the member's events signed
+    // with the revoked key after lastSeq don't count. With two, the lower
+    // lastSeq holds.
     private string? ApplyRevoked(GroupEvent ev)
     {
         if (ev.Statement is not { } st || ev.LastSeq is not { } lastSeq)
@@ -604,6 +605,13 @@ public sealed class GroupState
         if (k is null || sig is null || Integer(st, "date") is not { } date || !Ed25519Strict.Verify(k, Rotations.RevocationStatement(k, date), sig))
         {
             return "the revocation statement doesn't verify";
+        }
+
+        // Only one of the member's own keys: the one it joined with, or
+        // one it rotated to.
+        if (keyText != ev.Member && !(_keys.GetValueOrDefault(ev.Member) ?? []).Exists(f => f.Key == keyText))
+        {
+            return "the revoked key isn't one of the member's keys";
         }
 
         if (!_revoked.TryGetValue(ev.Member, out var r) || lastSeq < r.Seq)

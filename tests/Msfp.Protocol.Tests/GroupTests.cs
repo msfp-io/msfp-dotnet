@@ -153,4 +153,31 @@ public sealed class GroupTests
         Assert.Equal(bId, s.Successor());
         Assert.Equal("B", s.Members[bId].Name);
     }
+
+    // A member's revoked event names one of its own keys only (section 3.3).
+    [Fact]
+    public void RevokedOwnKeyOnly()
+    {
+        var a = MsfpKey.Generate();
+        var other = MsfpKey.Generate();
+        var now = DateTimeOffset.FromUnixTimeSeconds(1800000000);
+        var aId = Base64UrlText.Encode(a.Public());
+        var s = new GroupState();
+        var (founded, gid) = GroupEvents.Sign(a, new GroupEvent
+        {
+            Type = GroupEvents.Founded, Signer = aId, Member = aId, Seq = 1, Date = 1800000000, OwnerSeq = 1, Name = "F",
+            Settings = GroupSettings.Default, Nonce = Base64UrlText.Encode(new byte[16]),
+        });
+        Assert.Equal(GroupVerdict.Kept, s.Apply(founded, now).Verdict);
+        JsonObject Statement(MsfpKey k)
+        {
+            var r = Rotations.SignRevocation(k, now);
+            return new JsonObject { ["key"] = Base64UrlText.Encode(r.Key), ["date"] = r.Date, ["signature"] = Base64UrlText.Encode(r.Signature) };
+        }
+
+        var (foreign, _) = GroupEvents.Sign(a, new GroupEvent { Group = gid, Type = GroupEvents.Revoked, Signer = aId, Member = aId, Seq = 2, Date = 1800000000, LastSeq = 1, Statement = Statement(other) });
+        Assert.Equal(GroupVerdict.Refused, s.Apply(foreign, now).Verdict);
+        var (own, _) = GroupEvents.Sign(a, new GroupEvent { Group = gid, Type = GroupEvents.Revoked, Signer = aId, Member = aId, Seq = 2, Date = 1800000000, LastSeq = 1, Statement = Statement(a) });
+        Assert.Equal(GroupVerdict.Kept, s.Apply(own, now).Verdict);
+    }
 }
