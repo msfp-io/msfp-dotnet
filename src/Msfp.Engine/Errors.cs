@@ -147,6 +147,9 @@ public enum MsfpError
     /// <summary>Not a member of the group (or the group is gone).</summary>
     NotMember,
 
+    /// <summary>This server has no pairing through the group, so a mail it sends can't leave it (MSFP groups section 6, "No way in").</summary>
+    NoWayIn,
+
     /// <summary>Already in the group, banned from it, or waiting to join it (a group's code from a peer already).</summary>
     AlreadyMember,
 }

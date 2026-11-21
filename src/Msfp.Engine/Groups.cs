@@ -62,7 +62,19 @@ public sealed record GroupView
 
     /// <summary>Peers already paired with this server that used its code for the group, waiting for AcceptJoinAsync or RefuseJoinAsync.</summary>
     public IReadOnlyList<GroupJoinView> Joins { get; init; } = [];
+
+    /// <summary>
+    /// This server has no pairing through the group, and the group has other
+    /// members: nothing reaches them from here, nor here from them (MSFP
+    /// groups section 6, "No way in").
+    /// </summary>
+    public bool NoWayIn { get; init; }
 }
+
+/// <summary>A group, by its ID and name.</summary>
+/// <param name="Id">The group's ID.</param>
+/// <param name="Name">Its name.</param>
+public sealed record GroupRef(string Id, string Name);
 
 /// <summary>A peer waiting to join a group through this server.</summary>
 /// <param name="Peer">The peer's ID.</param>
@@ -195,7 +207,46 @@ public sealed partial class MsfpEngine
             Accept = g.Accept, Offers = [.. g.Offers ?? []], Pool = g.Pool with { }, Dissolved = s.Dissolved,
             Joining = !s.Members.ContainsKey(g.Me) && g.Events.Count == 0,
             Members = members, Banned = banned, Joins = joins, Requests = requests,
+            NoWayIn = CutOff(g, s, peers, ""),
         };
+    }
+
+    // Whether this server has a pairing through the group, but for the peer
+    // except: the links events and mail travel on (groups section 6).
+    private bool WayIn(string id, IEnumerable<PeerRecord> peers, string except) =>
+        peers.Any(p => p.Id != except && p.State == PeerState.Paired && p.Groups?.Contains(id) == true && On(p, Versions.PartGroups));
+
+    // Whether this server, a member of the group with others in it, has no
+    // way in (without the peer except).
+    private bool CutOff(GroupRecord g, GroupState s, IEnumerable<PeerRecord> peers, string except) =>
+        !s.Dissolved && s.Members.ContainsKey(g.Me) && s.Members.Count >= 2 && !WayIn(g.Id, peers, except);
+
+    /// <summary>
+    /// The groups that ending the pairing with this peer would leave this
+    /// server with no way in: the panel says so before it ends (MSFP groups
+    /// section 6, "No way in"). Empty when the store keeps no groups.
+    /// </summary>
+    public async Task<IReadOnlyList<GroupRef>> GroupsCutByAsync(string peer, CancellationToken ct = default)
+    {
+        List<GroupRef> output = [];
+        await _store.ReadAsync(async tx =>
+        {
+            if (tx is not IGroupsTx groups)
+            {
+                return;
+            }
+
+            var peers = await tx.PeersAsync().ConfigureAwait(false);
+            foreach (var g in await groups.GroupsAsync().ConfigureAwait(false))
+            {
+                var s = StateOf(g);
+                if (WayIn(g.Id, peers, "") && CutOff(g, s, peers, peer))
+                {
+                    output.Add(new GroupRef(g.Id, s.Name));
+                }
+            }
+        }, ct).ConfigureAwait(false);
+        return output;
     }
 
     // Whether a member has been in the group its days (groups section 4.1).
@@ -724,7 +775,7 @@ public sealed partial class MsfpEngine
         UpdateGroupAsync(id, g => g.Refused?.RemoveAll(x => x == member), ct);
 
     /// <summary>Sends a member this server's request, as a newcomer does to every member (MSFP groups section 4).</summary>
-    /// <exception cref="MsfpException"><see cref="MsfpError.NotFound"/>.</exception>
+    /// <exception cref="MsfpException"><see cref="MsfpError.NotFound"/>; <see cref="MsfpError.NoWayIn"/>: this server has no pairing through the group.</exception>
     public Task RequestMemberAsync(string id, string member, CancellationToken ct = default) =>
         SendRequestsAsync(id, [member], ct);
 
@@ -769,8 +820,9 @@ public sealed partial class MsfpEngine
             {
                 await SendMailAsync(id, m, "request", null, ct).ConfigureAwait(false);
             }
-            catch (MsfpException e)
+            catch (MsfpException e) when (to is null)
             {
+                // Asked for by the operator (to set), it goes up: the panel says why.
                 _log.LogInformation(e, "msfp: a group request couldn't be made: {Group}", id);
             }
         }
@@ -788,6 +840,11 @@ public sealed partial class MsfpEngine
             if (!s.Members.TryGetValue(to, out var m) || m.EncryptionKey is null)
             {
                 throw new MsfpException(MsfpError.NotMember);
+            }
+
+            if (!WayIn(id, await tx.PeersAsync().ConfigureAwait(false), ""))
+            {
+                throw new MsfpException(MsfpError.NoWayIn);
             }
 
             var mid = GroupEvents.MailId(RandomBytes(16));

@@ -547,4 +547,29 @@ public sealed class GroupTests
         await c.Engine.ReceiveAsync(g.Id, [], [], "", default);
         Assert.Empty(await EnvelopesAsync(c, g.Id));
     }
+
+    // No way in (groups section 6): ending a server's last pairing through a
+    // group is named before it ends; afterwards the group says so, and a
+    // request to a member is refused rather than kept where it can't leave.
+    [Fact]
+    public async Task NoWayIn()
+    {
+        var net = new Network();
+        var (a, b, n, g) = await TrioAsync(net);
+        using var _a = a;
+        using var _b = b;
+        using var _n = n;
+        var bOnA = (await PeerNamedAsync(a, "B"))!.Id;
+        var aOnB = (await PeerNamedAsync(b, "A"))!.Id;
+        // A has N too; B's only way in is A.
+        Assert.Empty(await a.Engine.GroupsCutByAsync(bOnA));
+        var cut = Assert.Single(await b.Engine.GroupsCutByAsync(aOnB));
+        Assert.Equal((g.Id, "Family"), (cut.Id, cut.Name));
+        await b.Engine.EndAsync(aOnB);
+        await SettleAsync(a, b, n);
+        var gb = await b.Engine.GroupAsync(g.Id);
+        Assert.True(gb.NoWayIn);
+        Assert.False((await a.Engine.GroupAsync(g.Id)).NoWayIn);
+        Assert.Equal(MsfpError.NoWayIn, await ErrorAsync(() => b.Engine.RequestMemberAsync(g.Id, MemberNamed(gb, "N")!.Id)));
+    }
 }
