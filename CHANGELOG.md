@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.4.1-preview (2026-11-21)
 
 ### Fixed
 
