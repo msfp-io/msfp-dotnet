@@ -13,6 +13,10 @@
   `group-sync` with it for each group they share, which pushes what it
   lacks. The same covers a plain rotation.
 
+### Example
+
+- `admin <group> <member>`, `ban <group> <member>` and `dissolve <group>`.
+
 ## v0.4.0-preview (2026-11-20)
 
 The major.minor version is msfp-go's: this is msfp-go v0.4.0 in .NET
