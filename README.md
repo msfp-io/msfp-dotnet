@@ -204,6 +204,10 @@ minute, as a host must (a peer ends a playback it hears nothing of for 2
 minutes). The comment at the top of
 [Program.cs](examples/ShareFolder/Program.cs) lists every command.
 
+Groups work the same way: `group-create <name>` in the first, `invite
+<group>` for a code the others redeem, `groups` to see the members and the
+requests waiting, and `pair <group> <mail>` to accept one.
+
 ## Versions
 
 The library follows [semantic versioning](https://semver.org). Its

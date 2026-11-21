@@ -343,6 +343,15 @@ public sealed partial class MsfpEngine
         return GroupViewOf(g, []);
     }
 
+    // An empty record of a group, as a newcomer keeps before the list comes
+    // (for the tests, which then pass it events).
+    internal async Task SeedGroupAsync(string id, CancellationToken ct = default)
+    {
+        var g = new GroupRecord { Id = id, Me = Base64UrlText.Encode(Current().Public()), Pool = _cfg.NewPairing! with { } };
+        await NewMailKeyAsync(g, ct).ConfigureAwait(false);
+        await _store.UpdateAsync(async tx => await GroupsOf(tx).PutGroupAsync(g).ConfigureAwait(false), ct).ConfigureAwait(false);
+    }
+
     // A new X25519 key pair for a group's mail, its private part sealed in g.
     private async Task NewMailKeyAsync(GroupRecord g, CancellationToken ct)
     {

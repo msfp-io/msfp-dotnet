@@ -24,7 +24,7 @@ public sealed partial class MsfpEngine
     // Keeps what a member passed on: events (in any order, counted or not:
     // the state is their replay) and mail; what was new is passed on to the
     // others, but from.
-    private async Task ReceiveAsync(string id, IReadOnlyList<GroupEnvelope> events, IReadOnlyList<GroupEnvelope> mail, string from, CancellationToken ct)
+    internal async Task ReceiveAsync(string id, IReadOnlyList<GroupEnvelope> events, IReadOnlyList<GroupEnvelope> mail, string from, CancellationToken ct)
     {
         var newEvents = new List<StoredEvent>();
         var newMail = new List<StoredMail>();

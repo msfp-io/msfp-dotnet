@@ -427,4 +427,74 @@ public sealed class GroupTests
         await c.Engine.RedeemCodeAsync(code);
         Assert.Empty(await a.Engine.CodesAsync());
     }
+
+    // A group's kept events, as envelopes, from a server's store.
+    private static async Task<List<GroupEnvelope>> EnvelopesAsync(TestServer s, string id)
+    {
+        var g = await s.Store.ReadAsync(async tx => await ((IGroupsTx)tx).GroupAsync(id), default);
+        return g is null ? [] : g.Events.Concat(g.Held ?? []).Select(e => new GroupEnvelope { Event = e.Event, Signature = e.Signature }).ToList();
+    }
+
+    private static string Summary(GroupView v) =>
+        string.Join("|", v.Name, v.Owner, v.Heir, v.Settings, string.Join(",", v.Members.Select(m => m.Id + ":" + m.Role + ":" + m.Name).Order(StringComparer.Ordinal)));
+
+    // A copy that gets a group's events one call at a time, in reverse and
+    // shuffled orders, ends with the same group as the copy that signed them
+    // (groups sections 3.2 and 3.5).
+    [Fact]
+    public async Task ReceiveAnyOrder()
+    {
+        var net = new Network();
+        var (a, b, n, g) = await TrioAsync(net);
+        var ga = await a.Engine.GroupAsync(g.Id);
+        await a.Engine.SetAdminAsync(g.Id, MemberNamed(ga, "B")!.Id, true);
+        await a.Engine.SetHeirAsync(g.Id, MemberNamed(ga, "N")!.Id);
+        await a.Engine.SetGroupSettingsAsync(g.Id, "Family and friends", new GroupSettings(1, 9));
+        await SettleAsync(a, b, n);
+        var want = Summary(await a.Engine.GroupAsync(g.Id));
+        var events = await EnvelopesAsync(a, g.Id);
+        Assert.True(events.Count >= 8);
+        var orders = new List<List<GroupEnvelope>> { Enumerable.Reverse(events).ToList() };
+        var rng = new Random(5);
+        for (var i = 0; i < 3; i++)
+        {
+            orders.Add(events.OrderBy(_ => rng.Next()).ToList());
+        }
+
+        foreach (var order in orders)
+        {
+            using var c = await ServerAsync(net, "C" + orders.IndexOf(order));
+            await c.Engine.SeedGroupAsync(g.Id);
+            foreach (var ev in order)
+            {
+                await c.Engine.ReceiveAsync(g.Id, [ev], [], "", default);
+            }
+
+            await SettleAsync(c);
+            Assert.Equal(want, Summary(await c.Engine.GroupAsync(g.Id)));
+            Assert.Equal(events.Count, (await EnvelopesAsync(c, g.Id)).Count);
+        }
+    }
+
+    // An event whose predecessors never come is dropped after 30 days
+    // (groups section 3.2); until then it is kept.
+    [Fact]
+    public async Task PendingDropped()
+    {
+        var net = new Network();
+        var clock = new FakeTime(1800000000);
+        using var a = await ServerAsync(net, "A", clock);
+        var g = await a.Engine.CreateGroupAsync("Family");
+        await a.Engine.SetGroupSettingsAsync(g.Id, "", new GroupSettings(2, 5));
+        var last = (await EnvelopesAsync(a, g.Id))[^1];
+        using var c = await ServerAsync(net, "C", clock);
+        await c.Engine.SeedGroupAsync(g.Id);
+        await c.Engine.ReceiveAsync(g.Id, [last], [], "", default);
+        clock.Advance(TimeSpan.FromDays(29));
+        await c.Engine.ReceiveAsync(g.Id, [], [], "", default);
+        Assert.Single(await EnvelopesAsync(c, g.Id));
+        clock.Advance(TimeSpan.FromDays(2));
+        await c.Engine.ReceiveAsync(g.Id, [], [], "", default);
+        Assert.Empty(await EnvelopesAsync(c, g.Id));
+    }
 }

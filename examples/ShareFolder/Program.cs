@@ -37,6 +37,14 @@
 //                      one it hears nothing of for 2 minutes
 //   stop <playback>    end a playback
 //   rescan             tell the engine the folder changed
+//   group-create <name>          found a group
+//   groups                       the groups, their members, requests and joins waiting
+//   invite <group>               a code for the group (redeemed with redeem, accepted with accept)
+//   pair <group> <mail>          accept a member's request; refuse <group> <mail> refuses it
+//   join-accept <group> <peer>   accept a peer already paired that used our group code
+//   group-offer <group>          share the films with the group
+//   auto <group> on|off          accept the group's members by itself
+//   leave <group>                leave the group
 //   quit
 using System.Net;
 using System.Security.Cryptography;
@@ -70,7 +78,7 @@ using var engine = await MsfpEngine.OpenAsync(new MsfpConfig
     Pins = [Pins.Pin(cert)],
     Notifier = notifier,
     Logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("msfp"),
-    Parts = ["catalog", "playback", "media", "video"],
+    Parts = ["catalog", "playback", "media", "video", "groups"],
     Catalog = folder,
     Playback = folder,
     Media = folder,
@@ -234,6 +242,57 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
             case "rescan":
                 engine.CatalogChanged();
                 break;
+            case "group-create":
+                Console.WriteLine("group " + (await engine.CreateGroupAsync(arg)).Id);
+                break;
+            case "groups":
+                foreach (var g in await engine.GroupsAsync())
+                {
+                    Console.WriteLine($"group {g.Id} \"{g.Name}\" {g.Role}");
+                    foreach (var m in g.Members)
+                    {
+                        Console.WriteLine($"  member {m.Id} \"{m.Name}\" {m.Role} peer={m.Peer}");
+                    }
+
+                    foreach (var r in g.Requests)
+                    {
+                        Console.WriteLine($"  request {r.Mail} from \"{r.Name}\"");
+                    }
+
+                    foreach (var j in g.Joins)
+                    {
+                        Console.WriteLine($"  join {j.Peer} \"{j.Name}\"");
+                    }
+                }
+
+                break;
+            case "invite":
+                var (inviteText, _) = await engine.MakeCodeWithAsync(new CodeOptions { Group = arg, Uses = 10 });
+                Console.WriteLine(inviteText);
+                break;
+            case "pair":
+            case "refuse":
+            case "join-accept":
+            case "auto":
+                var groupAndRest = arg.Split(' ', 2);
+                var rest = groupAndRest.Length > 1 ? groupAndRest[1] : "";
+                await (cmd switch
+                {
+                    "pair" => engine.AcceptRequestAsync(groupAndRest[0], rest),
+                    "refuse" => engine.RefuseRequestAsync(groupAndRest[0], rest),
+                    "join-accept" => engine.AcceptJoinAsync(groupAndRest[0], rest),
+                    _ => engine.SetGroupAnswerAsync(groupAndRest[0], rest == "on"),
+                });
+                Console.WriteLine("done");
+                break;
+            case "group-offer":
+                await engine.SetGroupOffersAsync(arg, ["films"]);
+                Console.WriteLine("offered");
+                break;
+            case "leave":
+                await engine.LeaveGroupAsync(arg);
+                Console.WriteLine("left");
+                break;
             case "peers":
                 engine.PanelOpen();
                 foreach (var p in await engine.PeersAsync())
@@ -252,7 +311,8 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
             default:
                 Console.WriteLine("code [note] | preview <code> | redeem <code> | accept <id> | peers | check <id> | end <id> | server | " +
                     "rotate [key] | stolen [key|none] | confirm <id> | address <url> | uncallable on|off | offer <id> | want <id> | " +
-                    "titles <id> | play <id> <key> | stop <playback> | rescan | quit");
+                    "titles <id> | play <id> <key> | stop <playback> | rescan | group-create <name> | groups | invite <group> | pair <group> <mail> | " +
+                    "refuse <group> <mail> | join-accept <group> <peer> | group-offer <group> | auto <group> on|off | leave <group> | quit");
                 break;
         }
     }
