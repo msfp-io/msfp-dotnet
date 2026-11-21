@@ -37,6 +37,7 @@ public sealed partial class MsfpEngine
         {
             var next = await NextKeyFromAsync(nextKey, ct).ConfigureAwait(false);
             await RotateToAsync(next, revoked: false, ct).ConfigureAwait(false);
+            await GroupsRotatedAsync(ct).ConfigureAwait(false);
             await TellRotationAsync(ct).ConfigureAwait(false);
         }
         finally
@@ -85,7 +86,9 @@ public sealed partial class MsfpEngine
 
             var stolen = Current();
             _log.LogWarning("msfp: this server's key revoked: {Fingerprint}", stolen.Fingerprint);
-            var statement = Rotations.SignRevocation(stolen, Now()).Body();
+            var revocation = Rotations.SignRevocation(stolen, Now());
+            await GroupsRevokedAsync(revocation, ct).ConfigureAwait(false);
+            var statement = revocation.Body();
             await EachPeerAsync(p => string.IsNullOrEmpty(p.OurKey) && p.Inbound == Inbound.Yes, async p =>
             {
                 try
@@ -108,6 +111,7 @@ public sealed partial class MsfpEngine
             }
 
             await RotateToAsync(next, revoked: true, ct).ConfigureAwait(false);
+            await GroupsRotatedAsync(ct).ConfigureAwait(false);
             await TellRotationAsync(ct).ConfigureAwait(false);
             return true;
         }

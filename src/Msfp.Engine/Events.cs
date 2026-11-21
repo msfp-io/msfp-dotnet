@@ -328,3 +328,61 @@ public sealed record RemotePlaybackEnded(string Peer, string Name, string Playba
     /// <inheritdoc/>
     public override string? PeerId => Peer;
 }
+
+// Groups (MSFP groups part). Their PeerId is null, but GroupJoinWaiting's:
+// a group's members aren't peers until linked. Their state is in
+// GroupsAsync and GroupAsync too.
+
+/// <summary>
+/// A member's request waits for this server's operator: AcceptRequestAsync
+/// or RefuseRequestAsync with <paramref name="Mail"/> (MSFP groups section
+/// 4.1). Not sent for one the server accepts itself.
+/// </summary>
+/// <param name="Group">The group's ID.</param>
+/// <param name="GroupName">Its name.</param>
+/// <param name="Mail">The request's mail ID.</param>
+/// <param name="Member">The requester's member ID.</param>
+/// <param name="Name">Its name.</param>
+/// <param name="Fingerprint">Its key's fingerprint.</param>
+public sealed record GroupRequestWaiting(string Group, string GroupName, string Mail, string Member, string Name, string Fingerprint) : MsfpEvent;
+
+/// <summary>
+/// A peer already paired with this server used its code for a group
+/// (group-join): AcceptJoinAsync or RefuseJoinAsync (MSFP groups section 2).
+/// </summary>
+/// <param name="Group">The group's ID.</param>
+/// <param name="GroupName">Its name.</param>
+/// <param name="Peer">The peer's ID.</param>
+/// <param name="Name">Its name.</param>
+/// <param name="Fingerprint">Its key's fingerprint.</param>
+public sealed record GroupJoinWaiting(string Group, string GroupName, string Peer, string Name, string Fingerprint) : MsfpEvent
+{
+    /// <inheritdoc/>
+    public override string? PeerId => Peer;
+}
+
+/// <summary>The list arrived and names this server: it is a member, and sends its requests to the others (MSFP groups section 4).</summary>
+/// <param name="Group">The group's ID.</param>
+/// <param name="GroupName">Its name.</param>
+public sealed record GroupJoined(string Group, string GroupName) : MsfpEvent;
+
+/// <summary>
+/// Members' events changed a group: <paramref name="Types"/> are their
+/// types (joined, admin, owner, banned, left…), once each. Not sent for
+/// this server's own actions.
+/// </summary>
+/// <param name="Group">The group's ID.</param>
+/// <param name="GroupName">Its name.</param>
+/// <param name="Types">The events' types.</param>
+public sealed record GroupChanged(string Group, string GroupName, IReadOnlyList<string> Types) : MsfpEvent;
+
+/// <summary>
+/// This server is no longer in a group, and has removed it:
+/// <paramref name="Why"/> is "left" (LeaveGroupAsync), "dissolved" (by its
+/// owner, maybe this server) or "banned", with the ban's reason ("" for none).
+/// </summary>
+/// <param name="Group">The group's ID.</param>
+/// <param name="GroupName">Its name.</param>
+/// <param name="Why">left, dissolved or banned.</param>
+/// <param name="Reason">A ban's reason.</param>
+public sealed record GroupLeft(string Group, string GroupName, string Why, string Reason) : MsfpEvent;

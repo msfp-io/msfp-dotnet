@@ -341,6 +341,220 @@ public sealed record PeerRecord
     /// <summary>Where our reading of its titles stands.</summary>
     [JsonPropertyName("catalogRead")]
     public CatalogRead CatalogRead { get; set; } = new();
+
+    // Groups (MSFP groups part).
+
+    /// <summary>The groups this link was made or kept through: its sources besides a pairing by hand.</summary>
+    [JsonPropertyName("groups"), OmitEmpty]
+    public List<string>? Groups { get; set; }
+
+    /// <summary>It has no pairing by hand (made by group-pair).</summary>
+    [JsonPropertyName("notByHand"), OmitEmpty]
+    public bool NotByHand { get; set; }
+
+    /// <summary>The host libraries its groups offer it, copied from them whenever they change.</summary>
+    [JsonPropertyName("groupOffers"), OmitEmpty]
+    public List<string>? GroupOffers { get; set; }
+
+    /// <summary>Each of its groups' pools, copied from them whenever they change.</summary>
+    [JsonPropertyName("pools"), OmitEmpty]
+    public List<GroupPool>? Pools { get; set; }
+
+    /// <summary>The group a code of ours invited it to, until our operator accepts it.</summary>
+    [JsonPropertyName("joiningGroup"), OmitEmpty]
+    public string? JoiningGroup { get; set; }
+}
+
+/// <summary>A group's pool, as a link through it uses it (MSFP groups section 9).</summary>
+public sealed record GroupPool
+{
+    /// <summary>The group's ID.</summary>
+    [JsonPropertyName("group")]
+    public string Group { get; set; } = "";
+
+    /// <summary>The pool.</summary>
+    [JsonPropertyName("limits")]
+    public Limits Limits { get; set; } = new();
+}
+
+/// <summary>
+/// A group this server is in (MSFP groups part): its events as received,
+/// those waiting for earlier ones, the mail it carries, and this server's
+/// own choices in it. The engine owns every field.
+/// </summary>
+public sealed record GroupRecord
+{
+    /// <summary>The group's ID: its founded event's.</summary>
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = "";
+
+    /// <summary>This server's member ID in it: the key it joined with.</summary>
+    [JsonPropertyName("me")]
+    public string Me { get; set; } = "";
+
+    /// <summary>The peer whose code made this server join (its inviter), until the list arrives from it.</summary>
+    [JsonPropertyName("via"), OmitEmpty]
+    public string? Via { get; set; }
+
+    /// <summary>The events kept, in the order kept.</summary>
+    [JsonPropertyName("events")]
+    public List<StoredEvent> Events { get; set; } = [];
+
+    /// <summary>Events waiting for earlier ones.</summary>
+    [JsonPropertyName("held"), OmitEmpty]
+    public List<StoredEvent>? Held { get; set; }
+
+    /// <summary>The mail carried.</summary>
+    [JsonPropertyName("mail"), OmitEmpty]
+    public List<StoredMail>? Mail { get; set; }
+
+    /// <summary>This server's X25519 private key for the group's mail, sealed ("msfp group mail key").</summary>
+    [JsonPropertyName("mailKey")]
+    public byte[] MailKey { get; set; } = [];
+
+    /// <summary>Requests are accepted by the server itself once the requester waited the group's days ("accept members"); false: "ask me".</summary>
+    [JsonPropertyName("accept"), OmitEmpty]
+    public bool Accept { get; set; }
+
+    /// <summary>The host libraries this server offers the group.</summary>
+    [JsonPropertyName("offers"), OmitEmpty]
+    public List<string>? Offers { get; set; }
+
+    /// <summary>The pool this server lends the group's members.</summary>
+    [JsonPropertyName("pool")]
+    public Limits Pool { get; set; } = new();
+
+    /// <summary>Requests waiting for this server's operator.</summary>
+    [JsonPropertyName("requests"), OmitEmpty]
+    public List<GroupRequest>? Requests { get; set; }
+
+    /// <summary>Members whose requests this server refused.</summary>
+    [JsonPropertyName("refused"), OmitEmpty]
+    public List<string>? Refused { get; set; }
+
+    /// <summary>The requests and answers this server sent, until used or expired.</summary>
+    [JsonPropertyName("sent"), OmitEmpty]
+    public List<SentMail>? Sent { get; set; }
+
+    /// <summary>The mail IDs a group-pair used.</summary>
+    [JsonPropertyName("used"), OmitEmpty]
+    public List<string>? Used { get; set; }
+
+    /// <summary>When the list was last read from a member.</summary>
+    [JsonPropertyName("synced"), OmitEmpty]
+    public DateTimeOffset? Synced { get; set; }
+
+    /// <summary>When this server called group-join to join through <see cref="Via"/>, a peer already (null: it used pair). It gives up 30 days after.</summary>
+    [JsonPropertyName("joining"), OmitEmpty]
+    public DateTimeOffset? Joining { get; set; }
+
+    /// <summary>Peers already paired with this server that used its code for this group (group-join), waiting for its operator.</summary>
+    [JsonPropertyName("joins"), OmitEmpty]
+    public List<GroupJoin>? Joins { get; set; }
+}
+
+/// <summary>A peer waiting for this server's operator to accept it into a group (MSFP groups section 8.4).</summary>
+public sealed record GroupJoin
+{
+    /// <summary>The peer's ID.</summary>
+    [JsonPropertyName("peer")]
+    public string Peer { get; set; } = "";
+
+    /// <summary>When it called group-join.</summary>
+    [JsonPropertyName("received")]
+    public DateTimeOffset Received { get; set; }
+}
+
+/// <summary>An event's envelope, and when it arrived.</summary>
+public sealed record StoredEvent
+{
+    /// <summary>The payload, base64url.</summary>
+    [JsonPropertyName("event")]
+    public string Event { get; set; } = "";
+
+    /// <summary>The signature, base64url.</summary>
+    [JsonPropertyName("signature")]
+    public string Signature { get; set; } = "";
+
+    /// <summary>When it arrived.</summary>
+    [JsonPropertyName("received")]
+    public DateTimeOffset Received { get; set; }
+}
+
+/// <summary>A mail's envelope, its ID and when it expires.</summary>
+public sealed record StoredMail
+{
+    /// <summary>The mail's ID.</summary>
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = "";
+
+    /// <summary>The payload, base64url.</summary>
+    [JsonPropertyName("mail")]
+    public string Mail { get; set; } = "";
+
+    /// <summary>The signature, base64url.</summary>
+    [JsonPropertyName("signature")]
+    public string Signature { get; set; } = "";
+
+    /// <summary>When it expires, Unix seconds.</summary>
+    [JsonPropertyName("expires")]
+    public long Expires { get; set; }
+}
+
+/// <summary>A member's request waiting for this server's operator, opened.</summary>
+public sealed record GroupRequest
+{
+    /// <summary>The mail's ID.</summary>
+    [JsonPropertyName("mail")]
+    public string Mail { get; set; } = "";
+
+    /// <summary>The requester's member ID.</summary>
+    [JsonPropertyName("from")]
+    public string From { get; set; } = "";
+
+    /// <summary>Its name.</summary>
+    [JsonPropertyName("name"), OmitEmpty]
+    public string? Name { get; set; }
+
+    /// <summary>Its address.</summary>
+    [JsonPropertyName("address")]
+    public string Address { get; set; } = "";
+
+    /// <summary>Its next key commitment.</summary>
+    [JsonPropertyName("nextCommitment")]
+    public byte[]? NextCommitment { get; set; }
+
+    /// <summary>Whether it can be called.</summary>
+    [JsonPropertyName("inbound")]
+    public bool Inbound { get; set; }
+
+    /// <summary>The pins of its certificates.</summary>
+    [JsonPropertyName("pins"), OmitEmpty]
+    public List<string>? Pins { get; set; }
+
+    /// <summary>When it arrived.</summary>
+    [JsonPropertyName("received")]
+    public DateTimeOffset Received { get; set; }
+}
+
+/// <summary>A request or an answer this server sent, waiting for the group-pair it leads to.</summary>
+public sealed record SentMail
+{
+    /// <summary>The mail's ID.</summary>
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = "";
+
+    /// <summary>The recipient's member ID.</summary>
+    [JsonPropertyName("to")]
+    public string To { get; set; } = "";
+
+    /// <summary>request or answer.</summary>
+    [JsonPropertyName("kind")]
+    public string Kind { get; set; } = "";
+
+    /// <summary>When it expires.</summary>
+    [JsonPropertyName("expires")]
+    public DateTimeOffset Expires { get; set; }
 }
 
 /// <summary>
@@ -422,6 +636,14 @@ public sealed record CodeRecord
     /// <summary>When it expires.</summary>
     [JsonPropertyName("expires")]
     public DateTimeOffset Expires { get; set; }
+
+    /// <summary>How many more servers may use it: 0 for a record made before uses existed, which counts as 1 (MSFP core section 5.1).</summary>
+    [JsonPropertyName("uses"), OmitEmpty]
+    public int Uses { get; set; }
+
+    /// <summary>The group (its ID, base64url) a group's code invites to; null for a pairing by hand.</summary>
+    [JsonPropertyName("group"), OmitEmpty]
+    public string? Group { get; set; }
 }
 
 /// <summary>

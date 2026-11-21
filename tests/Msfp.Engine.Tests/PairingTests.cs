@@ -59,7 +59,7 @@ public sealed class PairingTests
         // Each kept the other's versions: every part of version 0 on.
         var p = await b.Engine.PeerAsync(onB.Id);
         Assert.Equal(0, p.Core);
-        Assert.Equal(5, p.Parts.Count);
+        Assert.Equal(6, p.Parts.Count);
         Assert.Equal(0, (await b.Engine.CheckAsync(onB.Id)).Core);
 
         await Assert.ThrowsAsync<MsfpException>(() => a.Engine.AcceptAsync(onA.Id)); // not waiting now

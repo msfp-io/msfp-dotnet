@@ -60,6 +60,43 @@ public sealed class JsonFileStoreTests : IDisposable
     }
 
     // One process at a time: a second Open fails until the first is closed.
+    // Groups (IGroupsTx) are kept in state.json, by the Go store's names,
+    // and read back after reopening; deleted, they are gone.
+    [Fact]
+    public async Task Groups()
+    {
+        using (var st = JsonFileStore.Open(dir))
+        {
+            await st.UpdateAsync(async tx =>
+            {
+                var gt = Assert.IsAssignableFrom<IGroupsTx>(tx);
+                await gt.PutGroupAsync(new GroupRecord
+                {
+                    Id = "g1", Me = "me", Events = [new StoredEvent { Event = "e", Signature = "s", Received = DateTimeOffset.FromUnixTimeSeconds(1800000000) }],
+                    MailKey = B("key"), Accept = true, Pool = new Limits { Streams = 1 }, Joins = [new GroupJoin { Peer = "p1" }],
+                });
+                await gt.PutGroupAsync(new GroupRecord { Id = "g2", Me = "me" });
+                await tx.PutPeerAsync(new PeerRecord { Id = "p1", Key = B("k"), Groups = ["g1"], NotByHand = true, Pools = [new GroupPool { Group = "g1" }] });
+            }, Ct);
+            await st.UpdateAsync(tx => ((IGroupsTx)tx).DeleteGroupAsync("g2"), Ct);
+        }
+
+        Assert.Contains("\"groups\":{\"g1\":{\"id\":\"g1\",\"me\":\"me\"", await File.ReadAllTextAsync(Path.Combine(dir, "state.json"), Ct),
+            StringComparison.Ordinal);
+        using (var st = JsonFileStore.Open(dir))
+        {
+            await st.ReadAsync(async tx =>
+            {
+                var g = Assert.Single(await ((IGroupsTx)tx).GroupsAsync());
+                Assert.Equal(("g1", true, 1, "p1"), (g.Id, g.Accept, g.Pool.Streams, Assert.Single(g.Joins!).Peer));
+                Assert.Equal("e", Assert.Single(g.Events).Event);
+                var p = await tx.PeerAsync("p1");
+                Assert.Equal(["g1"], p!.Groups!);
+                Assert.True(p.NotByHand);
+            }, Ct);
+        }
+    }
+
     [Fact]
     public void OpenedOnce()
     {

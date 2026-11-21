@@ -82,6 +82,12 @@ public sealed record PeerView
 
     /// <summary>How many of those it no longer offers (WantsGone).</summary>
     public int WantsGone { get; init; }
+
+    /// <summary>The groups this link was made or kept through (MSFP groups part).</summary>
+    public IReadOnlyList<string> Groups { get; init; } = [];
+
+    /// <summary>It was also paired by hand. A link with no group is always by hand.</summary>
+    public bool ByHand { get; init; } = true;
 }
 
 /// <summary>A peer's key the operator is shown: its fingerprint, and when.</summary>
@@ -173,6 +179,7 @@ public sealed partial class MsfpEngine
             RotationAnswer = p.RotationAnswer ?? "", NotMoved = notMoved, MoveLate = notMoved && a.MovedAt is { } at && Now() - at >= MoveLate,
             Moving = p.Move is { } m ? new MoveView(m.Address, m.Since, m.FailingSince, new AddressMove(m.Address, null, m.FailingSince).Warn(Now())) : null,
             Offers = p.Offers?.Count ?? 0, Wants = p.Wants?.Count(w => w.Wanted) ?? 0, WantsGone = p.Wants?.Count(w => w.Wanted && w.Gone) ?? 0,
+            Groups = [.. p.Groups ?? []], ByHand = !p.NotByHand,
         };
     }
 

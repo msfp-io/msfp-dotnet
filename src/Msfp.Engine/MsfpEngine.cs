@@ -245,7 +245,7 @@ public sealed partial class MsfpEngine : IDisposable
     // needs aren't listed, each at version 0.
     private static Dictionary<string, IReadOnlyList<int>> ServedParts(IReadOnlyList<string>? listed)
     {
-        string[] all = [Versions.PartCatalog, Versions.PartMedia, Versions.PartPlayback, Versions.PartVideo, Versions.PartMusic];
+        string[] all = [Versions.PartCatalog, Versions.PartMedia, Versions.PartPlayback, Versions.PartVideo, Versions.PartMusic, Versions.PartGroups];
         var needs = new Dictionary<string, string[]>
         {
             [Versions.PartPlayback] = [Versions.PartCatalog, Versions.PartMedia],
@@ -376,6 +376,18 @@ public sealed partial class MsfpEngine : IDisposable
                 break;
             case VersionsChanged v:
                 Background(ct => PartsChangedAsync(v.Peer, ct));
+                break;
+            case PeerPaired paired:
+                // Joining a group through this pairing (MSFP groups section 4).
+                Background(async ct =>
+                {
+                    PeerRecord? p = null;
+                    await _store.ReadAsync(async tx => p = await tx.PeerAsync(paired.Peer).ConfigureAwait(false), ct).ConfigureAwait(false);
+                    if (p is { State: var state } && state == PeerState.Paired)
+                    {
+                        await PairedAsync(p, ct).ConfigureAwait(false);
+                    }
+                });
                 break;
         }
     }

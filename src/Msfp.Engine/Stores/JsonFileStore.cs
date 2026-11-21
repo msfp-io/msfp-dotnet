@@ -203,6 +203,7 @@ public sealed partial class JsonFileStore : IStore, ISealerProvider, IDisposable
             s.Forgotten = Copy(file.Forgotten);
             s.LibraryIds = Copy(file.LibraryIds);
             s.Leftovers = Copy(file.Leftovers);
+            s.Groups = Copy(file.Groups);
         }
         if (ReadJson<Own>(Path.Combine(dir, "own.json")) is { } own)
         {
@@ -268,6 +269,7 @@ public sealed partial class JsonFileStore : IStore, ISealerProvider, IDisposable
                 Forgotten = new(s.Forgotten, StringComparer.Ordinal),
                 LibraryIds = new(s.LibraryIds, StringComparer.Ordinal),
                 Leftovers = new(s.Leftovers, StringComparer.Ordinal),
+                Groups = new(s.Groups, StringComparer.Ordinal),
             });
         }
     }

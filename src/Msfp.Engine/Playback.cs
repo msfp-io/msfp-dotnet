@@ -624,13 +624,14 @@ public sealed partial class MsfpEngine
 
         var audioOnly = k.Part == Versions.PartMusic;
         // 2. No stream at all for this pairing.
-        if (InUse(p.Id, p.Limits, audioOnly).Most == 0)
+        if (!PoolRoom(p, audioOnly).Any)
         {
             return Answer.Refuse(ProblemType.StreamLimit);
         }
 
-        // 3. Copies of that key in the libraries offered to it.
-        var offers = p.Offers ?? [];
+        // 3. Copies of that key in the libraries offered to it: by hand and
+        // through its groups (MSFP groups section 9).
+        var offers = Offered(p);
         if (_cfg.Catalog is null || _cfg.Playback is null || offers.Count == 0)
         {
             return Answer.Refuse(ProblemType.NotFound);
@@ -668,8 +669,7 @@ public sealed partial class MsfpEngine
 
         // 5. The pairing's streams all in use: refused before any work (the
         // count that matters is Admit's).
-        var (used, most) = InUse(p.Id, p.Limits, audioOnly);
-        if (used >= most)
+        if (!PoolRoom(p, audioOnly).Room)
         {
             return Answer.Refuse(ProblemType.StreamLimit);
         }
@@ -697,7 +697,7 @@ public sealed partial class MsfpEngine
 
         // 6. The bitrate cap: the lowest of the four, 120,000 without one.
         var kbps = 0;
-        foreach (var c in new[] { (int)kbpsAsked, caps.MaxBitrateKbps, _cfg.MaxBitrateKbps, p.Limits.BitrateKbps })
+        foreach (var c in new[] { (int)kbpsAsked, caps.MaxBitrateKbps, _cfg.MaxBitrateKbps, Generous(p).BitrateKbps })
         {
             if (c > 0 && (kbps == 0 || c < kbps))
             {
@@ -728,7 +728,7 @@ public sealed partial class MsfpEngine
                     throw new MsfpException(MsfpError.Internal, "admit called twice");
                 }
 
-                slot = AdmitStream(p.Id, p.Limits, audioOnly, method);
+                slot = AdmitPools(p, audioOnly, method);
                 return slot;
             },
         };
@@ -749,7 +749,7 @@ public sealed partial class MsfpEngine
             // the limits refuse it.
             try
             {
-                slot = AdmitStream(p.Id, p.Limits, audioOnly, started.Method);
+                slot = AdmitPools(p, audioOnly, started.Method);
             }
             catch (MsfpException e)
             {
@@ -775,7 +775,7 @@ public sealed partial class MsfpEngine
                 return Answer.Refuse(ProblemType.NotFound);
             }
 
-            if (chosen.Library.Length > 0 && q.Offers?.Contains(chosen.Library) != true)
+            if (chosen.Library.Length > 0 && !Offered(q).Contains(chosen.Library))
             {
                 EndPlayback(pb, EndReason.NotOffered);
                 return Answer.Refuse(ProblemType.NotFound);
@@ -1260,7 +1260,7 @@ public sealed partial class MsfpEngine
             return false;
         }
 
-        if (pb.Library.Length > 0 && p.Offers?.Contains(pb.Library) != true)
+        if (pb.Library.Length > 0 && !Offered(p).Contains(pb.Library))
         {
             EndPlayback(pb, EndReason.NotOffered);
             return false;

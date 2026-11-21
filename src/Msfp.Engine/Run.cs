@@ -89,6 +89,15 @@ public sealed partial class MsfpEngine
         await MaintainKeysAsync(ct).ConfigureAwait(false);
         await MaintainAddressesAsync(ct).ConfigureAwait(false);
         await StopLeftoversAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await TidyGroupsAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            _log.LogWarning(e, "msfp: groups couldn't be tidied");
+        }
+
         if (_logKept)
         {
             try
@@ -116,7 +125,18 @@ public sealed partial class MsfpEngine
         await ReadDueAsync(false, ct).ConfigureAwait(false);
         ExpirePlaybacks(false);
         TellWatched();
+        // The groups looked at every 30 seconds for a sync (MSFP groups
+        // section 6); a clock set back looks at once.
+        var now = Now();
+        if (_groupsTick is not { } tick || now - tick >= GroupsTickEvery || now < tick)
+        {
+            _groupsTick = now;
+            Background(SyncGroupsAsync);
+        }
     }
+
+    private static readonly TimeSpan GroupsTickEvery = TimeSpan.FromSeconds(30);
+    private DateTimeOffset? _groupsTick;
 
     // What time does to keys (core sections 12.4, 12.6, 12.7): our old key
     // deleted 30 days after the change began (that change only), the key

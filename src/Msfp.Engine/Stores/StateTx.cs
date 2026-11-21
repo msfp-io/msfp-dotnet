@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace Msfp.Stores;
 
 /// <summary>A transaction on a state (Go's state.tx).</summary>
-internal sealed class StateTx : IStoreTx, IOwnLogTx
+internal sealed class StateTx : IStoreTx, IOwnLogTx, IGroupsTx
 {
     private readonly bool readOnly;
     private readonly HashSet<string> cloned = new(StringComparer.Ordinal);
@@ -61,6 +61,9 @@ internal sealed class StateTx : IStoreTx, IOwnLogTx
                 break;
             case "leftovers":
                 s.Leftovers = new(s.Leftovers, StringComparer.Ordinal);
+                break;
+            case "groups":
+                s.Groups = new(s.Groups, StringComparer.Ordinal);
                 break;
             case "catalogs":
                 s.Catalogs = new(s.Catalogs, StringComparer.Ordinal);
@@ -498,5 +501,30 @@ internal sealed class StateTx : IStoreTx, IOwnLogTx
         OwnCollection("own");
         State.Own.Seq = Math.Max(State.Own.Seq, State.Own.Floor) + 1;
         return new(State.Own.Seq);
+    }
+
+    // The groups (IGroupsTx).
+
+    public ValueTask<IReadOnlyList<GroupRecord>> GroupsAsync()
+    {
+        Check();
+        return new(State.Groups.Keys.Order(StringComparer.Ordinal).Select(id => Get<GroupRecord>(State.Groups[id])!).ToList());
+    }
+
+    public ValueTask<GroupRecord?> GroupAsync(string id) => new(Get<GroupRecord>(State.Groups, id));
+
+    public ValueTask PutGroupAsync(GroupRecord group)
+    {
+        ArgumentNullException.ThrowIfNull(group);
+        OwnCollection("groups");
+        State.Groups[group.Id] = ToJson(group);
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask DeleteGroupAsync(string id)
+    {
+        OwnCollection("groups");
+        State.Groups.Remove(id);
+        return ValueTask.CompletedTask;
     }
 }

@@ -12,6 +12,7 @@ internal static class SealContext
     internal const string Revoked = "msfp revoked key";
     internal const string Ids = "msfp ids secret";
     internal const string Code = "msfp code secret";
+    internal const string MailKey = "msfp group mail key";
 }
 
 /// <summary>

@@ -34,6 +34,9 @@ internal sealed class State
     // By peer, a line feed, playback ID.
     public Dictionary<string, Leftover> Leftovers { get; set; } = new(StringComparer.Ordinal);
 
+    // The groups this server is in (IGroupsTx), by ID.
+    public Dictionary<string, JsonElement> Groups { get; set; } = new(StringComparer.Ordinal);
+
     // The peers' titles and the keys each was sent, by peer ID: kept apart,
     // since they are big and change on their own.
     public Dictionary<string, Catalog> Catalogs { get; set; } = new(StringComparer.Ordinal);
@@ -81,6 +84,9 @@ internal sealed class StateFile
 
     [JsonPropertyName("leftovers")]
     public SortedDictionary<string, Leftover>? Leftovers { get; set; }
+
+    [JsonPropertyName("groups"), OmitEmpty]
+    public SortedDictionary<string, JsonElement>? Groups { get; set; }
 }
 
 /// <summary>One peer's titles, and the keys of our titles it was sent.</summary>

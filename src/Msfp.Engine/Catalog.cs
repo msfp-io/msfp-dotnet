@@ -444,13 +444,14 @@ public sealed partial class MsfpEngine
         }
 
         var ids = await LibraryIdsAsync(ct).ConfigureAwait(false);
-        var offered = ours.Where(l => ids.ContainsKey(l.Id) && p.Offers?.Contains(l.Id) == true).ToList();
+        var offers = Offered(p);
+        var offered = ours.Where(l => ids.ContainsKey(l.Id) && offers.Contains(l.Id)).ToList();
         var playback = On(p, Versions.PartPlayback);
         var music = On(p, Versions.PartMusic);
         return Answer.Ok(JsonOut.Object(o => o.String("name", Name())
             .Objects("libraries", offered, (w, l) => w.String("id", ids[l.Id]).String("name", Music.CleanText(l.Name ?? "", MaxLibraryName))
                 .String("kind", CleanKind(l.Kind)))
-            .Object("limits", playback ? w => WriteLimits(w, p.Limits, music) : null)));
+            .Object("limits", playback ? w => WriteLimits(w, Generous(p), music) : null)));
     }
 
     // A limits object as sent (playback section 5, music section 5.1).
@@ -538,7 +539,7 @@ public sealed partial class MsfpEngine
         // Those asked for that are offered to it, by their public IDs: any
         // other is ignored.
         var byPublic = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var l in p.Offers ?? [])
+        foreach (var l in Offered(p))
         {
             if (ids.TryGetValue(l, out var pub))
             {

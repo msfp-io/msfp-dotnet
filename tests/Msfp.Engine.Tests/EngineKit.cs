@@ -451,7 +451,7 @@ internal static class Kit
         return r!;
     }
 
-    public static byte[] Paired { get; } = "{\"state\":\"paired\",\"core\":[1],\"parts\":{}}"u8.ToArray();
+    public static byte[] Paired { get; } = "{\"state\":\"paired\",\"core\":[0],\"parts\":{}}"u8.ToArray();
 
     public static string Text(this MsfpResponse r) => System.Text.Encoding.UTF8.GetString(r.Body.Span);
 

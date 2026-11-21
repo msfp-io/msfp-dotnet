@@ -223,6 +223,14 @@ public sealed partial class MsfpEngine
             await tx.PutPeerAsync(q).ConfigureAwait(false);
         }, ct).ConfigureAwait(false);
         _log.LogInformation("msfp: paired: {Peer} {Name}", p!.Id, p.Name);
+        var joining = p.JoiningGroup;
+        if (!string.IsNullOrEmpty(joining))
+        {
+            // A group's code: the newcomer is signed in before it is told it
+            // is paired (MSFP groups section 4, step 3).
+            await PairedAsync(p, ct).ConfigureAwait(false);
+        }
+
         Notify(new PeerPaired(p.Id, p.Name));
         if (p.Inbound != Inbound.Yes)
         {
@@ -231,7 +239,14 @@ public sealed partial class MsfpEngine
 
         try
         {
-            return await CheckAsync(id, ct).ConfigureAwait(false);
+            var v = await CheckAsync(id, ct).ConfigureAwait(false);
+            if (!string.IsNullOrEmpty(joining))
+            {
+                // Its versions known now: the whole list, pushed to it.
+                await PushAllAsync(joining, id, ct).ConfigureAwait(false);
+            }
+
+            return v;
         }
         catch (MsfpException e) when (e.Code != MsfpError.Internal)
         {

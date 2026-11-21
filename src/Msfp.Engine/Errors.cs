@@ -134,6 +134,21 @@ public enum MsfpError
 
     /// <summary>A sheet that isn't a JPEG within its size.</summary>
     NotAnImage,
+
+    /// <summary>A code's uses or lifetime out of range, or a group's name or settings.</summary>
+    CodeOptions,
+
+    /// <summary>The store keeps no groups (<see cref="IGroupsTx"/>).</summary>
+    NoGroups,
+
+    /// <summary>This server's role in the group doesn't allow it.</summary>
+    NoRight,
+
+    /// <summary>Not a member of the group (or the group is gone).</summary>
+    NotMember,
+
+    /// <summary>Already in the group, banned from it, or waiting to join it (a group's code from a peer already).</summary>
+    AlreadyMember,
 }
 
 /// <summary>

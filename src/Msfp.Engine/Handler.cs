@@ -35,7 +35,11 @@ public sealed partial class MsfpEngine
 
     // The calls of version 0, by their name under the base path.
     private static readonly HashSet<string> Calls =
-        new(StringComparer.Ordinal) { CallPair, CallHello, CallRotate, CallRevoke, CallLibraries, CallTitles, CallPlay, CallProgress, CallStop };
+        new(StringComparer.Ordinal)
+        {
+            CallPair, CallHello, CallRotate, CallRevoke, CallLibraries, CallTitles, CallPlay, CallProgress, CallStop,
+            CallGroupSync, CallGroupPush, CallGroupPair, CallGroupJoin,
+        };
 
     /// <summary>
     /// The federation routes peers call, under
@@ -135,6 +139,10 @@ public sealed partial class MsfpEngine
         CallPlay => await PlayAsync(req, ct).ConfigureAwait(false),
         CallProgress => await ProgressAsync(req, ct).ConfigureAwait(false),
         CallStop => await StopAsync(req, ct).ConfigureAwait(false),
+        CallGroupSync => await GroupSyncServedAsync(req, ct).ConfigureAwait(false),
+        CallGroupPush => await GroupPushServedAsync(req, ct).ConfigureAwait(false),
+        CallGroupPair => await GroupPairServedAsync(req, ct).ConfigureAwait(false),
+        CallGroupJoin => await GroupJoinServedAsync(req, ct).ConfigureAwait(false),
         _ => Answer.Refuse(ProblemType.NotSupported),
     };
 
@@ -199,6 +207,14 @@ public sealed partial class MsfpEngine
 
         req.Verified = v;
         req.Ours = v.Former ? FormerHost() ?? OurHost() : OurHost();
+        // A stranger is heard on pair (a code of ours live) and on
+        // group-pair (a member of one of our groups) only (core section 6.5,
+        // groups section 8).
+        if (!v.Known && call is not (CallPair or CallGroupPair))
+        {
+            return (null, Answer.PlainRefusal, null);
+        }
+
         var key = "";
         if (v.Known)
         {
@@ -300,7 +316,10 @@ public sealed partial class MsfpEngine
 
     // Whether a key may be heard (core section 6.5): a peer's current key,
     // in any state; its previous one while still heard; anyone while a
-    // code of ours is live (on pair: the check of the call is pair's).
+    // code of ours is live (on pair: the check of the call is pair's); a
+    // member of one of our groups (on group-pair, groups section 8), heard
+    // as a stranger, with the strangers' nonce memory. CheckAsync lets
+    // strangers through on those two calls only.
     private async ValueTask<Admission> AdmitAsync(byte[] key, CancellationToken ct)
     {
         if (await PeerHeardAsync(key, ct).ConfigureAwait(false) is not null)
@@ -312,7 +331,7 @@ public sealed partial class MsfpEngine
         var now = Now();
         await _store.ReadAsync(async tx => live = (await tx.CodesAsync().ConfigureAwait(false)).Any(c => c.Expires > now), ct)
             .ConfigureAwait(false);
-        return new Admission(live, false);
+        return new Admission(live || await GroupMemberAsync(key, ct).ConfigureAwait(false), false);
     }
 
     // Whether a key is a server's whose pairing with this one ended, or

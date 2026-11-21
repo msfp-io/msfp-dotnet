@@ -220,6 +220,26 @@ public interface IStoreTx
 }
 
 /// <summary>
+/// What a transaction implements, besides <see cref="IStoreTx"/>, for the
+/// part groups (MSFP groups part): the groups this server is in. The
+/// shipped stores implement it; without it, the engine has no groups.
+/// </summary>
+public interface IGroupsTx
+{
+    /// <summary>Every group, by ID.</summary>
+    ValueTask<IReadOnlyList<GroupRecord>> GroupsAsync();
+
+    /// <summary>One group; null for none.</summary>
+    ValueTask<GroupRecord?> GroupAsync(string id);
+
+    /// <summary>Adds or replaces a group.</summary>
+    ValueTask PutGroupAsync(GroupRecord group);
+
+    /// <summary>Deletes a group.</summary>
+    ValueTask DeleteGroupAsync(string id);
+}
+
+/// <summary>
 /// What a transaction implements, besides <see cref="IStoreTx"/>, when the
 /// engine keeps the change log of the host's own catalog (an ICatalog
 /// without <see cref="IChangeLog"/>, host.md section 2). The shipped stores
