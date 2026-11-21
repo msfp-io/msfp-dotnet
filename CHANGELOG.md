@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.5.0-preview (2026-11-21)
+
+msfp-go v0.5.0 in .NET.
 
 ### Added
 
@@ -34,6 +36,10 @@
   the token, failing every hour on the disposed store. A Jellyfin restart
   that runs out of time stopping the plugin did that. `Dispose` now ends
   `RunAsync`, which returns without an error.
+
+### Example
+
+- `groups` says when a group has no way in.
 
 ## v0.4.1-preview (2026-11-21)
 
