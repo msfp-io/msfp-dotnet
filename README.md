@@ -6,7 +6,9 @@ The MSFP engine for .NET. [MSFP](https://github.com/msfp-io/msfp-spec), the
 Media Server Federation Protocol, lets media servers share their libraries
 with each other: one server's people browse and play titles another server
 holds, through their own server. Two operators pair their servers by hand,
-and each server trusts only the servers it paired with.
+and each server trusts only the servers it paired with. Groups make that
+easier among friends: a server joins a group with one code, then pairs
+with each member who accepts, without codes.
 
 This library runs the protocol inside your media server, the **host**. The
 engine signs and checks every call, keeps the pairings, keys, addresses and
@@ -15,7 +17,7 @@ the two shipped stores) and hands the engine the requests peers send it;
 it writes none of the protocol itself.
 
 - The protocol: [msfp-io/msfp-spec](https://github.com/msfp-io/msfp-spec),
-  version 1 ([spec/v1](https://github.com/msfp-io/msfp-spec/tree/main/spec/v1)).
+  version 0, a draft until version 1 ([spec/v0](https://github.com/msfp-io/msfp-spec/tree/main/spec/v0)).
 - The engine's API in words: [api/](https://github.com/msfp-io/msfp-spec/tree/main/api)
   in the spec's repository, mainly
   [engine.md](https://github.com/msfp-io/msfp-spec/blob/main/api/engine.md)
@@ -23,8 +25,8 @@ it writes none of the protocol itself.
   This library follows the same design as the Go engine,
   [msfp-go](https://github.com/msfp-io/msfp-go), in .NET's own style.
 
-**Status: 0.2.0-preview, not released.** The protocol layer is complete
-and passes every test vector of MSFP version 1. The engine pairs (keys,
+**Status: 0.4.0-preview, not released.** The protocol layer is complete
+and passes every test vector of MSFP version 0. The engine pairs (keys,
 codes, `pair`, `hello`, accepting and ending, signed answers, limits),
 rotates and revokes its key (with its next key, or replaced without it),
 follows its peers' rotations and revocations, moves to a new address
@@ -35,7 +37,10 @@ and plays too: the catalog both ways (libraries offered and wanted, titles
 read whole or as changes, its own change log or the host's), playback both
 ways (play, progress, stop, the pairing's limits), the media of peers'
 tickets and the relay of a peer's media (HLS, WebVTT, PGS, preview
-sheets), for films, series and music.
+sheets), for films, series and music. And groups (MSFP's groups part):
+founding one, inviting with codes, members' requests and answers, pairing
+through the group, roles, bans, leaving, dissolving, offers and pools per
+group.
 
 ## Packages
 
@@ -46,7 +51,7 @@ sheets), for films, series and music.
 
 Both have the same version. The only dependency beyond .NET is
 [BouncyCastle.Cryptography](https://www.nuget.org/packages/BouncyCastle.Cryptography)
-for Ed25519, which .NET doesn't have, and the engine's use of
+for Ed25519 and X25519, which .NET doesn't have, and the engine's use of
 `Microsoft.Extensions.Logging.Abstractions`. It needs .NET 10.
 
 ## The minimum
@@ -147,6 +152,28 @@ Preview sheets a peer sends are re-encoded before they reach a viewer
 default `ISheetEncoder`: give one (ImageSharp, SkiaSharp, the host's
 own), or previews of peers' titles are left out.
 
+## Groups
+
+A group is a list of signed events every member keeps; the engine checks
+them, seals the members' requests to each other, and pairs through the
+group (`IGroupsTx`, which both shipped stores implement, keeps them):
+
+```csharp
+var family = await engine.CreateGroupAsync("Family");                 // this server its owner
+var (code, _) = await engine.MakeCodeWithAsync(new CodeOptions { Group = family.Id, Uses = 3 });
+await engine.AcceptRequestAsync(family.Id, mail);                     // a member's request (GroupRequestWaiting)
+await engine.SetGroupOffersAsync(family.Id, ["films"]);               // what every link through it is offered
+```
+
+A server redeems a group's code as any other (`RedeemCodeAsync`); one
+already paired with the code's maker joins through the pairing, and the
+maker's operator answers with `AcceptJoinAsync` or `RefuseJoinAsync`.
+`GroupsAsync` and `GroupAsync` show members, roles, bans and requests;
+`SetAdminAsync`, `BanAsync`, `GiveGroupAsync`, `LeaveGroupAsync`,
+`DissolveGroupAsync` and `BlockAsync` act on them. A link's offers are
+what it has by hand and what each of its groups gives it; a playback
+counts against the first pool with room (`SetGroupPoolAsync`).
+
 ## The example
 
 [examples/ShareFolder](examples/ShareFolder) is a small host, msfp-go's
@@ -181,9 +208,11 @@ minutes). The comment at the top of
 
 The library follows [semantic versioning](https://semver.org). Its
 major.minor version is shared with the other MSFP engines: msfp-dotnet
-0.2.x will follow the same API design as msfp-go 0.2.x (the spec's api/).
+0.4.x follows the same API design as msfp-go 0.4.x (the spec's api/).
 Patch versions are each library's own. The library's version is separate
-from the protocol's: it speaks MSFP version 1.
+from the protocol's: from 0.4.0-preview it speaks MSFP version 0, groups
+included; 0.2.0-preview and before speak the same protocol numbered 1, and
+the two don't talk.
 
 ## Testing
 
@@ -200,13 +229,14 @@ films doesn't have), with `--code2`, `--load` and `--end`. The protocol's test v
 [tests/Msfp.Protocol.Tests/testdata](tests/Msfp.Protocol.Tests/testdata)
 come from the spec's
 [vectors/](https://github.com/msfp-io/msfp-spec/tree/main/vectors), copied
-as they are: `testdata/v1/` is the spec's `vectors/v1/`, and
-`testdata/v0-strict.json` its `vectors/v0-strict.json`. To refresh them,
-copy those files from a checkout of msfp-spec and run the tests:
+as they are: `testdata/v0/` is the spec's `vectors/v0/`, and
+`testdata/test-draft-strict.json` its `vectors/history/test-draft-strict.json`.
+To refresh them, copy those files from a checkout of msfp-spec and run the
+tests:
 
 ```sh
-cp ../msfp-spec/vectors/v1/*.json tests/Msfp.Protocol.Tests/testdata/v1/
-cp ../msfp-spec/vectors/v0-strict.json tests/Msfp.Protocol.Tests/testdata/
+cp ../msfp-spec/vectors/v0/*.json tests/Msfp.Protocol.Tests/testdata/v0/
+cp ../msfp-spec/vectors/history/test-draft-strict.json tests/Msfp.Protocol.Tests/testdata/
 dotnet test
 ```
 
