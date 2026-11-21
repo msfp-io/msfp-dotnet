@@ -5,7 +5,7 @@
     <RootNamespace>Msfp.Protocol</RootNamespace>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IsPackable>true</IsPackable>
-    <Description>MSFP, the Media Server Federation Protocol, version 1: the protocol's pieces (keys, pairing codes, signed requests and answers, strict JSON, statements, media checks).</Description>
+    <Description>MSFP, the Media Server Federation Protocol, version 0: the protocol's pieces (keys, pairing codes, signed requests and answers, strict JSON, statements, media checks).</Description>
   </PropertyGroup>
   <ItemGroup>
     <!-- Ed25519 and its group arithmetic: .NET has none of its own. -->

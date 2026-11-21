@@ -242,7 +242,7 @@ public sealed partial class MsfpEngine : IDisposable
     }
 
     // The parts Config.Parts lists (all when null), without those whose
-    // needs aren't listed, each at version 1.
+    // needs aren't listed, each at version 0.
     private static Dictionary<string, IReadOnlyList<int>> ServedParts(IReadOnlyList<string>? listed)
     {
         string[] all = [Versions.PartCatalog, Versions.PartMedia, Versions.PartPlayback, Versions.PartVideo, Versions.PartMusic];
@@ -262,18 +262,18 @@ public sealed partial class MsfpEngine : IDisposable
 
             if (needs.GetValueOrDefault(name, []).All(output.ContainsKey))
             {
-                output[name] = [1];
+                output[name] = [0];
             }
         }
 
         return output;
     }
 
-    /// <summary>What this server speaks: core 1, and its parts.</summary>
-    internal Versions OurVersions() => new([1], _parts);
+    /// <summary>What this server speaks: core 0, and its parts.</summary>
+    internal Versions OurVersions() => new([0], _parts);
 
     internal Agreement? Agreed(PeerRecord p) =>
-        p.Versions is null ? new Agreement(1, new Dictionary<string, int>()) : Versions.Agreed(OurVersions(), FromRecord(p.Versions));
+        p.Versions is null ? new Agreement(0, new Dictionary<string, int>()) : Versions.Agreed(OurVersions(), FromRecord(p.Versions));
 
     internal static Versions FromRecord(WireVersions v) =>
         new(v.Core ?? [], (v.Parts ?? []).ToDictionary(p => p.Key, p => (IReadOnlyList<int>)p.Value, StringComparer.Ordinal));

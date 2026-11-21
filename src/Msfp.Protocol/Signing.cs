@@ -39,9 +39,9 @@ public static partial class Signing
 
     // What's signed starts with what it is, so a signature made for one use
     // never passes for another (core sections 6.2, 6.3 and 9.1).
-    private const string RequestLabel = "msfp-1 request\n";
-    private const string ResponseLabel = "msfp-1 response\n";
-    internal const string PairingLabel = "msfp-1 pairing\n";
+    private const string RequestLabel = "msfp-0 request\n";
+    private const string ResponseLabel = "msfp-0 response\n";
+    internal const string PairingLabel = "msfp-0 pairing\n";
 
     [GeneratedRegex("^[1-9][0-9]{0,15}\\z")]
     private static partial Regex DateRe();

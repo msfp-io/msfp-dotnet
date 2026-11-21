@@ -2,12 +2,12 @@ using System.Text.Json.Nodes;
 
 namespace Msfp.Protocol.Tests;
 
-/// <summary>The spec's vectors (testdata/v1, copies of msfp-spec/vectors/v1).</summary>
+/// <summary>The spec's vectors (testdata/v0, copies of msfp-spec/vectors/v0).</summary>
 internal static class TestVectors
 {
     public static JsonObject Load(string name)
     {
-        var path = Path.Combine(AppContext.BaseDirectory, "testdata", "v1", name);
+        var path = Path.Combine(AppContext.BaseDirectory, "testdata", "v0", name);
         return JsonNode.Parse(File.ReadAllBytes(path))!.AsObject();
     }
 

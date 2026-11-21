@@ -32,7 +32,7 @@ public sealed record PeerView
     /// <summary>When it revoked its key; null when it didn't.</summary>
     public DateTimeOffset? Suspended { get; init; }
 
-    /// <summary>The core version on with it; 0 when there is none in common (the two can't talk).</summary>
+    /// <summary>The core version on with it; -1 when there is none in common (the two can't talk).</summary>
     public int Core { get; init; }
 
     /// <summary>The parts on with it, by name, with their versions.</summary>
@@ -165,7 +165,7 @@ public sealed partial class MsfpEngine
         {
             Id = p.Id, Name = p.Name, Address = p.Address, Fingerprint = Keys.Fingerprint(p.Key), State = p.State,
             Created = p.Created, Paired = p.Paired, Seen = p.Seen, Suspended = p.Suspended,
-            Core = agreed?.Core ?? 0, Parts = agreed?.Parts ?? new Dictionary<string, int>(),
+            Core = agreed?.Core ?? -1, Parts = agreed?.Parts ?? new Dictionary<string, int>(),
             Inbound = p.Inbound, CallsFailed = p.CallsFailed, CommitmentFrom = p.CommitmentFrom ?? "",
             OurKey = p.OurKey ?? "",
             Pending = p.Pending?.New is { } pk ? new KeyNotice(Keys.Fingerprint(pk), DateTimeOffset.FromUnixTimeSeconds(p.Pending.Date)) : null,

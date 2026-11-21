@@ -4,16 +4,16 @@ using System.Text.Json.Nodes;
 namespace Msfp.Protocol.Tests;
 
 /// <summary>
-/// MSFP's version 1 test vectors of the core (keys.json, code.json,
+/// MSFP's version 0 test vectors of the core (keys.json, code.json,
 /// exchanges.json, rotation.json, revocation.json, strict.json) and the
-/// canonical forms of v0-strict.json that hold for core 1 (core section
+/// canonical forms of test-draft-strict.json that hold for core 0 (core section
 /// 17), recomputed with the code: msfp-go's wire/vectors_test.go,
 /// json_test.go, rotation_test.go and uncallable_test.go.
 /// </summary>
 public sealed class CoreVectorTests
 {
     private static JsonObject LoadV0() =>
-        JsonNode.Parse(File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "testdata", "v0-strict.json")))!.AsObject();
+        JsonNode.Parse(File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "testdata", "test-draft-strict.json")))!.AsObject();
 
     internal static Dictionary<string, MsfpKey> VectorKeys()
     {
@@ -153,17 +153,17 @@ public sealed class CoreVectorTests
         var a = Hello.Read(x.Body, answer: false);
         Assert.Equal("paired", a.State);
         Assert.Equal("https://a.example.org", a.Address);
-        Assert.Equal([1], a.Versions.Core);
+        Assert.Equal([0], a.Versions.Core);
         Assert.Equal(4, a.Versions.Parts.Count);
         Assert.Single(a.Certificates);
         var b = Hello.Read(x.AnswerBody, answer: true);
         Assert.Equal("paired", b.State);
-        Assert.Equal([1], b.Versions.Core);
+        Assert.Equal([0], b.Versions.Core);
         Assert.Single(b.Certificates);
         var agreed = Versions.Agreed(a.Versions, b.Versions);
         Assert.NotNull(agreed);
-        Assert.Equal(1, agreed.Core);
-        Assert.Equal(new Dictionary<string, int> { ["catalog"] = 1 }, agreed.Parts);
+        Assert.Equal(0, agreed.Core);
+        Assert.Equal(new Dictionary<string, int> { ["catalog"] = 0 }, agreed.Parts);
     }
 
     [Fact]
@@ -359,7 +359,7 @@ public sealed class CoreVectorTests
             }
         }
 
-        TestVectors.NoFailures(failures, total, "v0-strict.json keys, signatures, dates, base64url");
+        TestVectors.NoFailures(failures, total, "test-draft-strict.json keys, signatures, dates, base64url");
     }
 
     [Fact]
@@ -401,7 +401,7 @@ public sealed class CoreVectorTests
             }
         }
 
-        TestVectors.NoFailures(failures, total, "v0-strict.json json and integers");
+        TestVectors.NoFailures(failures, total, "test-draft-strict.json json and integers");
     }
 
     private static bool Try(Action a)

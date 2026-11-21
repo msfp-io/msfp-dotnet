@@ -257,7 +257,7 @@ public sealed class RelayTests
     private static byte[] Input(JsonObject c) =>
         (string?)c["hex"] is { Length: > 0 } hex ? Convert.FromHexString(hex) : HostKit.Bytes((string?)c["text"] ?? "");
 
-    // The cases of vectors/v1/media.json, through a relay: what a peer's
+    // The cases of vectors/v0/media.json, through a relay: what a peer's
     // playlists, WebVTT and PGS parts become on the way to the viewer.
     [Fact]
     public async Task MediaVectorsThroughRelay()

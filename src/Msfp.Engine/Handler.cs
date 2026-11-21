@@ -33,7 +33,7 @@ public sealed partial class MsfpEngine
     internal const string CallRotate = "rotate";
     internal const string CallRevoke = "revoke";
 
-    // The calls of version 1, by their name under the base path.
+    // The calls of version 0, by their name under the base path.
     private static readonly HashSet<string> Calls =
         new(StringComparer.Ordinal) { CallPair, CallHello, CallRotate, CallRevoke, CallLibraries, CallTitles, CallPlay, CallProgress, CallStop };
 

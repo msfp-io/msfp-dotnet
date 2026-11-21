@@ -26,6 +26,9 @@ public sealed record Versions(IReadOnlyList<int> Core, IReadOnlyDictionary<strin
     /// <summary>The music content part, which a server without music doesn't list.</summary>
     public const string PartMusic = "music";
 
+    /// <summary>The groups part: groups of servers, their events, mail and pairing through a group.</summary>
+    public const string PartGroups = "groups";
+
     /// <summary>How many entries of each list are read (core section 10.2).</summary>
     public const int MaxEntries = 8;
 
@@ -37,13 +40,11 @@ public sealed record Versions(IReadOnlyList<int> Core, IReadOnlyDictionary<strin
         [PartPlayback] = [PartCatalog, PartMedia],
         [PartVideo] = [PartCatalog, PartPlayback, PartMedia],
         [PartMusic] = [PartCatalog, PartPlayback, PartMedia],
+        [PartGroups] = [],
     };
 
-    // Content parts don't work with version 0 of the parts they need.
-    private static readonly string[] ContentParts = [PartVideo, PartMusic];
-
     /// <summary>The parts this library knows, in the order a hello lists them (core section 10.1's table).</summary>
-    public static IReadOnlyList<string> KnownParts { get; } = [PartCatalog, PartPlayback, PartMedia, PartVideo, PartMusic];
+    public static IReadOnlyList<string> KnownParts { get; } = [PartCatalog, PartPlayback, PartMedia, PartVideo, PartMusic, PartGroups];
 
     /// <summary>None at all.</summary>
     public static Versions None { get; } = new([], new Dictionary<string, IReadOnlyList<int>>());
@@ -135,9 +136,8 @@ public sealed record Versions(IReadOnlyList<int> Core, IReadOnlyDictionary<strin
     /// <summary>
     /// What two servers use between them (core section 10.3): the core
     /// version, and each part that is on with its version. A part is on
-    /// when both list a version of it, and every part it needs is on; a
-    /// content part needs those at version 1 or more. Null when they have
-    /// no core version in common: they can't talk, and no part is on.
+    /// when both list a version of it, and every part it needs is on. Null
+    /// when they have no core version in common: they can't talk, and no part is on.
     /// </summary>
     public static Agreement? Agreed(Versions ours, Versions theirs)
     {
@@ -165,7 +165,7 @@ public sealed record Versions(IReadOnlyList<int> Core, IReadOnlyDictionary<strin
             {
                 foreach (var need in Needs.GetValueOrDefault(name, []))
                 {
-                    if (!parts.TryGetValue(need, out var n) || (ContentParts.Contains(name) && n < 1))
+                    if (!parts.ContainsKey(need))
                     {
                         parts.Remove(name);
                         changed = true;
@@ -201,6 +201,6 @@ public sealed record Versions(IReadOnlyList<int> Core, IReadOnlyDictionary<strin
 /// <param name="Parts">Each part that is on, with its version.</param>
 public sealed record Agreement(int Core, IReadOnlyDictionary<string, int> Parts)
 {
-    /// <summary>Whether a part is on, at version 1 or more.</summary>
-    public bool On(string part) => Parts.TryGetValue(part, out var n) && n >= 1;
+    /// <summary>Whether a part is on, at any version (0 is one).</summary>
+    public bool On(string part) => Parts.ContainsKey(part);
 }

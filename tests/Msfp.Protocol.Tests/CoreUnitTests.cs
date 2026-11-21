@@ -9,6 +9,38 @@ public sealed class CoreUnitTests
 
     private static Hello Ans(string body) => Hello.Read(Encoding.UTF8.GetBytes(body), answer: true);
 
+    // A group's code (core section 5.1): its ID and cleaned name go and
+    // come back; a bad flag, an empty name or no address left is refused.
+    [Fact]
+    public void GroupCodes()
+    {
+        var key = MsfpKey.Generate().Public();
+        var group = Enumerable.Range(0, 32).Select(i => (byte)i).ToArray();
+        var code = new PairingCode("https://a.example.org", key, new byte[32], DateTimeOffset.FromUnixTimeSeconds(1800000000))
+        {
+            Group = group,
+            GroupName = "  Les   amis\u200b ",
+        };
+        var back = PairingCode.Parse(code.ToString());
+        Assert.Equal(group, back.Group);
+        Assert.Equal("Les amis", back.GroupName);
+        Assert.Equal("https://a.example.org", back.Address);
+
+        // A name too long in bytes is cut, a whole code point at a time.
+        var wide = code with { GroupName = string.Concat(Enumerable.Repeat("\U0001F600", 80)) };
+        Assert.Equal(63, PairingCode.Parse(wide.ToString()).GroupName.EnumerateRunes().Count());
+
+        var raw = Base64UrlText.Decode(code.ToString()[PairingCode.Prefix.Length..])!;
+        string Text(byte[] b) => PairingCode.Prefix + Base64UrlText.Encode(b);
+        var flag = (byte[])raw.Clone();
+        flag[72] = 2;
+        Assert.Throws<ProtocolException>(() => PairingCode.Parse(Text(flag)));
+        var empty = (byte[])raw.Clone();
+        empty[72 + 33] = 0;
+        Assert.Throws<ProtocolException>(() => PairingCode.Parse(Text(empty)));
+        Assert.Throws<ProtocolException>(() => PairingCode.Parse(Text(raw[..(72 + 34 + 8)])));
+    }
+
     [Fact]
     public void SignatureHeadersOnce()
     {

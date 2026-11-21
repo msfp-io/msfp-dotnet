@@ -54,7 +54,7 @@ public readonly record struct MusicKey(string Kind, string Mbid)
 /// <param name="Playable">Whether play takes it.</param>
 public readonly record struct TitleKey(string Part, string Kind, bool Playable)
 {
-    /// <summary>Reads a title key of either content part of version 1, in its canonical form only; false for any other text.</summary>
+    /// <summary>Reads a title key of either content part of version 0, in its canonical form only; false for any other text.</summary>
     /// <param name="key">The key's text.</param>
     /// <param name="parsed">The key; default when false.</param>
     public static bool TryParse(string key, out TitleKey parsed)

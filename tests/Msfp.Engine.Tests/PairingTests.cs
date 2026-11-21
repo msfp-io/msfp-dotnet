@@ -30,7 +30,7 @@ public sealed class PairingTests
         var (_, a, b) = await TwoAsync();
         var (code, view) = await a.Engine.MakeCodeAsync("  for\tB  ");
         Assert.Equal("for B", view.Note);
-        Assert.StartsWith("msfp-pair-1.", code, StringComparison.Ordinal);
+        Assert.StartsWith("msfp-pair-0.", code, StringComparison.Ordinal);
         Assert.Single(await a.Engine.CodesAsync());
         var preview = await b.Engine.ReadCodeAsync(code);
         Assert.Equal("https://a.example.org", preview.Address);
@@ -56,11 +56,11 @@ public sealed class PairingTests
         Assert.Equal(PeerState.Paired, (await b.Engine.PeerAsync(onB.Id)).State);
         Assert.Single(b.Events.Of<PeerPaired>());
         Assert.Single(a.Events.Of<PeerPaired>());
-        // Each kept the other's versions: every part of version 1 on.
+        // Each kept the other's versions: every part of version 0 on.
         var p = await b.Engine.PeerAsync(onB.Id);
-        Assert.Equal(1, p.Core);
+        Assert.Equal(0, p.Core);
         Assert.Equal(5, p.Parts.Count);
-        Assert.Equal(1, (await b.Engine.CheckAsync(onB.Id)).Core);
+        Assert.Equal(0, (await b.Engine.CheckAsync(onB.Id)).Core);
 
         await Assert.ThrowsAsync<MsfpException>(() => a.Engine.AcceptAsync(onA.Id)); // not waiting now
     }
@@ -116,7 +116,7 @@ public sealed class PairingTests
         var (code, _) = await a.Engine.MakeCodeAsync(null);
         Assert.Equal(MsfpError.OwnCode, (await Assert.ThrowsAsync<MsfpException>(() => a.Engine.RedeemCodeAsync(code))).Code);
         Assert.Equal(MsfpError.CodeInvalid, (await Assert.ThrowsAsync<MsfpException>(() => b.Engine.RedeemCodeAsync("msfp-pair-1.x"))).Code);
-        Assert.Equal(MsfpError.CodeInvalid, (await Assert.ThrowsAsync<MsfpException>(() => b.Engine.RedeemCodeAsync(code.Replace("msfp-pair-1.", "msfp-pair-0.", StringComparison.Ordinal)))).Code);
+        Assert.Equal(MsfpError.CodeInvalid, (await Assert.ThrowsAsync<MsfpException>(() => b.Engine.RedeemCodeAsync(code.Replace("msfp-pair-0.", "msfp-pair-1.", StringComparison.Ordinal)))).Code);
         // Withdrawn: refused there.
         var id = Assert.Single(await a.Engine.CodesAsync()).Id;
         await a.Engine.DeleteCodeAsync(id);

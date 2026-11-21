@@ -75,10 +75,10 @@ public sealed class VectorTests
         Assert.Equal(200, res.Status);
         Assert.True(Signing.CheckResponse(Base64UrlText.Decode(Vectors.Public("b"))!, hello.S("nonceText"), res.Status,
             res.Header("Content-Type"), res.Body.Span, res.Header(Signing.HeaderSignature)));
-        Assert.StartsWith("{\"state\":\"paired\",\"core\":[1],\"parts\":{}", Encoding.UTF8.GetString(res.Body.Span), StringComparison.Ordinal);
+        Assert.StartsWith("{\"state\":\"paired\",\"core\":[0],\"parts\":{}", Encoding.UTF8.GetString(res.Body.Span), StringComparison.Ordinal);
         var recB = await b.RecordAsync(onB.Id);
         Assert.Equal(PeerState.Paired, recB.State);
-        Assert.Equal([1], recB.Versions!.Core!);
+        Assert.Equal([0], recB.Versions!.Core!);
         Assert.Equal(["catalog", "media", "playback", "video"], recB.Versions.Parts!.Keys.Order(StringComparer.Ordinal));
         Assert.Equal(["JN-hf1COiASAAUsiYeHXMNVvNnxYR2dKYnBT2Zx_6Fo"], recB.Pins!);
 
@@ -108,7 +108,7 @@ public sealed class VectorTests
         await a.Engine.CheckAsync(onA.Id);
         var recA = await a.RecordAsync(onA.Id);
         Assert.Equal(PeerState.Ours, recA.State);
-        Assert.Equal([1], recA.Versions!.Core!);
+        Assert.Equal([0], recA.Versions!.Core!);
         Assert.Equal(["catalog"], recA.Versions.Parts!.Keys);
         Assert.Equal(["E7UUIjYbkigLNKPjmSGixyA-pslmiFKckCEX_A6IZlM"], recA.Pins!);
         // The request A sent is the vector's, byte for byte but for the

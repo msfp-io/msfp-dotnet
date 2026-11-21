@@ -53,7 +53,7 @@ public static class Languages
     /// code ("fre" and "fra" give "fr", "fre-ca" "fr-CA"); false for one MSFP
     /// doesn't send: not of a tag's form (<see cref="Video.LanguageTag"/>), or
     /// und, mul, zxx or mis. Test cases: languageCodes in
-    /// vectors/v1/strict.json.
+    /// vectors/v0/strict.json.
     /// </summary>
     /// <param name="code">The media server's code.</param>
     /// <param name="tag">The tag sent; empty when false.</param>

@@ -400,7 +400,7 @@ internal sealed class TestServer : IDisposable
 internal static class Vectors
 {
     public static JsonObject Load(string name) =>
-        JsonNode.Parse(File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "testdata", "v1", name)))!.AsObject();
+        JsonNode.Parse(File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "testdata", "v0", name)))!.AsObject();
 
     public static Dictionary<string, JsonObject> Exchanges() =>
         Load("exchanges.json")["exchanges"]!.AsArray().Select(x => x!.AsObject()).ToDictionary(x => x["name"]!.GetValue<string>());
