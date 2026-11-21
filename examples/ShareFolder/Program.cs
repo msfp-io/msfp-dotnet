@@ -326,7 +326,9 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
                 foreach (var p in await engine.PeersAsync())
                 {
                     var pending = p.Pending is null ? "" : "  new key to confirm: " + p.Pending.Fingerprint;
-                    Console.WriteLine($"{p.Id}  {p.State.Value,-7} {p.Fingerprint}  {p.Name}  {p.Address}{pending}");
+                    var relation = p.Individual ? "  individual" : p.IndividualAsked ? "  asked" : p.IndividualAsks ? "  asks-you" : "";
+                    var groups = p.Groups.Count > 0 ? $"  groups={p.Groups.Count}" : "";
+                    Console.WriteLine($"{p.Id}  {p.State.Value,-7} {p.Fingerprint}  {p.Name}  {p.Address}{relation}{groups}{pending}");
                 }
 
                 break;
