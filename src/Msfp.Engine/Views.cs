@@ -100,6 +100,9 @@ public sealed record PeerView
 
     /// <summary><see cref="Individual"/>, under its former name.</summary>
     public bool ByHand { get; init; } = true;
+
+    /// <summary>It used one of our codes for this group and waits for our operator (state ours): a request to join that group.</summary>
+    public string JoiningGroup { get; init; } = "";
 }
 
 /// <summary>A peer's key the operator is shown: its fingerprint, and when.</summary>
@@ -193,6 +196,7 @@ public sealed partial class MsfpEngine
             Offers = p.Offers?.Count ?? 0, Wants = p.Wants?.Count(w => w.Wanted) ?? 0, WantsGone = p.Wants?.Count(w => w.Wanted && w.Gone) ?? 0,
             Groups = [.. p.Groups ?? []], Individual = Individual(p), ByHand = Individual(p),
             IndividualAsked = Asked(p), IndividualAsks = Asks(p) && !p.KeepChoice, KeepChoice = p.KeepChoice,
+            JoiningGroup = p.JoiningGroup ?? "",
         };
     }
 
