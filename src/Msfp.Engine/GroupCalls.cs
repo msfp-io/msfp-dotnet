@@ -215,9 +215,9 @@ public sealed partial class MsfpEngine
                     throw new MsfpException(MsfpError.NotFound);
                 }
 
-                if (await tx.ForgottenAsync(SHA256.HashData(key)).ConfigureAwait(false) is not null || g.Refused?.Contains(m.From) == true)
+                if (await tx.ForgottenAsync(SHA256.HashData(key)).ConfigureAwait(false) is { Blocked: true } || g.Refused?.Contains(m.From) == true)
                 {
-                    throw new MsfpException(MsfpError.NotFound); // blocked or refused: dropped
+                    throw new MsfpException(MsfpError.NotFound); // blocked or refused: dropped (core section 7.4)
                 }
 
                 if (await tx.PeerByKeyAsync(key).ConfigureAwait(false) is { } p)
@@ -730,9 +730,9 @@ public sealed partial class MsfpEngine
 
             var k = Base64UrlText.Encode(key);
             member = StateOf(g).Members.Values.FirstOrDefault(m => m.Key == k)?.Id ?? throw new MsfpException(MsfpError.NotMember);
-            if (await tx.ForgottenAsync(SHA256.HashData(key)).ConfigureAwait(false) is not null)
+            if (await tx.ForgottenAsync(SHA256.HashData(key)).ConfigureAwait(false) is { Blocked: true })
             {
-                throw new MsfpException(MsfpError.NotFound);
+                throw new MsfpException(MsfpError.NotFound); // blocked: kept away from groups (core section 7.4)
             }
 
             var sent = g.Sent?.FirstOrDefault(x => x.Id == mailId && x.To == member) ?? throw new MsfpException(MsfpError.NotFound);
@@ -770,6 +770,9 @@ public sealed partial class MsfpEngine
             var p = await tx.PeerByKeyAsync(key).ConfigureAwait(false);
             if (p is null)
             {
+                // Linked again: an ended key comes off the forgotten list
+                // (core section 7.4); a blocked one never gets this far.
+                await tx.UnforgetAsync(SHA256.HashData(key)).ConfigureAwait(false);
                 var now = NowSecond();
                 p = new PeerRecord
                 {
@@ -897,6 +900,13 @@ public sealed partial class MsfpEngine
                 if (ok && q.Groups?.Contains(id) != true)
                 {
                     (q.Groups ??= []).Add(id);
+                }
+
+                if (!ok)
+                {
+                    // No relation: this side asks for the individual one
+                    // (groups section 2), the other side's operator answers.
+                    q.NotByHand = false;
                 }
 
                 await tx.PutPeerAsync(q).ConfigureAwait(false);
@@ -1273,7 +1283,7 @@ public sealed partial class MsfpEngine
         foreach (var id in drop)
         {
             _log.LogInformation("msfp: gave up joining a group: its inviter's operator didn't accept within 30 days: {Group}", id);
-            await DropGroupAsync(id, [], keep: true, "left", "", ct).ConfigureAwait(false);
+            await DropGroupAsync(id, keep: false, "left", "", ct).ConfigureAwait(false);
         }
     }
 

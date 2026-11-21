@@ -23,7 +23,7 @@ public sealed record Hello
     public const string RotationRefused = "refused";
 
     private static readonly string[] Members =
-        ["state", "core", "parts", "certificates", "address", "nextCommitment", "inbound", "knownKey", "rotation", "revocation", "callsFailed"];
+        ["state", "core", "parts", "certificates", "address", "nextCommitment", "inbound", "individual", "knownKey", "rotation", "revocation", "callsFailed"];
 
     private static readonly string[] VersionMembers = ["core", "parts"];
 
@@ -44,6 +44,9 @@ public sealed record Hello
 
     /// <summary>It says inbound false: it can't be called (section 7.5). Absent or true reads as false.</summary>
     public bool Uncallable { get; init; }
+
+    /// <summary>Whether it wants the individual relation (section 7.7); null when it doesn't say.</summary>
+    public bool? Individual { get; init; }
 
     /// <summary>
     /// In a request from a server that can't be called only: the key it
@@ -121,6 +124,17 @@ public sealed record Hello
             };
         }
 
+        bool? individual = null;
+        if (m.TryGetPropertyValue("individual", out var ind))
+        {
+            individual = ind?.GetValueKind() switch
+            {
+                System.Text.Json.JsonValueKind.True => true,
+                System.Text.Json.JsonValueKind.False => false,
+                _ => throw StrictJson.Bad(),
+            };
+        }
+
         byte[]? next = null;
         if (m.ContainsKey("nextCommitment"))
         {
@@ -135,6 +149,7 @@ public sealed record Hello
             Address = address,
             NextCommitment = next,
             Uncallable = !inbound,
+            Individual = individual,
         };
         if (answer)
         {

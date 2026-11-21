@@ -135,12 +135,20 @@ public sealed class GroupTests
         Assert.Equal(("testing", "N"), (ban.Reason, ban.Name));
         Assert.NotEmpty(ban.Fingerprint);
 
-        await b.Engine.LeaveGroupAsync(g.Id);
+        // B leaves, asking A to stay linked: the link waits for A's answer
+        // (core section 7.7), and A accepts it.
+        var aOnB = (await PeerNamedAsync(b, "A"))!.Id;
+        await b.Engine.LeaveGroupAsync(g.Id, [aOnB]);
         await SettleAsync(a, b, n);
         Assert.Equal(MsfpError.NotFound, await ErrorAsync(() => b.Engine.GroupAsync(g.Id)));
         Assert.Equal("left", Assert.Single(b.Events.Of<GroupLeft>()).Why);
         var kept = Assert.Single(await b.Engine.PeersAsync());
-        Assert.Equal(PeerState.Paired, kept.State); // A, by hand
+        Assert.Equal((PeerState.Paired, true), (kept.State, kept.IndividualAsked));
+        var bOnA = (await PeerNamedAsync(a, "B"))!;
+        Assert.True(bOnA.IndividualAsks);
+        await a.Engine.AskIndividualAsync(bOnA.Id);
+        await SettleAsync(a, b, n);
+        Assert.True(Assert.Single(await b.Engine.PeersAsync()).Individual);
         Assert.Single((await a.Engine.GroupAsync(g.Id)).Members);
 
         await a.Engine.DissolveGroupAsync(g.Id, true);

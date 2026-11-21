@@ -334,13 +334,13 @@ public sealed partial class MsfpEngine
     private async Task ActAsync(string id, GroupEvent ev, CancellationToken ct)
     {
         var to = await GroupPeersAsync(id, "", ct).ConfigureAwait(false);
+        PeerRecord? banned = null;
         if (ev.Type == GroupEvents.Banned && Base64UrlText.Decode(ev.Target, 32) is { } target)
         {
-            PeerRecord? banned = null;
             await _store.ReadAsync(async tx => banned = await tx.PeerByKeyAsync(target).ConfigureAwait(false), ct).ConfigureAwait(false);
-            if (banned is not null && to.All(p => p.Id != banned.Id))
+            if (banned is not null)
             {
-                to.Add(banned);
+                to.RemoveAll(p => p.Id == banned.Id);
             }
         }
 
@@ -361,6 +361,20 @@ public sealed partial class MsfpEngine
             await GroupsOf(tx).PutGroupAsync(g).ConfigureAwait(false);
             await AfterEventsAsync(tx, g, s, effects).ConfigureAwait(false);
         }, ct).ConfigureAwait(false);
+        if (banned is not null && banned.Inbound == Inbound.Yes)
+        {
+            // The banned server hears of it before its link here ends, which
+            // it does when nothing else holds it (core section 7.7).
+            try
+            {
+                await CallAsync(banned, CallGroupPush, PushBody(id, [sent!], []), ct, background: true).ConfigureAwait(false);
+            }
+            catch (MsfpException e)
+            {
+                _log.LogDebug(e, "msfp: the banned server couldn't be told: {Peer}", banned.Id);
+            }
+        }
+
         PushTo(to, id, [sent!], []);
         foreach (var f in effects)
         {
@@ -579,14 +593,27 @@ public sealed partial class MsfpEngine
         WithStateAsync(id, (_, s) => s.Members.ContainsKey(member) ? s.Seq(member) : throw new MsfpException(MsfpError.NotMember), ct);
 
     /// <summary>
-    /// Leaves a group, or gives up joining it; <paramref name="end"/> lists
-    /// the peers (links made through it) whose pairing ends too. The others
-    /// lose this group as a source; one with no other becomes a pairing by
-    /// hand, keeping what the group gave it (MSFP groups section 7).
+    /// Leaves a group, or gives up joining it. Every link through it loses
+    /// it as a relation; one with no relation left ends, but those in
+    /// <paramref name="ask"/>, asked for the individual relation first, which
+    /// stay until their operators answer (MSFP groups section 7, core section
+    /// 7.7).
     /// </summary>
     /// <exception cref="MsfpException"><see cref="MsfpError.NotFound"/>, <see cref="MsfpError.NotMember"/>, <see cref="MsfpError.NoRight"/> (the owner gives the group away first).</exception>
-    public async Task LeaveGroupAsync(string id, IReadOnlyList<string>? end = null, CancellationToken ct = default)
+    public async Task LeaveGroupAsync(string id, IReadOnlyList<string>? ask = null, CancellationToken ct = default)
     {
+        foreach (var p in ask ?? [])
+        {
+            try
+            {
+                await AskIndividualAsync(p, ct).ConfigureAwait(false);
+            }
+            catch (MsfpException e) when (e.Code != MsfpError.Internal)
+            {
+                _log.LogInformation(e, "msfp: a server couldn't be asked for the individual relation before leaving: {Peer}", p);
+            }
+        }
+
         var g = await GroupAsync(id, ct).ConfigureAwait(false);
         if (!g.Joining)
         {
@@ -594,18 +621,18 @@ public sealed partial class MsfpEngine
         }
 
         // Not a member yet: giving up joining (groups section 2).
-        await DropGroupAsync(id, end ?? [], keep: true, "left", "", ct).ConfigureAwait(false);
+        await DropGroupAsync(id, keep: false, "left", "", ct).ConfigureAwait(false);
     }
 
-    /// <summary>Dissolves the group (the owner only): every member removes it; with keepPairings false, links whose only source it was end.</summary>
+    /// <summary>Dissolves the group (the owner only): every member removes it; links it alone held end, or, with keepPairings, wait for each side's operator to keep (AskIndividualAsync) or end them (RefuseIndividualAsync).</summary>
     /// <exception cref="MsfpException"><see cref="MsfpError.NotFound"/>, <see cref="MsfpError.NoRight"/>.</exception>
     public Task DissolveGroupAsync(string id, bool keepPairings, CancellationToken ct = default) =>
         ActAsync(id, new GroupEvent { Type = GroupEvents.Dissolved, KeepPairings = keepPairings }, ct);
 
     // Removes a group from this server: its record, and from every link's
-    // sources. Links in end end; a link with no other source ends when keep
-    // is false, and becomes a pairing by hand when it is true.
-    private async Task DropGroupAsync(string id, IReadOnlyList<string> end, bool keep, string why, string reason, CancellationToken ct)
+    // relations. A link with no relation left ends, or, with keep (a
+    // dissolution with keepPairings), waits for the operator's choice.
+    private async Task DropGroupAsync(string id, bool keep, string why, string reason, CancellationToken ct)
     {
         var ending = new List<string>();
         GroupLeft? left = null;
@@ -627,19 +654,23 @@ public sealed partial class MsfpEngine
                     continue;
                 }
 
-                var alone = p.NotByHand && p.Groups.Count == 0;
-                if (end.Contains(p.Id) || (alone && !keep))
+                var alone = p.State == PeerState.Paired && !Holds(p, false);
+                if (alone && !keep)
                 {
                     ending.Add(p.Id);
                     continue;
                 }
 
-                if (alone && g is not null)
+                if (alone)
                 {
-                    // A pairing by hand from now on, with what the group gave.
-                    p.NotByHand = false;
-                    p.Offers = [.. g.Offers ?? []];
-                    p.Limits = g.Pool with { };
+                    // Kept or ended by our operator; its offers and limits, if
+                    // kept, are the group's until changed.
+                    p.KeepChoice = true;
+                    if (g is not null)
+                    {
+                        p.Offers = [.. g.Offers ?? []];
+                        p.Limits = g.Pool with { };
+                    }
                 }
 
                 await tx.PutPeerAsync(p).ConfigureAwait(false);
@@ -717,13 +748,13 @@ public sealed partial class MsfpEngine
                     return;
                 }
 
-                await tx.ForgetAsync(new ForgottenKey { KeyHash = SHA256.HashData(k), At = NowSecond() }).ConfigureAwait(false);
+                await tx.ForgetAsync(new ForgottenKey { KeyHash = SHA256.HashData(k), At = NowSecond(), Blocked = true }).ConfigureAwait(false);
             }, ct).ConfigureAwait(false);
             if (peer is not null)
             {
                 try
                 {
-                    await EndAsync(peer, ct).ConfigureAwait(false);
+                    await BlockPeerAsync(peer, ct).ConfigureAwait(false);
                 }
                 catch (MsfpException e) when (e.Code == MsfpError.NotFound)
                 {
@@ -885,7 +916,7 @@ public sealed partial class MsfpEngine
         if (s.Dissolved)
         {
             var keep = s.Keep;
-            effects.Add(() => Background(ct => DropGroupAsync(id, [], keep, "dissolved", "", ct)));
+            effects.Add(() => Background(ct => DropGroupAsync(id, keep, "dissolved", "", ct)));
             return;
         }
 
@@ -893,7 +924,7 @@ public sealed partial class MsfpEngine
         {
             var reason = s.Reasons.GetValueOrDefault(g.Me, "");
             _log.LogInformation("msfp: this server was banned from a group: {Group} {Reason}", id, reason);
-            effects.Add(() => Background(ct => DropGroupAsync(id, [], false, "banned", reason, ct)));
+            effects.Add(() => Background(ct => DropGroupAsync(id, false, "banned", reason, ct)));
             return;
         }
 
@@ -906,20 +937,12 @@ public sealed partial class MsfpEngine
             }
 
             p.Groups.Remove(id);
-            if (p.NotByHand && p.Groups.Count == 0)
+            if (p.State == PeerState.Paired && !Holds(p, false))
             {
-                if (s.Banned.ContainsKey(Base64UrlText.Encode(p.Key)))
-                {
-                    var pid = p.Id;
-                    effects.Add(() => Background(ct => EndAsync(pid, ct)));
-                }
-                else
-                {
-                    // A member that left keeping the link: by hand from now on.
-                    p.NotByHand = false;
-                    p.Offers = [.. g.Offers ?? []];
-                    p.Limits = g.Pool with { };
-                }
+                // Banned, or left: a link nothing else holds ends (core
+                // section 7.7); one the leaver asked to keep is held by its ask.
+                var pid = p.Id;
+                effects.Add(() => Background(ct => EndAsync(pid, ct)));
             }
 
             await tx.PutPeerAsync(p).ConfigureAwait(false);
@@ -981,7 +1004,7 @@ public sealed partial class MsfpEngine
     internal static List<string> Offered(PeerRecord p)
     {
         var output = new List<string>(p.GroupOffers ?? []);
-        if (!p.NotByHand)
+        if (Individual(p))
         {
             output.AddRange((p.Offers ?? []).Where(l => !output.Contains(l)));
         }
@@ -994,7 +1017,7 @@ public sealed partial class MsfpEngine
     private static List<GroupPool> PoolsOf(PeerRecord p)
     {
         var output = new List<GroupPool>();
-        if (!p.NotByHand)
+        if (Individual(p))
         {
             output.Add(new GroupPool { Group = "", Limits = p.Limits });
         }

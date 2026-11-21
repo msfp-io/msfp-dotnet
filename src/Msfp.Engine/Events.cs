@@ -64,6 +64,19 @@ public sealed record PeerEnded(string Peer, string Name, bool ByThem) : MsfpEven
     public override string? PeerId => Peer;
 }
 
+/// <summary>
+/// Why this server and a peer are linked changed: the individual relation
+/// was asked, accepted, refused or ended, by either side (MSFP core section
+/// 7.7).
+/// </summary>
+/// <param name="Peer">The peer's ID.</param>
+/// <param name="Name">Its name.</param>
+public sealed record RelationsChanged(string Peer, string Name) : MsfpEvent
+{
+    /// <inheritdoc/>
+    public override string? PeerId => Peer;
+}
+
 /// <summary>A peer's versions changed; the parts on with it may have changed (MSFP core section 10).</summary>
 /// <param name="Peer">The peer's ID.</param>
 /// <param name="Name">Its name.</param>

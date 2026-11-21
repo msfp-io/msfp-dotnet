@@ -344,13 +344,25 @@ public sealed record PeerRecord
 
     // Groups (MSFP groups part).
 
-    /// <summary>The groups this link was made or kept through: its sources besides a pairing by hand.</summary>
+    /// <summary>The groups this link was made or kept through: its group relations (MSFP core section 7.7).</summary>
     [JsonPropertyName("groups"), OmitEmpty]
     public List<string>? Groups { get; set; }
 
-    /// <summary>It has no pairing by hand (made by group-pair).</summary>
+    /// <summary>This side doesn't want the individual relation (MSFP core section 7.7).</summary>
     [JsonPropertyName("notByHand"), OmitEmpty]
     public bool NotByHand { get; set; }
+
+    /// <summary>What the peer last said of the individual relation in hello; null: never said, counted as ours.</summary>
+    [JsonPropertyName("theirIndividual"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? TheirIndividual { get; set; }
+
+    /// <summary>Our operator is choosing whether to keep the link (a dissolution with keepPairings).</summary>
+    [JsonPropertyName("keepChoice"), OmitEmpty]
+    public bool KeepChoice { get; set; }
+
+    /// <summary>Our operator refused the peer's ask for the individual relation, privately.</summary>
+    [JsonPropertyName("individualRefused"), OmitEmpty]
+    public bool IndividualRefused { get; set; }
 
     /// <summary>The host libraries its groups offer it, copied from them whenever they change.</summary>
     [JsonPropertyName("groupOffers"), OmitEmpty]
@@ -666,6 +678,10 @@ public sealed record ForgottenKey
     /// <summary>The pairing ended with this server's key revoked.</summary>
     [JsonPropertyName("revoked"), OmitEmpty]
     public bool Revoked { get; set; }
+
+    /// <summary>The operator blocked it: it is kept away from every group (MSFP core section 7.4). Other ended keys are kept only for the signed 404.</summary>
+    [JsonPropertyName("blocked"), OmitEmpty]
+    public bool Blocked { get; set; }
 }
 
 /// <summary>

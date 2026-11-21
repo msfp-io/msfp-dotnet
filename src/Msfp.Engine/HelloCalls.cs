@@ -26,6 +26,7 @@ public sealed partial class MsfpEngine
             o.Strings("certificates", pins is { Count: > 0 } ? pins : null);
             o.String("address", named);
             o.Bytes("nextCommitment", p is not null && string.IsNullOrEmpty(p.OurKey) ? OurKeys().Commitment : null);
+            o.Bool("individual", p is null ? null : !p.NotByHand);
             if (uncallable)
             {
                 o.Bool("inbound", false);
@@ -124,6 +125,8 @@ public sealed partial class MsfpEngine
             ConfirmSoon(p.Id);
         }
 
+        await RelationsKeptAsync(p.Id, events, ct).ConfigureAwait(false);
+
         // From a peer that can't be called: which of our keys it knows us by
         // (core section 12.4); then our rotation for it to pull.
         if (msg.Uncallable)
@@ -160,6 +163,7 @@ public sealed partial class MsfpEngine
     private (List<MsfpEvent> Events, bool Confirm) KeepHello(PeerRecord p, Hello h)
     {
         var events = KeepInbound(p, h.Uncallable);
+        events.AddRange(KeepIndividual(p, h.Individual));
         var (moved, confirm) = KeepAddress(p, h.Address);
         events.AddRange(moved);
         p.Pins = [.. Pins.Clean(h.Certificates)];
@@ -256,19 +260,24 @@ public sealed partial class MsfpEngine
     }
 
     /// <summary>
-    /// This server's operator ending a pairing, or refusing a waiting one, in
-    /// any state: the peer is deleted, every key of its history forgotten,
-    /// then it is told (core section 7.4).
+    /// Ends a link, whatever its relations, or refuses a waiting one, in any
+    /// state: the peer is deleted, every key of its history recorded for the
+    /// signed 404 (not blocked: it isn't kept away from groups), then it is
+    /// told (core section 7.4). Panels end relations instead
+    /// (<see cref="EndIndividualAsync"/>, <see cref="LeaveGroupAsync"/>) and
+    /// keep this for refusing a waiting server.
     /// </summary>
     /// <exception cref="MsfpException"><see cref="MsfpError.NotFound"/>.</exception>
-    public async Task EndAsync(string id, CancellationToken ct = default)
+    public Task EndAsync(string id, CancellationToken ct = default) => EndLinkAsync(id, blocked: false, ct);
+
+    private async Task EndLinkAsync(string id, bool blocked, CancellationToken ct)
     {
         PeerRecord? p = null;
         var now = NowSecond();
         await _store.UpdateAsync(async tx =>
         {
             p = await tx.PeerAsync(id).ConfigureAwait(false) ?? throw new MsfpException(MsfpError.NotFound);
-            await ForgetPeerAsync(tx, p, now, byReplacement: false).ConfigureAwait(false);
+            await ForgetPeerAsync(tx, p, now, byReplacement: false, blocked).ConfigureAwait(false);
         }, ct).ConfigureAwait(false);
         _log.LogInformation("msfp: pairing ended: {Peer} {Name}", p!.Id, p.Name);
         Notify(new PeerEnded(p.Id, p.Name, false));
@@ -291,11 +300,11 @@ public sealed partial class MsfpEngine
 
     // Deletes p in tx, every key of its history forgotten at now (core
     // section 7.4, step 1); byReplacement marks them ended by ReplaceKeyAsync.
-    private static async Task ForgetPeerAsync(IStoreTx tx, PeerRecord p, DateTimeOffset now, bool byReplacement)
+    private static async Task ForgetPeerAsync(IStoreTx tx, PeerRecord p, DateTimeOffset now, bool byReplacement, bool blocked = false)
     {
         foreach (var k in HistoryKeys(p))
         {
-            await tx.ForgetAsync(new ForgottenKey { KeyHash = SHA256.HashData(k), At = now, Revoked = byReplacement }).ConfigureAwait(false);
+            await tx.ForgetAsync(new ForgottenKey { KeyHash = SHA256.HashData(k), At = now, Revoked = byReplacement, Blocked = blocked }).ConfigureAwait(false);
         }
 
         await tx.DeletePeerAsync(p.Id).ConfigureAwait(false);
@@ -416,6 +425,7 @@ public sealed partial class MsfpEngine
                     await PulledRotationAsync(id, pulled.Rotation, ct).ConfigureAwait(false);
                 }
 
+                await RelationsKeptAsync(id, events, ct).ConfigureAwait(false);
                 return await PeerAsync(id, ct).ConfigureAwait(false);
             case 404:
                 // It doesn't know us, or suspended our key: gone (core section

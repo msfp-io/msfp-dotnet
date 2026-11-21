@@ -277,8 +277,10 @@ public sealed partial class MsfpEngine
             if (c.Group is not null)
             {
                 // A group's code: this server joins it through the maker
-                // (MSFP groups section 4).
+                // (MSFP groups section 4), the group relation only (core
+                // section 7.7).
                 await JoinViaAsync(tx, c, p.Id, ct).ConfigureAwait(false);
+                p.NotByHand = true;
             }
 
             await tx.PutPeerAsync(p).ConfigureAwait(false);
@@ -357,6 +359,7 @@ public sealed partial class MsfpEngine
                 // One use spent; the code goes with its last (core section 5.1).
                 await SpendCodeAsync(tx, c).ConfigureAwait(false);
                 p.JoiningGroup = c.Group;
+                p.NotByHand = !string.IsNullOrEmpty(c.Group); // a group's code: the group relation only (core section 7.7)
                 await tx.UnforgetAsync(SHA256.HashData(key)).ConfigureAwait(false);
                 await tx.PutPeerAsync(p).ConfigureAwait(false);
             }, ct).ConfigureAwait(false);

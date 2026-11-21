@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased
+
+Relations (MSFP core section 7.7, proposal 14): the operator manages why
+two servers are linked, not the link. A link lasts while one relation
+holds it: the individual relation, which both sides want, or a group. As
+msfp-go.
+
+### Added
+
+- `individual` in `hello`: whether this side wants the individual
+  relation. `AskIndividualAsync` asks a peer linked through a group for
+  it, accepts its ask, or keeps a link a dissolution left to the
+  operator; `EndIndividualAsync` ends it or withdraws the ask;
+  `RefuseIndividualAsync` refuses an ask, privately. `PeerView` says
+  `Individual`, `IndividualAsked`, `IndividualAsks` and `KeepChoice`;
+  `RelationsChanged` tells the panel.
+- `BlockPeerAsync`: ends a link whatever holds it, and keeps the peer away
+  from every group.
+
+### Changed
+
+- A plain code gives the individual relation; a group's code gives the
+  group relation only, so the inviter is no longer an individual
+  pairing of the newcomer's.
+- `LeaveGroupAsync(id, ask)`: the links only the group held end, but
+  those in `ask`, asked for the individual relation first, which stay
+  until their operators answer. They no longer become pairings by hand.
+  Another member's `left` ends such a link on this side too.
+- `keepPairings` on a dissolution leaves each link only the group held
+  to each side's operator (`KeepChoice`), instead of making it a pairing
+  by hand.
+- Only a block keeps a server away from groups. `EndAsync` still records
+  the keys for the signed 404, but a server ended so can be linked again
+  through a group. Keys forgotten before this version aren't marked
+  blocked: a server blocked before is no longer kept away from groups.
+- Offers and limits of the individual relation count only while both
+  sides want it.
+- `ByHand` in `PeerView` is now `Individual`, under its former name.
+
+### Example
+
+- `individual`, `end-individual` and `block`.
+
+
 ## v0.5.0-preview (2026-11-21)
 
 msfp-go v0.5.0 in .NET.

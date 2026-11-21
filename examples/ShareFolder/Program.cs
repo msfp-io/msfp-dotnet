@@ -176,6 +176,18 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
                 await engine.EndAsync(arg);
                 Console.WriteLine("ended");
                 break;
+            case "individual":
+                var rel = await engine.AskIndividualAsync(arg);
+                Console.WriteLine($"individual: {rel.Individual}, asked: {rel.IndividualAsked}");
+                break;
+            case "end-individual":
+                await engine.EndIndividualAsync(arg);
+                Console.WriteLine("individual relation ended");
+                break;
+            case "block":
+                await engine.BlockPeerAsync(arg);
+                Console.WriteLine("blocked");
+                break;
             case "server":
                 var s = await engine.ServerAsync();
                 Console.WriteLine($"{s.Address}, fingerprint {s.Fingerprint}, next key {s.NextKey} (on this server: {s.NextOnServer})");

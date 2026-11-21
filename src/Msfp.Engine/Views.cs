@@ -83,10 +83,22 @@ public sealed record PeerView
     /// <summary>How many of those it no longer offers (WantsGone).</summary>
     public int WantsGone { get; init; }
 
-    /// <summary>The groups this link was made or kept through (MSFP groups part).</summary>
+    /// <summary>The group relations: the groups this link was made or kept through (MSFP core section 7.7).</summary>
     public IReadOnlyList<string> Groups { get; init; } = [];
 
-    /// <summary>It was also paired by hand. A link with no group is always by hand.</summary>
+    /// <summary>The individual relation holds: both sides want it (MSFP core section 7.7).</summary>
+    public bool Individual { get; init; } = true;
+
+    /// <summary>This side asks for the individual relation, and the peer hasn't accepted.</summary>
+    public bool IndividualAsked { get; init; }
+
+    /// <summary>The peer asks for the individual relation, waiting for this side's operator (AskIndividualAsync accepts, RefuseIndividualAsync refuses).</summary>
+    public bool IndividualAsks { get; init; }
+
+    /// <summary>A dissolution left the link to this side's operator: to keep (AskIndividualAsync) or end (RefuseIndividualAsync).</summary>
+    public bool KeepChoice { get; init; }
+
+    /// <summary><see cref="Individual"/>, under its former name.</summary>
     public bool ByHand { get; init; } = true;
 }
 
@@ -179,7 +191,8 @@ public sealed partial class MsfpEngine
             RotationAnswer = p.RotationAnswer ?? "", NotMoved = notMoved, MoveLate = notMoved && a.MovedAt is { } at && Now() - at >= MoveLate,
             Moving = p.Move is { } m ? new MoveView(m.Address, m.Since, m.FailingSince, new AddressMove(m.Address, null, m.FailingSince).Warn(Now())) : null,
             Offers = p.Offers?.Count ?? 0, Wants = p.Wants?.Count(w => w.Wanted) ?? 0, WantsGone = p.Wants?.Count(w => w.Wanted && w.Gone) ?? 0,
-            Groups = [.. p.Groups ?? []], ByHand = !p.NotByHand,
+            Groups = [.. p.Groups ?? []], Individual = Individual(p), ByHand = Individual(p),
+            IndividualAsked = Asked(p), IndividualAsks = Asks(p) && !p.KeepChoice, KeepChoice = p.KeepChoice,
         };
     }
 
