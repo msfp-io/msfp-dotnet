@@ -19,6 +19,12 @@
 
 ### Fixed
 
+- An owner event replayed without counting didn't take its `ownerSeq`, so
+  every later owner event waited forever and the owner could no longer
+  act in the group. It happened when, for example, the owner named an
+  admin who was leaving at the same moment, with the `left` replayed
+  first. It now takes its `ownerSeq` as any replayed event takes its `seq`
+  (groups section 3.5).
 - A disposed engine's `RunAsync` kept running when its host didn't cancel
   the token, failing every hour on the disposed store. A Jellyfin restart
   that runs out of time stopping the plugin did that. `Dispose` now ends

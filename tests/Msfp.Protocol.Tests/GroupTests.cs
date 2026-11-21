@@ -195,6 +195,47 @@ public sealed class GroupTests
         Assert.Equal(GroupVerdict.Counted, GroupState.Compute(gid, [founded, own]).Results[ownId].Verdict);
     }
 
+    // An owner event replayed without counting takes its ownerSeq all the
+    // same (groups section 3.5): the owner names B admin while B leaves, B's
+    // left replayed first, so the admin event can't count; the owner's next
+    // event is still ready, and counts.
+    [Fact]
+    public void OwnerEventNotCountingTakesOwnerSeq()
+    {
+        var a = MsfpKey.Generate();
+        var b = MsfpKey.Generate();
+        var am = Base64UrlText.Encode(a.Public());
+        var bm = Base64UrlText.Encode(b.Public());
+        const long now = 1800000000;
+        var (founded, gid) = GroupEvents.Sign(a, new GroupEvent
+        {
+            Type = GroupEvents.Founded, Signer = am, Member = am, Seq = 1, Date = now, OwnerSeq = 1, Name = "F",
+            Settings = GroupSettings.Default, Nonce = Base64UrlText.Encode(new byte[16]),
+        });
+        var (joined, _) = GroupEvents.Sign(a, new GroupEvent { Group = gid, Type = GroupEvents.Joined, Signer = am, Member = am, Seq = 2, Date = now, OwnerSeq = 2, NewMember = bm, Name = "B" });
+        var (left, leftId) = GroupEvents.Sign(b, new GroupEvent { Group = gid, Type = GroupEvents.Left, Signer = bm, Member = bm, Seq = 1, Date = now });
+        GroupEnvelope admin;
+        string adminId;
+        for (var d = now; ; d++)
+        {
+            (admin, adminId) = GroupEvents.Sign(a, new GroupEvent { Group = gid, Type = GroupEvents.Admin, Signer = am, Member = am, Seq = 3, Date = d, OwnerSeq = 3, Target = bm, On = true });
+            if (string.CompareOrdinal(leftId, adminId) < 0)
+            {
+                break; // B's left is replayed first
+            }
+        }
+
+        var (settings, settingsId) = GroupEvents.Sign(a, new GroupEvent
+        {
+            Group = gid, Type = GroupEvents.Settings, Signer = am, Member = am, Seq = 4, Date = now, OwnerSeq = 4, Name = "G",
+            Settings = new GroupSettings(1, 5),
+        });
+        var r = GroupState.Compute(gid, [founded, joined, left, admin, settings]);
+        Assert.NotEqual(GroupVerdict.Counted, r.Results[adminId].Verdict);
+        Assert.Equal(GroupVerdict.Counted, r.Results[settingsId].Verdict);
+        Assert.Equal((4L, "G"), (r.State.OwnerSeq, r.State.Name));
+    }
+
     // The vectors' events, in any order: the same state and the same
     // verdicts (groups section 3.5).
     [Fact]

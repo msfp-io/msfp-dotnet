@@ -368,6 +368,14 @@ public sealed class GroupState
         (GroupVerdict, string)? Refuse(string why)
         {
             KeepEvent(ev);
+            // An owner event replayed without counting takes its ownerSeq
+            // all the same, as any replayed event its seq (section 3.5): the
+            // owner's next one is ready after it.
+            if (ev.Member == Owner && IsOwnerEvent(ev.Type) && ev.OwnerSeq is { } os && os == OwnerSeq + 1)
+            {
+                OwnerSeq = os;
+            }
+
             return (GroupVerdict.Refused, why);
         }
 
