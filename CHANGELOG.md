@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (v0.4.0-preview)
+## v0.4.0-preview (2026-11-20)
 
 The major.minor version is msfp-go's: this is msfp-go v0.4.0 in .NET
 (v0.3.0 had no .NET counterpart of its own: 0.2.0-preview already
