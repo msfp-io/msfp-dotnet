@@ -32,6 +32,10 @@ public sealed partial class MsfpEngine : IDisposable
     private readonly Notifications _events;
     private readonly Dictionary<string, HttpClient> _clients = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _recordLock = new(1, 1);
+
+    // Cancelled by Dispose: RunAsync ends with the engine, whatever token
+    // its host gave it.
+    private readonly CancellationTokenSource _closed = new();
     private readonly object _keysLock = new();
     private ServerKeys _keys = null!;
     private AddressState _addr = new("", null, null, false, false, null);
@@ -153,6 +157,15 @@ public sealed partial class MsfpEngine : IDisposable
     /// <inheritdoc/>
     public void Dispose()
     {
+        try
+        {
+            _closed.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+
         lock (_clients)
         {
             foreach (var c in _clients.Values)
@@ -175,6 +188,8 @@ public sealed partial class MsfpEngine : IDisposable
                 l.Dispose();
             }
         }
+
+        _closed.Dispose();
     }
 
     internal DateTimeOffset Now() => _time.GetUtcNow();

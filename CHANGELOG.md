@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A disposed engine's `RunAsync` kept running when its host didn't cancel
+  the token, failing every hour on the disposed store. A Jellyfin restart
+  that runs out of time stopping the plugin did that. `Dispose` now ends
+  `RunAsync`, which returns without an error.
+
 ## v0.4.1-preview (2026-11-21)
 
 ### Fixed

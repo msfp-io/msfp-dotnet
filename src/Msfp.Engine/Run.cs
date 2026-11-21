@@ -38,6 +38,18 @@ public sealed partial class MsfpEngine
     /// </remarks>
     public async Task RunAsync(CancellationToken ct)
     {
+        CancellationTokenSource linked;
+        try
+        {
+            linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _closed.Token);
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+
+        using var _ = linked;
+        ct = linked.Token;
         using var timer = new PeriodicTimer(TickEvery);
         DateTimeOffset? hourly = null;
         do
@@ -59,10 +71,29 @@ public sealed partial class MsfpEngine
             }
             catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
             {
+                if (_closed.IsCancellationRequested)
+                {
+                    return;
+                }
+
                 _log.LogWarning(e, "msfp: background work failed");
             }
         }
-        while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false));
+        while (await NextTickAsync(timer, ct).ConfigureAwait(false));
+    }
+
+    // The next tick; false once the engine is disposed. The token the host
+    // gave still throws when cancelled, as before.
+    private async Task<bool> NextTickAsync(PeriodicTimer timer, CancellationToken ct)
+    {
+        try
+        {
+            return await timer.WaitForNextTickAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_closed.IsCancellationRequested)
+        {
+            return false;
+        }
     }
 
     /// <summary>

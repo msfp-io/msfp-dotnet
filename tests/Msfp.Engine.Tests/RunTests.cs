@@ -99,4 +99,21 @@ public sealed class RunTests
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(1500));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => a.Engine.RunAsync(cts.Token));
     }
+
+    // A host that disposes the engine without cancelling its token (a
+    // Jellyfin restart that ran out of time to stop the plugin) mustn't
+    // leave the loop running on a disposed engine.
+    [Fact]
+    public async Task RunAsyncEndsWhenDisposed()
+    {
+        var net = new Network();
+        var a = await TestServer.StartAsync(net, "https://a.example.org");
+        var run = a.Engine.RunAsync(CancellationToken.None);
+        await Task.Delay(1500);
+        a.Engine.Dispose();
+        var done = await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(5)));
+        Assert.Same(run, done);
+        await run;
+        await a.Engine.RunAsync(CancellationToken.None);
+    }
 }
