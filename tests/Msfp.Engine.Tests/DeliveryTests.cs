@@ -50,6 +50,25 @@ public sealed class DeliveryTests
         var pb = await Play(new PlayRequest { Title = Film, Delivery = Playback.DeliveryFile });
         Assert.Equal(("file", "direct", "e0", 20L, false), (pb.Protocol, pb.Method, pb.Etag, pb.Size, pb.CopyChanged));
         Assert.Equal((Playback.DeliveryFile, Playback.PurposePlay), (h.Starts()[^1].Delivery, h.Starts()[^1].Purpose));
+        // Audio renditions asked: the answer says whether the host made them,
+        // false when it made none (playback section 2.3).
+        Assert.True((await Play(new PlayRequest { Title = Film, AudioRenditions = true })).AudioRenditions);
+        lock (h.Lock)
+        {
+            h.NoRenditions = true;
+        }
+
+        Assert.False((await Play(new PlayRequest { Title = Film, AudioRenditions = true })).AudioRenditions);
+        Assert.Contains("\"audioRenditions\":false", s.Exchanges("play")[^1].ResponseBody, StringComparison.Ordinal);
+        lock (h.Lock)
+        {
+            h.NoRenditions = false;
+        }
+
+        // Without delivery, the baseline; a transcode's targets left out are
+        // the baseline's when the host hears them.
+        await Play(new PlayRequest { Title = Film, Delivery = Playback.DeliveryTranscode, Transcode = new TranscodeTargets { MaxHeight = 720 } });
+        Assert.Equal(new TranscodeTargets { VideoCodec = "h264", MaxHeight = 720, AudioCodec = "aac", AudioChannels = 2 }, h.Starts()[^1].Transcode);
         // Remux needs a container; the host is told it.
         Assert.Equal(MsfpError.InvalidRequest, await ErrorOf(() => Play(new PlayRequest { Title = Film, Delivery = Playback.DeliveryRemux })));
         pb = await Play(new PlayRequest { Title = Film, Delivery = Playback.DeliveryRemux, Container = "mp4" });
@@ -86,7 +105,7 @@ public sealed class DeliveryTests
         foreach (var body in new[]
         {
             "{\"title\":\"movie/tmdb/949\",\"purpose\":\"scan\",\"delivery\":\"remux\",\"container\":\"mp4\"}",
-            "{\"title\":\"movie/tmdb/949\",\"purpose\":\"download\",\"delivery\":\"transcode\"}", "{\"title\":\"movie/tmdb/949\",\"delivery\":\"hls\"}",
+            "{\"title\":\"movie/tmdb/949\",\"purpose\":\"download\",\"delivery\":\"transcode\"}", "{\"title\":\"movie/tmdb/949\",\"delivery\":\"HLS\"}",
             "{\"title\":\"movie/tmdb/949\",\"transcode\":{\"maxHeight\":720}}",
             "{\"title\":\"movie/tmdb/949\",\"delivery\":\"transcode\",\"transcode\":{\"maxHeight\":719}}",
             "{\"title\":\"movie/tmdb/949\",\"delivery\":\"transcode\",\"transcode\":{\"burnSubtitle\":\"off\"}}",
@@ -94,6 +113,22 @@ public sealed class DeliveryTests
         {
             Assert.True(await CallAsync(s, "play", body) == 400, body);
         }
+
+        // What it doesn't make, named by a token: 409 delivery-refused (core
+        // section 8.5), before the host is asked.
+        before = h.Starts().Count;
+        foreach (var body in new[]
+        {
+            "{\"title\":\"movie/tmdb/949\",\"delivery\":\"hls\"}",
+            "{\"title\":\"movie/tmdb/949\",\"delivery\":\"remux\",\"container\":\"matroska\"}",
+            "{\"title\":\"movie/tmdb/949\",\"delivery\":\"transcode\",\"transcode\":{\"videoCodec\":\"vvc\"}}",
+            "{\"title\":\"movie/tmdb/949\",\"delivery\":\"transcode\",\"transcode\":{\"audioCodec\":\"opus\"}}",
+        })
+        {
+            Assert.True(await CallAsync(s, "play", body) == 409, body);
+        }
+
+        Assert.Equal(before, h.Starts().Count);
     }
 
     // The file by byte ranges (media sections 2.1, 2.2 and 3.2), on the
@@ -351,14 +386,13 @@ public sealed class DeliveryTests
     }
 
     // A scan's cap counts the bytes sent: a read cut short counts only what
-    // went (media section 4.2).
-    // P17: the cap is the pairing's scanBytes now; the engine still cuts at
-    // the recommended 32 MiB until its step.
+    // went (media section 4.2). Without scanBytes, the cap is the floor,
+    // 4 MiB.
     [Fact]
     public async Task ScanCapCountsSent()
     {
         var h = HostKit.FilmHost();
-        var big = new byte[Playback.ScanBytesRecommended + 1000];
+        var big = new byte[Playback.ScanBytesFloor + 1000];
         h.Files["file"] = big;
         h.EditCopy(Film, 0, c => c with { Size = big.Length });
         using var s = await Sharing.StartAsync(h, c => c with { NewPairing = new Limits { Streams = 1, Transcodes = 1, ScansPerDay = 1 } });
@@ -377,12 +411,12 @@ public sealed class DeliveryTests
         await Assert.ThrowsAsync<IOException>(() => s.B.Engine.FetchAsync(scan.Id, new MediaPath { Kind = MediaKind.File }, "bytes=0-1999", new MemorySink()));
         h.Serve = null;
         var o = await HostKit.GetFullAsync(s.A, file, "GET", "Range", "bytes=0-");
-        Assert.Equal((206, Playback.ScanBytesRecommended - 2000), (o.Status, o.Body.Length)); // 1,000 bytes sent twice
+        Assert.Equal((206, Playback.ScanBytesFloor - 2000), (o.Status, o.Body.Length)); // 1,000 bytes sent twice
         Assert.Equal(416, await HostKit.GetAsync(s.A, file, "GET", "Range", "bytes=0-0"));
     }
 
-    // Scans: a range of the file only, within 32 MiB per ticket, cut at the
-    // cap, then 416; a day's count; the idle rule (playback section 8, media
+    // Scans: a range of the file only, within the pairing's scanBytes (32 MiB
+    // here) per ticket, announced in limits, cut at the cap, then 416; a day's count; the idle rule (playback section 8, media
     // section 4.2).
     [Fact]
     public async Task Scans()
@@ -398,7 +432,10 @@ public sealed class DeliveryTests
         h.Files["file"] = big;
         h.EditCopy(Film, 0, c => c with { Size = big.Length, Previews = true });
         h.Info["movie/tmdb/949#0"] = new CopyInfo { Trickplay = new Trickplay { TileWidth = 10, TileHeight = 10, Columns = 2, Rows = 1, IntervalMs = 10_000, TileCount = 3 } };
-        using var s = await Sharing.StartAsync(h, c => c with { NewPairing = new Limits { Streams = 1, Transcodes = 1, ScansPerDay = 2 } }, clock: clock);
+        using var s = await Sharing.StartAsync(h, c => c with { NewPairing = new Limits
+        {
+            Streams = 1, Transcodes = 1, ScansPerDay = 2, ScanBytes = Playback.ScanBytesRecommended,
+        } }, clock: clock);
         var scan = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film, Purpose = Playback.PurposeScan });
         Assert.Equal((Playback.DeliveryFile, "file", 0, true), (scan.Delivery, scan.Protocol, scan.SubtitleTracks.Count, scan.Trickplay is null));
         Assert.Contains("\"purpose\":\"scan\",\"delivery\":\"file\"", s.Exchanges("play")[0].RequestBody, StringComparison.Ordinal);
@@ -552,7 +589,7 @@ public sealed class DeliveryTests
         var h = HostKit.FilmHost();
         h.EditCopy(Film, 0, c => c with
         {
-            SubtitleTracks = [.. c.SubtitleTracks, new CopySubtitle("s2", "ass") { Language = "ja" }, new CopySubtitle("s3", "other")],
+            SubtitleTracks = [.. c.SubtitleTracks, new CopySubtitle("s2", "ass") { Language = "ja" }, new CopySubtitle("s3", "eia_608")],
         });
         h.Info["movie/tmdb/949#0"] = new CopyInfo { Fonts = 1, NotApart = ["s1"] };
         h.Files["ass/s2/0"] = HostKit.Bytes((string)ass["text"]!);

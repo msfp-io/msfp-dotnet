@@ -1,7 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Msfp.Protocol;
 
@@ -39,11 +38,9 @@ public sealed partial class MsfpEngine
     private long _seqSeen;
     private bool _logKept;
 
-    // The kinds of library MSFP lists (catalog section 2).
-    private static readonly string[] LibraryKinds =
-        ["movies", "tvshows", "music", "musicvideos", "homevideos", "boxsets", "books", "photos", "mixed"];
-
-    internal static string CleanKind(string? kind) => kind is not null && LibraryKinds.Contains(kind) ? kind : "";
+    // A library's kind as sent and kept (catalog section 2): a token, known
+    // or not; "" (absent) for anything else.
+    internal static string CleanKind(string? kind) => Names.IsToken(kind) ? kind! : "";
 
     // Whether part is on between this server and p.
     internal bool On(PeerRecord p, string part) => Agreed(p) is { } a && a.Parts.ContainsKey(part);
@@ -506,7 +503,7 @@ public sealed partial class MsfpEngine
         var music = On(p, Versions.PartMusic);
         return Answer.Ok(JsonOut.Object(o => o.String("name", Name())
             .Objects("libraries", offered, (w, l) => w.String("id", ids[l.Id]).String("name", Music.CleanText(l.Name ?? "", MaxLibraryName))
-                .String("kind", CleanKind(l.Kind)))
+                .String("kind", CleanKind(l.Kind) is { Length: > 0 } kind ? kind : null))
             .Object("limits", playback ? w => WriteLimits(w, Generous(p), music) : null)));
     }
 
@@ -520,7 +517,7 @@ public sealed partial class MsfpEngine
                 .Integer("downloadKbps", NonZero(l.DownloadKbps));
         }
 
-        w.Integer("scansPerDay", NonZero(l.ScansPerDay));
+        w.Integer("scansPerDay", NonZero(l.ScansPerDay)).Integer("scanBytes", l.ScansPerDay > 0 ? NonZero(l.ScanBytes) : null);
         if (music && l.Audio)
         {
             w.Integer("audioStreams", l.AudioStreams).Integer("audioTranscodes", l.AudioTranscodes);
@@ -917,7 +914,7 @@ public sealed partial class MsfpEngine
                         return null;
                     }
 
-                    raw = e.VideoOut(p.Id, vk, v, library);
+                    raw = e.VideoOut(p.Id, v, library);
                     break;
                 case MusicTitle m when k.Part == Versions.PartMusic:
                     raw = e.MusicOut(p.Id, m, library);
@@ -1011,15 +1008,12 @@ public sealed partial class MsfpEngine
     // drop, and nothing MSFP doesn't take. Null when a receiver would skip
     // it: a film, an episode or an extra with no copy left, an episode keyed
     // by its TMDB episode ID without a valid place (video sections 3.1 and
-    // 4.1), a local film or series without a name, or an extra of no type
-    // MSFP lists (theme songs and videos are never sent).
-    private byte[]? VideoOut(string peer, VideoKey k, VideoTitle t, string library)
+    // 4.1), a local film or series without a name, or an extra whose type
+    // isn't a token. Theme songs and videos are extras like any (video
+    // section 3.9): sent when the host gives them. The copies keep the host's
+    // order, its preference (video section 3.7).
+    private byte[]? VideoOut(string peer, VideoTitle t, string library)
     {
-        if (k.Kind == "extra" && !OldNames.ExtraTypes.Contains(t.ExtraType ?? "", StringComparer.Ordinal)) // P17: extraType is open now
-        {
-            return null;
-        }
-
         var copies = (t.Copies ?? []).Select(c => SendCopy(peer, c)).ToList();
         var input = JsonOut.Object(o => o.String("key", t.Key).String("kind", t.Kind).String("library", library)
             .Objects("copies", copies.Count > 0 ? copies : null, Copies.Write)
@@ -1047,7 +1041,7 @@ public sealed partial class MsfpEngine
         var image = v.Description?.Image ?? false;
         var with = v.With.Order(StringComparer.Ordinal).ToList();
         return JsonOut.Object(o => o.String("key", v.Key).String("kind", v.Kind).String("library", library)
-            .Objects("copies", v.Copies.Count > 0 ? Copies.Sorted(v.Copies) : null, Copies.Write)
+            .Objects("copies", v.Copies.Count > 0 ? v.Copies : null, Copies.Write)
             .Object("place", v.Place is { } pl ? w => w.Integer("season", pl.Season).Integer("episode", pl.Episode) : null)
             .Strings("with", with.Count > 0 ? with : null)
             .Object("ids", v.Ids.Count > 0 ? w =>
@@ -1066,89 +1060,27 @@ public sealed partial class MsfpEngine
 
     // One of the host's copies as it leaves toward a peer: its ID the version
     // ID play gives for it, never the host's handle; its language tags as
-    // Languages.TrySentTag gives them; its name only when it is an edition or
-    // quality label, and a track's title only when it describes the track
-    // (video section 3.6). What remains out of MSFP's bounds is dropped when
-    // it is read back.
+    // Languages.TrySentTag gives them; its name and its tracks' titles as
+    // MsfpConfig.CopyName and MsfpConfig.TrackTitle keep them (video section
+    // 3.6), plain text of at most 64 characters. What remains out of MSFP's
+    // bounds is dropped when it is read back.
     internal Protocol.Copy SendCopy(string peer, Protocol.Copy c) => c with
     {
         Id = VersionId(peer, c.Id),
-        Name = CopyLabel(c.Name),
-        AudioTracks = (c.AudioTracks ?? []).Select(a => a with { Language = SentTag(a.Language), Title = TrackTitle(a.Title) }).ToList(),
-        SubtitleTracks = (c.SubtitleTracks ?? []).Select(s => s with { Language = SentTag(s.Language), Title = TrackTitle(s.Title) }).ToList(),
+        Name = Label(_cfg.CopyName!, c.Name),
+        AudioTracks = (c.AudioTracks ?? []).Select(a => a with { Language = SentTag(a.Language), Title = Label(_cfg.TrackTitle!, a.Title) }).ToList(),
+        SubtitleTracks = (c.SubtitleTracks ?? []).Select(s => s with { Language = SentTag(s.Language), Title = Label(_cfg.TrackTitle!, s.Title) }).ToList(),
     };
 
     // SendCopy for a track's copy (music section 3.3).
-    internal MusicCopy SendMusicCopy(string peer, MusicCopy c) => c with { Id = VersionId(peer, c.Id), Name = CopyLabel(c.Name) };
+    internal MusicCopy SendMusicCopy(string peer, MusicCopy c) => c with { Id = VersionId(peer, c.Id), Name = Label(_cfg.CopyName!, c.Name) ?? "" };
 
     private static string? SentTag(string? code) => code is not null && Languages.TrySentTag(code, out var tag) ? tag : null;
 
-    // The signs of a file name or a release's name in a label: a path, an
-    // extension, words joined by dots or underscores, brackets, a release
-    // group after a dash, a release's source or encoder.
-    [GeneratedRegex(@"[/\\_\[\]{}]|\.[A-Za-z0-9]{2,4}\z|[A-Za-z0-9_]\.[A-Za-z0-9_]+\.[A-Za-z0-9_]|\S-[A-Za-z0-9]+\z|(?i)(?<![A-Za-z0-9_])(x26[45]|h\.?26[45]|web-?dl|web-?rip|blu-?ray|bdrip|brrip|hdtv|dvdrip)(?![A-Za-z0-9_])")]
-    private static partial Regex FileLike();
-
-    // A copy's name as sent (video section 3.6): an edition or quality label
-    // of at most 32 characters, plain text; "" for one that looks like a file
-    // name or a release's name, which is never sent.
-    internal static string CopyLabel(string? name)
-    {
-        var s = Music.CleanText(name ?? "", (name ?? "").Length);
-        return FileLike().IsMatch(s) ? "" : Music.CleanText(s, Copies.MaxName);
-    }
-
-    // The words a track's title may hold (video section 3.6: a description
-    // of the track, such as "Commentary", "SDH", "Signs & Songs" or
-    // "Forced"), lowercase. A title with any other word (a language's name, a
-    // release group's) is dropped: the engine can't tell a description from
-    // the rest otherwise.
-    private static readonly HashSet<string> TrackWords = new(
-        """
-        commentary commentaries director director's directors cast crew writer writers producer producers composer
-        actor actors and & + with by of the track tracks
-        sdh cc hi hoh hearing impaired deaf captions closed
-        forced full complete signs songs sign song dialogue dialog dialogues lyrics karaoke
-        audio description descriptive described narration narrated visually
-        original dub dubbed dubbing stereo mono surround atmos lossless
-        music score isolated effects only simplified traditional
-        commentaire commentaires forcé forcés forcée forcées complets sourds malentendants audiodescription
-        kommentar erzwungen comentario comentarios forzados audiodescripción
-        """.Split((char[])[' ', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries), StringComparer.Ordinal);
-
-    [GeneratedRegex(@"^[0-9]{1,2}(\.[0-9])?\z")]
-    private static partial Regex TrackNumber();
-
-    // A track's title as sent (video section 3.6): plain text of at most 32
-    // characters, made only of TrackWords and channel counts ("5.1"); null
-    // for any other.
-    internal static string? TrackTitle(string? title)
-    {
-        var s = Music.CleanText(title ?? "", Copies.MaxName);
-        var words = new List<string>();
-        var word = new System.Text.StringBuilder();
-        foreach (var r in s.ToLowerInvariant().EnumerateRunes())
-        {
-            if (Rune.IsLetter(r) || Rune.IsDigit(r) || r.Value is '\'' or '.' or '&' or '+')
-            {
-                word.Append(r.ToString());
-                continue;
-            }
-
-            if (word.Length > 0)
-            {
-                words.Add(word.ToString());
-                word.Clear();
-            }
-        }
-
-        if (word.Length > 0)
-        {
-            words.Add(word.ToString());
-        }
-
-        return words.Count > 0 && words.TrueForAll(w => TrackWords.Contains(w) || TrackNumber().IsMatch(w)) ? s : null;
-    }
+    // A name or a title as the host's hook keeps it, plain text of at most
+    // 64 characters; null for none.
+    private static string? Label(Func<string, string> keep, string? s) =>
+        Music.CleanText(keep(s ?? "") ?? "", Copies.MaxName) is { Length: > 0 } kept ? kept : null;
 
     // The host's music title as sent, its copies made ready to leave, read
     // back as a receiver reads it: what a receiver would skip or drop isn't
@@ -1158,7 +1090,7 @@ public sealed partial class MsfpEngine
         var w = new Protocol.MusicTitle
         {
             Key = t.Key, Kind = t.Kind, Library = library, Name = t.Name ?? "", SortName = t.SortName ?? "",
-            Artists = t.Artists ?? [], ArtistNames = t.ArtistNames ?? "", PrimaryType = t.ReleaseType ?? "", // P17: primaryType, secondaryTypes
+            Artists = t.Artists ?? [], ArtistNames = t.ArtistNames ?? "", PrimaryType = t.PrimaryType ?? "", SecondaryTypes = t.SecondaryTypes ?? [],
             Compilation = t.Compilation, Date = t.Date ?? "", OriginalDate = t.OriginalDate ?? "", Genres = t.Genres ?? [],
             Album = t.Album ?? "", Disc = t.Disc, Number = t.Number,
             Copies = (t.Copies ?? []).Select(c => SendMusicCopy(peer, c)).ToList(),

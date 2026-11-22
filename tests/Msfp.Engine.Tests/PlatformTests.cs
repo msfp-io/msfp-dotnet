@@ -29,8 +29,7 @@ public sealed class PlatformTests
         // As hls, it plays; a copy of one file still plays as file.
         h.Protocol = "hls";
         Assert.Equal("hls", (await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film, AudioLanguage = "en" })).Protocol);
-        h.Protocol = "file";
-        var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film, AudioLanguage = "fr" });
+        var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film, AudioLanguage = "fr", Delivery = Playback.DeliveryFile });
         Assert.Equal("file", pb.Protocol);
         Assert.Equal(1, h.Starts()[^1].Parts);
     }

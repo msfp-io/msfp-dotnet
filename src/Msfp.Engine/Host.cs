@@ -322,7 +322,8 @@ public interface IOwnLogTx
 /// server lists them as files of its own before anyone plays; each copy's ID
 /// is the host's handle of it, the one <see cref="IPlayback"/> and
 /// <see cref="IMedia"/> are given. play takes the title's copies as the
-/// catalog sends them (best first, the version IDs made of these handles):
+/// catalog sends them (in the host's order, its preference; the version IDs
+/// made of these handles):
 /// a copy is played only as it is described. Extras are titles of their
 /// own, keyed under their film, series or season
 /// ("movie/tmdb/348/x/&lt;opaque&gt;", kind "extra"), listed in its
@@ -434,7 +435,9 @@ public interface ILyrics
 /// <summary>
 /// The owning side of a peer's playback here. The engine has checked the
 /// request (<see cref="Playback.ReadPlay(ReadOnlySpan{byte}, Func{string, bool}?)"/>), found the title's copies as the
-/// catalog sends them, picked the copy and the tracks, refused what MSFP
+/// catalog sends them, picked the copy and the tracks (those the request
+/// names, else <see cref="MsfpConfig.ChooseCopy"/>'s and
+/// <see cref="MsfpConfig.ChooseTracks"/>'), refused what MSFP
 /// refuses of the delivery asked and what the pool's limits refuse early;
 /// then it asks the host how to serve the copy apart (Describe), and to
 /// start.
@@ -450,9 +453,11 @@ public interface IPlayback
     ValueTask<CopyInfo> DescribeAsync(string copy, CancellationToken ct);
 
     /// <summary>
-    /// Starts serving the copy for its purpose and delivery. The host chooses
-    /// how when no delivery is asked (direct, remux, transcode), and serves
-    /// exactly the delivery asked otherwise; then it calls
+    /// Starts serving the copy for its purpose and delivery. Without a
+    /// delivery it serves the baseline, H.264 and AAC in complete HLS (method
+    /// direct or remux when the copy's streams already are those, transcode
+    /// otherwise; never the file); it serves exactly the delivery asked
+    /// otherwise; then it calls
     /// <see cref="StartRequest.Admit"/> before starting any work. Errors:
     /// NotPlayable, DeliveryRefused, ServerBusy, StreamLimitReached.
     /// </summary>

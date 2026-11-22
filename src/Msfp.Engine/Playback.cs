@@ -110,6 +110,12 @@ internal sealed class LivePlayback
 
     public long ScanSent { get; set; }
 
+    /// <summary>A scan's: the bytes its ticket serves in all (its pool's scanBytes).</summary>
+    public long ScanCap { get; set; }
+
+    /// <summary>The fonts served, by index: 64 MiB in all.</summary>
+    public Dictionary<int, int> FontBytes { get; } = [];
+
     public int ScanReads { get; set; }
 
     /// <summary>The playlists served, by entry/name: served the same again (media section 3.1).</summary>
@@ -283,12 +289,16 @@ internal sealed class Plays
 }
 
 /// <summary>
-/// A copy of a title as the catalog sends it to a peer (cleaned, best first,
-/// its ID the version ID), with the host's handle of it.
+/// A copy of a title as the catalog sends it to a peer (cleaned, in the
+/// host's order of preference, its ID the version ID), with the host's handle
+/// of it; Whole is it whole, as the choice hooks see it (a track's as a copy
+/// of one audio stream).
 /// </summary>
 internal sealed record OfferedCopy
 {
     public string Handle { get; init; } = "";
+
+    public Copy Whole { get; init; } = null!;
 
     public string Id { get; init; } = "";
 
@@ -318,7 +328,7 @@ internal sealed record OfferedCopy
     public PlayCopy PlayCopy() => new()
     {
         Id = Id, Parts = Parts, BitrateKbps = Bitrate,
-        Audio = Audio.Select(a => new PlayCopyAudio(a.Id, a.Language ?? "", a.Role ?? "", a.Default)).ToList(),
+        Audio = MsfpDefaults.AudioOf(Audio),
         Subtitles = Subtitles.Select(s => s.Id).ToList(),
     };
 }
@@ -475,7 +485,7 @@ public sealed partial class MsfpEngine
 
     // The copies of exactly that title the peer may play here, as the
     // catalog sends them to it (playback section 2.2, step 3; video section
-    // 3.7: best first), and the host's libraries holding it among those
+    // 3.7: in the host's order of preference), and the host's libraries holding it among those
     // offered; none when the title isn't sent to the peer.
     private async Task<(List<OfferedCopy> Copies, List<string> Libraries)> OfferedCopiesAsync(PeerRecord p, string key, CancellationToken ct)
     {
@@ -511,7 +521,7 @@ public sealed partial class MsfpEngine
                 {
                     output.Add(new OfferedCopy
                     {
-                        Handle = handles.GetValueOrDefault(c.Id, ""), Id = c.Id, Name = c.Name ?? "", Etag = c.ETag, Size = c.Size,
+                        Handle = handles.GetValueOrDefault(c.Id, ""), Whole = c, Id = c.Id, Name = c.Name ?? "", Etag = c.ETag, Size = c.Size,
                         Parts = Math.Max(c.Parts.Count, 1), Bitrate = (int)Math.Min(c.BitrateKbps ?? 0, int.MaxValue), DurationMs = c.DurationMs,
                         StartMs = c.StartMs, Previews = c.Previews, Audio = c.AudioTracks, Subtitles = c.SubtitleTracks,
                     });
@@ -527,11 +537,22 @@ public sealed partial class MsfpEngine
 
                 foreach (var c in msent.Copies)
                 {
+                    IReadOnlyList<CopyAudio> audio =
+                    [
+                        new CopyAudio("a0", c.Codec)
+                        {
+                            Channels = c.Channels == 0 ? null : c.Channels, Default = true, Codecs = c.Codecs.Length > 0 ? c.Codecs : null,
+                            SampleRate = c.SampleRate == 0 ? null : c.SampleRate, BitDepth = c.BitDepth == 0 ? null : c.BitDepth,
+                        },
+                    ];
+                    var whole = new Copy(c.Id, c.DurationMs, c.Container, c.Size, c.Etag, audio)
+                    {
+                        Name = c.Name.Length > 0 ? c.Name : null, BitrateKbps = c.BitrateKbps, Added = c.Added.Length > 0 ? c.Added : null,
+                    };
                     output.Add(new OfferedCopy
                     {
-                        Handle = mhandles.GetValueOrDefault(c.Id, ""), Id = c.Id, Name = c.Name, Etag = c.Etag, Size = c.Size, Parts = 1,
-                        Bitrate = c.BitrateKbps, DurationMs = c.DurationMs, Lyrics = c.Lyrics,
-                        Audio = [new CopyAudio("a0", c.Codec) { Channels = c.Channels == 0 ? null : c.Channels, Default = true }],
+                        Handle = mhandles.GetValueOrDefault(c.Id, ""), Whole = whole, Id = c.Id, Name = c.Name, Etag = c.Etag, Size = c.Size,
+                        Parts = 1, Bitrate = c.BitrateKbps, DurationMs = c.DurationMs, Lyrics = c.Lyrics, Audio = audio,
                     });
                 }
 
@@ -627,10 +648,14 @@ public sealed partial class MsfpEngine
         return "";
     }
 
-    // How each subtitle format is served apart (video section 5.4).
+    // How each subtitle format, ffmpeg's codec_name, is served apart (video
+    // section 5.4): text as WebVTT, ASS and SSA as ASS too, pictures (PGS as
+    // it is, DVD and DVB subtitles converted) as PGS. A format not listed
+    // here is the host's: served apart only when it is, never by the
+    // engine's guess.
     internal static readonly string[] TextFormats = ["subrip", "webvtt", "mov_text", "ttml", "ass", "ssa"];
     internal static readonly string[] AssFormats = ["ass", "ssa"];
-    internal static readonly string[] PictureFormats = ["pgs", "vobsub", "dvb"];
+    internal static readonly string[] PictureFormats = ["hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle"];
 
     // How a subtitle track of format is served apart, unless the host says it can't.
     private static SubtitleServed ServedAs(string format, bool notApart) => notApart
@@ -667,17 +692,6 @@ public sealed partial class MsfpEngine
         Playback.ProblemNotFound => Answer.Refuse(ProblemType.NotFound),
         _ => Answer.Refuse(ProblemType.Invalid),
     };
-
-    private static void WriteStreamInfo(JsonOut w, StreamInfo s) =>
-        w.String("codec", Nonempty(s.Codec)).String("profile", Nonempty(s.Profile)).Integer("width", NonZero(s.Width))
-            .Integer("height", NonZero(s.Height)).Integer("bitDepth", NonZero(s.BitDepth)).String("range", Nonempty(s.Range))
-            .Integer("bitrateKbps", NonZero(s.BitrateKbps)).Integer("channels", NonZero(s.Channels)).String("language", Nonempty(s.Language));
-
-    private static void WriteInfo(JsonOut w, PlaybackInfo i) =>
-        w.Strings("reasons", i.Reasons is { Count: > 0 } ? i.Reasons : null).String("container", Nonempty(i.Container))
-            .Integer("bitrateKbps", NonZero(i.BitrateKbps))
-            .Object("video", i.Video is { } v ? o => WriteStreamInfo(o, v) : null)
-            .Object("audio", i.Audio is { } a ? o => WriteStreamInfo(o, a) : null);
 
     // A member of the wrong type, in a body read.
     internal static ProtocolException BadJson() => new(ProtocolError.Json);
@@ -760,8 +774,9 @@ public sealed partial class MsfpEngine
             return Answer.Refuse(ProblemType.NotFound);
         }
 
-        // 4. The copy, then malformed track IDs refused.
-        var chosen = copies[Playback.ChooseCopy(copies.Select(c => c.PlayCopy()).ToList(), @in.VersionId, @in.AudioLanguage)];
+        // 4. The copy (versionId wins; else the host's choice, by default the
+        // recommended one), then malformed track IDs refused.
+        var chosen = copies[ChosenCopy(_cfg, copies.Select(c => c.Whole).ToList(), @in)];
         if (!@in.TrackIdsOk)
         {
             return Answer.Refuse(ProblemType.Invalid);
@@ -774,12 +789,19 @@ public sealed partial class MsfpEngine
             return Answer.Refuse(ProblemType.StreamLimit);
         }
 
-        // 6 and 7. The bitrate cap, and the deliveries MSFP itself refuses.
+        // 6 and 7. The bitrate cap (0: none), and the deliveries MSFP itself
+        // refuses: a delivery, a container or a codec not made here among
+        // them.
         var kbps = @in.BitrateCap(_cfg.MaxBitrateKbps, Generous(p).BitrateKbps);
-        if (Playback.RefuseDelivery(@in, chosen.PlayCopy(), kbps) is { } refused)
+        var enc = _cfg.Encoders ?? new Encoders();
+        if (Playback.RefuseDelivery(@in, chosen.PlayCopy(), kbps, enc.AllVideo, enc.AllAudio, video) is { } refused)
         {
             return RefusalOf(refused);
         }
+
+        // The targets left out take the baseline's values (playback section
+        // 2.7).
+        @in = @in with { Transcode = @in.TargetsServed(video) };
 
         CopyInfo info;
         try
@@ -791,11 +813,14 @@ public sealed partial class MsfpEngine
             return HostRefusal(e, "describe");
         }
 
-        var audio = Playback.ChooseAudio(chosen.PlayCopy().Audio, @in.AudioTrack, @in.AudioLanguage);
-        string shown = "", forced = "", burned = "";
-        if (video)
+        var (audio, shown) = ChosenTracks(_cfg, chosen.Whole, @in);
+        string forced = "", burned = "";
+        if (!video)
         {
-            shown = ChooseSubtitles(chosen.Subtitles, @in.SubtitleTrack, @in.SubtitleLanguage);
+            shown = "";
+        }
+        else
+        {
             forced = ForcedFor(chosen.Subtitles, chosen.Audio.FirstOrDefault(a => a.Id == audio)?.Language);
             if (@in.Transcode is { BurnSubtitle.Length: > 0 } t)
             {
@@ -845,7 +870,7 @@ public sealed partial class MsfpEngine
             Copy = chosen.Handle, Title = @in.Title, AudioOnly = audioOnly, Purpose = purpose, Delivery = @in.Delivery,
             Container = @in.Container, Transcode = @in.Transcode, AudioRenditions = @in.AudioRenditions, Parts = chosen.Parts,
             Peer = new PeerRef(p.Id, p.Name), AudioTrack = audio, SubtitleTrack = shown, StartMs = start,
-            Capabilities = new PlayCapabilities(), MaxBitrateKbps = kbps, Queue = queued, // P17: no capabilities in play now
+            MaxBitrateKbps = kbps, Queue = queued,
             Admit = method =>
             {
                 if (slot is not null)
@@ -937,7 +962,6 @@ public sealed partial class MsfpEngine
         var root = StreamBase(req);
         var streamBase = root + ticket + "/";
         var hls = started.Protocol == "hls";
-        var cleanedInfo = CleanInfo(started.Info);
         var duration = chosen.DurationMs > 0 && chosen.DurationMs <= Playback.MaxPositionMs ? chosen.DurationMs : 0;
         var videoOut = video && purpose != Playback.PurposeScan;
         var subtitles = videoOut ? chosen.Subtitles : [];
@@ -967,16 +991,17 @@ public sealed partial class MsfpEngine
                 .String("mimeType", hls ? Playback.HlsType : Playback.RelayedMediaType(started.MimeType)))
             .String("etag", chosen.Etag)
             .Integer("positionMs", started.PositionMs).Integer("durationMs", NonZero(duration))
-            .Objects("versions", copies, (w, c) => w.String("id", c.Id).String("name", Nonempty(c.Name)))
             .String("versionId", chosen.Id)
             .Objects("audioTracks", chosen.Audio.Count > 0 ? chosen.Audio : null, Copies.WriteAudio)
-            .String("audioTrack", Nonempty(audio)).Integer("maxBitrateKbps", purpose == Playback.PurposePlay ? kbps : null)
-            .Object("info", cleanedInfo is null ? null : w => WriteInfo(w, cleanedInfo))
+            .String("audioTrack", Nonempty(audio))
+            // Asked for, never refused: the answer says whether the host made
+            // them (playback section 2.3), false when it made none.
+            .Bool("audioRenditions", @in.AudioRenditions && hls ? started.AudioRenditions : null)
+            .Integer("maxBitrateKbps", purpose == Playback.PurposePlay ? kbps : null)
             .Objects("subtitleTracks", subtitles.Count > 0 ? subtitles : null, Subtitle)
             .String("subtitleTrack", videoOut ? Nonempty(shown) : null).String("burnedTrack", videoOut ? Nonempty(burned) : null)
             .Objects("forcedTracks", forcedTracks.Count > 0 ? forcedTracks : null, Subtitle)
             .String("forcedTrack", videoOut ? Nonempty(forced) : null)
-            .Integer("subtitleStretchSeconds", subtitles.Count > 0 ? WebVtt.StretchSeconds : null)
             .Strings("fonts", fonts.Count > 0 ? fonts : null)
             .Object("trickplay", tp is { } sheets ? w => WriteSheets(w, sheets, streamBase) : null)
             .Objects("queue", entries.Count > 0 ? entries : null, (w, e) => e.Write(w)));
@@ -1004,7 +1029,8 @@ public sealed partial class MsfpEngine
 
     // What the host's start breaks of MSFP, null for nothing: a method or
     // protocol MSFP doesn't have, another delivery than the one asked (file
-    // is direct as file; remux and transcode are hls), file of a copy of
+    // is direct as file; remux, transcode and the baseline without delivery
+    // are hls), file of a copy of
     // several parts, file played otherwise than direct; a queue entry of a
     // place not asked, twice, or served against the same rules.
     private static string? StartedBreaks(Protocol.PlayRequest @in, OfferedCopy c, Started s, Dictionary<int, OfferedCopy> asked)
@@ -1022,7 +1048,7 @@ public sealed partial class MsfpEngine
             }
 
             if ((@in.Delivery == Playback.DeliveryFile && protocol != "file") ||
-                (@in.Delivery.Length > 0 && @in.Delivery != Playback.DeliveryFile && protocol == "file"))
+                (@in.Delivery != Playback.DeliveryFile && protocol == "file"))
             {
                 return "another protocol than the delivery asked";
             }
@@ -1073,6 +1099,11 @@ public sealed partial class MsfpEngine
             Used = now, Slot = slot,
         };
         pb.Entries[0] = new EntryServed(s.Protocol, c.Size, c.Etag);
+        if (@in.Purpose == Playback.PurposeScan)
+        {
+            pb.ScanCap = new PlaybackLimits { ScanBytes = slot.Limits.ScanBytes }.ScanCap;
+        }
+
         if (@in.Purpose == Playback.PurposeDownload && slot.Limits.DownloadKbps > 0)
         {
             pb.Pace = new Pacer(slot.Limits.DownloadKbps, _time);
@@ -1101,7 +1132,7 @@ public sealed partial class MsfpEngine
                 hasAss |= AssFormats.Contains(st.Format);
             }
 
-            if (hasAss && info.Fonts is > 0 and <= 8)
+            if (hasAss && info.Fonts > 0 && info.Fonts <= Font.MaxFonts)
             {
                 pb.Fonts = info.Fonts;
             }
@@ -1130,37 +1161,6 @@ public sealed partial class MsfpEngine
         var a = OurAddress();
         var address = req.Verified?.Former == true && a.Former is not null ? a.Former : a.Address;
         return address + _cfg.Prefix + StreamRoute;
-    }
-
-    // The host's information made plain text, short.
-    private static PlaybackInfo? CleanInfo(PlaybackInfo? i)
-    {
-        if (i is null)
-        {
-            return null;
-        }
-
-        static StreamInfo? Clean(StreamInfo? s)
-        {
-            if (s is null)
-            {
-                return null;
-            }
-
-            Languages.TrySentTag(s.Language ?? "", out var tag);
-            return s with
-            {
-                Codec = Music.CleanText(s.Codec ?? "", 32), Profile = Music.CleanText(s.Profile ?? "", 32),
-                Range = Music.CleanText(s.Range ?? "", 32), Language = tag,
-            };
-        }
-
-        var reasons = (i.Reasons ?? []).Select(r => Music.CleanText(r ?? "", 64)).Where(r => r.Length > 0).Take(16).ToList();
-        return new PlaybackInfo
-        {
-            Container = Music.CleanText(i.Container ?? "", 32), BitrateKbps = Math.Max(i.BitrateKbps, 0),
-            Reasons = reasons.Count > 0 ? reasons : null, Video = Clean(i.Video), Audio = Clean(i.Audio),
-        };
     }
 
     // The host's error as the peer is told it (engine.md section 6).

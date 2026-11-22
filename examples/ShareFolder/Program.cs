@@ -283,16 +283,7 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
                 break;
             case "play":
                 var peerAndKey = arg.Split(' ', 2);
-                var pb = await engine.PlayAsync(peerAndKey[0], new Msfp.PlayRequest
-                {
-                    Title = peerAndKey.Length > 1 ? peerAndKey[1] : "",
-                    Capabilities = new PlayCapabilities
-                    {
-                        Containers = ["mp4", "mkv", "webm", "ts"],
-                        VideoCodecs = ["h264", "hevc", "vp9", "av1"],
-                        AudioCodecs = ["aac", "mp3", "opus", "ac3"],
-                    },
-                });
+                var pb = await engine.PlayAsync(peerAndKey[0], new Msfp.PlayRequest { Title = peerAndKey.Length > 1 ? peerAndKey[1] : "" });
                 watches.Start(pb.Id);
                 var name = pb.Protocol == "hls" ? "master.m3u8" : "file";
                 Console.WriteLine($"{address}/watch/{pb.Id}/{name}  ({pb.Method}, {pb.Protocol}; stop {pb.Id})");

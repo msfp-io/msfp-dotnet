@@ -1156,6 +1156,7 @@ public sealed partial class MsfpEngine
 
             output.Downloads = Math.Max(output.Downloads, l.Downloads);
             output.ScansPerDay = Math.Max(output.ScansPerDay, l.ScansPerDay);
+            output.ScanBytes = Math.Max(output.ScanBytes, l.ScanBytes);
         }
 
         return output;

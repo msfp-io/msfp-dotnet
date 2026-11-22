@@ -220,7 +220,7 @@ public sealed class RelayTests
             Assert.True(s.Exchanges("stop").Count == before + 1, name + ": no stop sent");
         }
 
-        Edit(m => m["id"] = "play_UPPER");
+        Edit(m => m["id"] = "play.x");
         Assert.Equal(MsfpError.NotPlayable, (await Assert.ThrowsAsync<MsfpException>(x.PlayAsync)).Code);
         // Cleaned, not refused.
         foreach (var v in s.A.Engine.Playbacks())
@@ -245,8 +245,7 @@ public sealed class RelayTests
         Assert.Equal(3, pb.AudioTracks.Count);
         Assert.True(string.IsNullOrEmpty(pb.AudioTracks[0].Language));
         Assert.Equal(0, pb.AudioTracks[1].Channels);
-        Assert.True(string.IsNullOrEmpty(pb.AudioTracks[2].Role));
-        Assert.Equal("<b>HD</b>", Assert.Single(pb.Versions).Name);
+        Assert.Equal("evil", pb.AudioTracks[2].Role);
         Assert.Equal(0, pb.DurationMs);
         Assert.Null(pb.Trickplay);
     }

@@ -285,7 +285,9 @@ public sealed partial class MsfpEngine
     }
 
     // Reads a peer's limits (playback section 5, music section 5.1): null
-    // when they aren't an object of integers in range.
+    // when they aren't an object of integers in range. ScanBytes is the
+    // floor, 4 MiB, when the peer sent none: what this server lets its media
+    // server read in one scan of that peer.
     private static Limits? ReadLimits(JsonNode? raw, bool music)
     {
         if (raw is null || Playback.ReadLimits(raw.DeepClone()) is not { HasStreams: true, HasTranscodes: true } k)
@@ -298,6 +300,7 @@ public sealed partial class MsfpEngine
         {
             Streams = w.Streams, Transcodes = w.Transcodes, BitrateKbps = w.BitrateKbps, Downloads = w.Downloads,
             DownloadsPerDay = w.DownloadsPerDay, DownloadKbps = w.DownloadKbps, ScansPerDay = w.ScansPerDay,
+            ScanBytes = w.ScanBytes,
         };
         if (music && k.HasAudioStreams && k.HasAudioTranscodes)
         {
@@ -649,7 +652,8 @@ public sealed partial class MsfpEngine
                 SortName = m.SortName.Length > 0 ? m.SortName : null,
                 Artists = m.Artists.Count > 0 ? [.. m.Artists] : null,
                 ArtistNames = m.ArtistNames.Length > 0 ? m.ArtistNames : null,
-                ReleaseType = m.PrimaryType.Length > 0 ? m.PrimaryType : null, // P17: primaryType, secondaryTypes
+                PrimaryType = m.PrimaryType.Length > 0 ? m.PrimaryType : null,
+                SecondaryTypes = m.SecondaryTypes.Count > 0 ? [.. m.SecondaryTypes] : null,
                 Compilation = m.Compilation,
                 Date = m.Date.Length > 0 ? m.Date : null,
                 OriginalDate = m.OriginalDate.Length > 0 ? m.OriginalDate : null,

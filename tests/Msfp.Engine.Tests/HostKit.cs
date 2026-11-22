@@ -83,6 +83,9 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
 
     public bool NoAdmit { get; set; }
 
+    /// <summary>Start makes no audio renditions.</summary>
+    public bool NoRenditions { get; set; }
+
     /// <summary>Start prepares every queued track.</summary>
     public bool Queue { get; set; }
 
@@ -152,7 +155,7 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
                     [new CopyAudio("a0", "aac") { Language = a, Channels = 2, Default = true }])
                 {
                     Name = "Copy " + a,
-                    SubtitleTracks = [new CopySubtitle("s0", "subrip") { Language = "fr" }, new CopySubtitle("s1", "pgs") { Language = "fr" }],
+                    SubtitleTracks = [new CopySubtitle("s0", "subrip") { Language = "fr" }, new CopySubtitle("s1", "hdmv_pgs_subtitle") { Language = "fr" }],
                 });
             }
         }
@@ -258,10 +261,11 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
         bool noAdmit;
         Task? hold;
         SemaphoreSlim? entered;
-        bool queue;
+        bool queue, noRenditions;
         lock (_lock)
         {
             (method, protocol, error, noAdmit, hold, entered, queue) = (Method, Protocol, StartError, NoAdmit, Hold, Entered, Queue);
+            noRenditions = NoRenditions;
         }
 
         if (hold is not null)
@@ -301,7 +305,7 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
             return new Started
             {
                 Handle = "h" + _handles.ToString(CultureInfo.InvariantCulture), Method = method, Protocol = protocol, MimeType = "video/mp4",
-                PositionMs = request.StartMs, Info = new PlaybackInfo { Container = "mp4" },
+                PositionMs = request.StartMs, AudioRenditions = request.AudioRenditions && !noRenditions,
                 Queue = queue ? request.Queue.Select(q => new StartedEntry(q.Place, method, protocol, "audio/flac")).ToList() : null,
             };
         }

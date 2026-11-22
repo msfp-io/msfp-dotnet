@@ -30,7 +30,7 @@ public sealed class CatalogTests
             Assert.False(l.Id is "films" or "other", "the host's IDs never leave");
             Assert.True(l.Wanted);
             Assert.False(l.Name == "Films" && l.Kind != "movies");
-            Assert.False(l.Name == "Other" && l.Kind != "");
+            Assert.False(l.Name == "Other" && l.Kind != "weird"); // open: kept as it is
         }
 
         Assert.Equal(12_001, (await s.PeerTitlesAsync()).Count);
@@ -352,7 +352,7 @@ public sealed class CatalogTests
         var v = (VideoTitle)got["movie/tmdb/2"];
         Assert.Equal(["fr"], v.AudioLanguages());
         Assert.Single(v.Ids!);
-        Assert.Equal("other", Assert.Single(v.Copies!).Container);
+        Assert.Equal("matroska", Assert.Single(v.Copies!).Container);
         Assert.Equal("<b>x</b>", ((MusicTitle)got["track/mb/0c000000-0000-4000-8000-000000000003"]).Name);
         // Wrong types at the top: the reading fails, what was kept stays.
         foreach (var bad in new[] { "{\"titles\":{}}", "{\"titles\":[],\"next\":7}", "{\"titles\":[],\"seq\":\"1\"}", "{\"titles\":[],\"changes\":1}", "{\"titles\":[],\"gone\":\"x\"}" })
@@ -400,7 +400,7 @@ public sealed class CatalogTests
         const string Album = "album/mb/0b000000-0000-4000-8000-000000000002";
         h.Titles[Album] = new MusicTitle
         {
-            Key = Album, Kind = "album", Libraries = ["music"], Name = "Bridge over Troubled Water", ReleaseType = "album",
+            Key = Album, Kind = "album", Libraries = ["music"], Name = "Bridge over Troubled Water", PrimaryType = "album", SecondaryTypes = ["soundtrack"],
             Date = "2011-03-08", OriginalDate = "1970-01-26", Genres = ["Folk rock", "folk ROCK"], Image = true,
             Ids = new() { ["mbreleasegroup"] = "0d000000-0000-4000-8000-000000000005" },
         };
@@ -414,8 +414,8 @@ public sealed class CatalogTests
         Assert.Equal(["artist/mb/0a000000-0000-4000-8000-000000000001"], m.Artists!);
         Assert.Equal("Simon & Garfunkel", m.ArtistNames);
         Assert.Equal((1, 2), (m.Disc, m.Number));
-        Assert.Null(m.Date);
-        Assert.Null(m.Genres);
+        Assert.Equal("1970", m.Date);
+        Assert.Equal(["Folk"], m.Genres!);
         var copy = Assert.Single(m.Copies!);
         Assert.Equal(308000, copy.DurationMs);
         Assert.Equal("", copy.Name);
@@ -424,7 +424,8 @@ public sealed class CatalogTests
         Assert.Equal(s.LibraryPub, m.Libraries![0]);
         // An album's description; an image only for a local one.
         var a = Assert.IsType<MusicTitle>(got[Album]);
-        Assert.Equal(("album", "1970-01-26"), (a.ReleaseType, a.OriginalDate));
+        Assert.Equal(("album", "1970-01-26"), (a.PrimaryType, a.OriginalDate));
+        Assert.Single(a.SecondaryTypes!);
         Assert.Equal(["Folk rock"], a.Genres!);
         Assert.False(a.Image);
         Assert.NotEmpty(a.Ids!["mbreleasegroup"]);
@@ -438,8 +439,8 @@ public sealed class CatalogTests
         Assert.Empty(await s2.PeerTitlesAsync());
     }
 
-    // A film's copies (video section 3.2): sent best first, under version
-    // IDs, cleaned as a receiver keeps them; the best picture and the
+    // A film's copies (video section 3.2): sent in the host's order, its
+    // preference (video section 3.7), under version IDs, cleaned as a receiver keeps them; the best picture and the
     // languages are worked out from them; a copy's new etag is a change of
     // the title.
     [Fact]
@@ -466,18 +467,19 @@ public sealed class CatalogTests
         var got = await s.PeerTitlesAsync();
         Assert.False(got.ContainsKey("movie/tmdb/2"));
         var v = (VideoTitle)got["movie/tmdb/1"];
-        var best = v.BestCopy();
-        Assert.NotNull(best);
+        var first = v.BestCopy();
+        Assert.NotNull(first);
         Assert.Equal(2, v.Copies!.Count);
-        Assert.Equal(1600, best.Video?.Height);
-        Assert.Equal(["hdr10", "dv"], best.Video!.Hdr);
+        Assert.Equal(1080, first.Video?.Height);
+        var best = v.Copies[1];
+        Assert.Equal(["dv", "hdr10"], best.Video!.Hdr); // sorted
         Assert.Null(best.Name);
         Assert.Equal("Commentary", best.AudioTracks[0].Title);
         Assert.Null(best.AudioTracks[1].Title);
         Assert.Equal("de", best.AudioTracks[1].Language);
-        Assert.Equal(["fr", "de", "en"], v.AudioLanguages());
+        Assert.Equal(["en", "fr", "de"], v.AudioLanguages());
         Assert.Equal(["fr"], v.SubtitleLanguages());
-        var c = v.Copies[1];
+        var c = v.Copies[0];
         Assert.Equal((2, 20L, "e0", "Copy en"), (c.Chapters.Count, c.Size, c.ETag, c.Name));
         Assert.All(v.Copies, x => Assert.StartsWith("ver_", x.Id, StringComparison.Ordinal));
         var body = s.Exchanges("titles")[^1].ResponseBody;
@@ -495,6 +497,6 @@ public sealed class CatalogTests
         var x = s.Exchanges("titles")[^1].ResponseBody;
         Assert.Contains("\"changes\":true", x, StringComparison.Ordinal);
         Assert.Contains("\"key\":\"movie/tmdb/1\"", x, StringComparison.Ordinal);
-        Assert.Equal("e9", ((VideoTitle)(await s.PeerTitlesAsync())["movie/tmdb/1"]).Copies![1].ETag);
+        Assert.Equal("e9", ((VideoTitle)(await s.PeerTitlesAsync())["movie/tmdb/1"]).Copies![0].ETag);
     }
 }

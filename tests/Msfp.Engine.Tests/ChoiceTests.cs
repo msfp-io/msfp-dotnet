@@ -1,10 +1,11 @@
 using Msfp.Protocol;
+using Msfp.Stores;
 
 namespace Msfp.Tests;
 
 // The table of MSFP video section 5.4, row by row (playback section 2.6's,
 // of the copy and the audio, are Msfp.Protocol's: ChooseCopy, ChooseAudio);
-// what a device is said to play; ranges (msfp-go's choose_test.go).
+// the choice hooks; ranges (msfp-go's choose_test.go).
 public sealed class ChoiceTests
 {
     private static readonly CopySubtitle[] Subtitles = [new("s0", "subrip") { Language = "en" }, new("s1", "subrip") { Language = "fr", Forced = true },
@@ -29,17 +30,36 @@ public sealed class ChoiceTests
         Assert.Equal("", MsfpEngine.ForcedFor(Subtitles, "en"));
     }
 
+    // The choice hooks (MSFP playback section 2.6): what the request names
+    // wins; else the host's hook, the default's when it answers what the copy
+    // hasn't.
     [Fact]
-    public void Coarsen()
+    public void ChoiceHooks()
     {
-        var c = MsfpEngine.Coarsen(new PlayCapabilities { Containers = ["MP4", "mkv", "mp4", "avi"], VideoCodecs = ["h264", "H265"], MaxAudioChannels = 7, MaxHeight = 1079, MaxBitrateKbps = 8999 }, true)!;
-        Assert.Equal(["avi", "mkv", "mp4"], c.Containers);
-        Assert.Equal((1, 6, 720, 8000), (c.VideoCodecs.Count, c.MaxAudioChannels, c.MaxHeight, c.MaxBitrateKbps));
-        var low = MsfpEngine.Coarsen(new PlayCapabilities { MaxAudioChannels = 1, MaxHeight = 100, MaxBitrateKbps = 999 }, true)!;
-        Assert.Equal((2, 480, 0), (low.MaxAudioChannels, low.MaxHeight, low.MaxBitrateKbps));
-        Assert.Null(MsfpEngine.Coarsen(new PlayCapabilities(), true));
-        // A track's, with video's members only: nothing said.
-        Assert.Null(MsfpEngine.Coarsen(new PlayCapabilities { VideoCodecs = ["h264"], MaxHeight = 1080 }, false));
+        Copy[] copies =
+        [
+            new("v0", 0, "", 0, "", [new CopyAudio("a0", "aac") { Language = "en" }]),
+            new("v1", 0, "", 0, "", [new CopyAudio("a0", "aac") { Language = "fr" }, new CopyAudio("a1", "aac") { Language = "fr", Role = "karaoke" }])
+            {
+                SubtitleTracks = [new CopySubtitle("s0", "subrip") { Language = "en" }],
+            },
+        ];
+        using var store = new MemoryStore();
+        var cfg = new MsfpConfig { Address = "https://a.example", Store = store };
+        Assert.Equal(1, MsfpEngine.ChosenCopy(cfg, copies, new Protocol.PlayRequest { AudioLanguage = "fr" })); // the default by language
+        cfg = cfg with { ChooseCopy = (_, _) => 7 };
+        Assert.Equal(0, MsfpEngine.ChosenCopy(cfg, copies, new Protocol.PlayRequest { AudioLanguage = "fr" })); // a hook out of range
+        Assert.Equal(1, MsfpEngine.ChosenCopy(cfg, copies, new Protocol.PlayRequest { VersionId = "v1" })); // versionId named
+        cfg = cfg with { ChooseTracks = (_, _) => ("a1", "s9") };
+        // The hook's audio, the default's subtitles.
+        Assert.Equal(("a1", "s0"), MsfpEngine.ChosenTracks(cfg, copies[1], new Protocol.PlayRequest { SubtitleLanguage = "en" }));
+        // Named tracks.
+        Assert.Equal(("a0", ""), MsfpEngine.ChosenTracks(cfg, copies[1], new Protocol.PlayRequest { AudioTrack = "a0", SubtitleTrack = "off" }));
+        // The default names and titles.
+        Assert.Equal("", MsfpDefaults.CopyName("Film.2160p.WEB-DL-GRP.mkv"));
+        Assert.Equal("4K HDR", MsfpDefaults.CopyName(" 4K  HDR "));
+        Assert.Equal("", MsfpDefaults.TrackTitle("English"));
+        Assert.Equal("Commentary 5.1", MsfpDefaults.TrackTitle("Commentary 5.1"));
     }
 
     [Theory]

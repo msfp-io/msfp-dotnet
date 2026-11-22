@@ -634,6 +634,14 @@ public sealed partial class MsfpEngine
             default:
                 // An empty PGS part is a stretch with no subtitles: relayed as such.
                 var (again, type) = rebuild!(body);
+                if (again is not null && path.Kind == MediaKind.Font)
+                {
+                    lock (_remotes)
+                    {
+                        again = FontsWithin(rm.FontBytes, path.Font, again.Length) ? again : null;
+                    }
+                }
+
                 body = again ?? throw new MsfpException(MsfpError.NotFound);
                 contentType = type;
                 break;

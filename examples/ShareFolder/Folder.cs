@@ -381,11 +381,7 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
                 (method, protocol) = hls ? ("remux", "hls") : throw new MsfpException(MsfpError.DeliveryRefused);
                 break;
             default:
-                if (!request.Capabilities.Containers.Contains(ext))
-                {
-                    (method, protocol) = hls ? ("remux", "hls") : throw new MsfpException(MsfpError.NotPlayable);
-                }
-
+                (method, protocol) = hls ? ("remux", "hls") : throw new MsfpException(MsfpError.NotPlayable);
                 break;
         }
 

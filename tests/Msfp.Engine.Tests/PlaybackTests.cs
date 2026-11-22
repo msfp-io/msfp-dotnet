@@ -37,24 +37,21 @@ public sealed class PlaybackTests
         using var s = await Sharing.StartAsync(h);
         var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest
         {
-            Title = Film, AudioLanguage = "fr", SubtitleLanguage = "fr",
-            Capabilities = new PlayCapabilities { Containers = ["MP4"], MaxHeight = 1000, MaxBitrateKbps = 12345 },
+            Title = Film, AudioLanguage = "fr", SubtitleLanguage = "fr", MaxBitrateKbps = 12345,
         });
         Assert.Equal(("direct", "hls", "a0", "s0"), (pb.Method, pb.Protocol, pb.AudioTrack, pb.SubtitleTrack));
-        Assert.Equal(2, pb.Versions.Count);
-        Assert.Equal(pb.Versions[1].Id, pb.VersionId);
+        Assert.NotEmpty(pb.VersionId);
         Assert.Equal(2, pb.SubtitleTracks.Count);
         Assert.Equal(120, pb.SubtitleStretchSeconds);
         Assert.False(pb.Id.StartsWith("play_", StringComparison.Ordinal));
-        // A heard the French copy, the coarsened capabilities, the cap.
+        // A heard the French copy and the cap, as asked; nothing of the device.
         var started = Assert.Single(h.Starts());
         Assert.Equal("movie/tmdb/949#1", started.Copy);
-        Assert.Equal(12000, started.MaxBitrateKbps);
-        Assert.Single(started.Capabilities.Containers);
-        Assert.Equal(720, started.Capabilities.MaxHeight);
+        Assert.Equal(12345, started.MaxBitrateKbps);
         var plays = s.Exchanges("play");
-        Assert.Contains("\"containers\":[\"mp4\"]", plays[0].RequestBody, StringComparison.Ordinal);
-        Assert.Contains("\"maxBitrateKbps\":12000", plays[0].RequestBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("capabilities", plays[0].RequestBody, StringComparison.Ordinal);
+        Assert.Contains("\"maxBitrateKbps\":12345", plays[0].RequestBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"versions\"", plays[0].ResponseBody, StringComparison.Ordinal);
         Assert.DoesNotContain("movie/tmdb/949#", plays[0].ResponseBody, StringComparison.Ordinal);
         // The media, through B.
         var o = await FetchAsync(s.B, pb.Id, new MediaPath { Kind = MediaKind.Master });
@@ -97,8 +94,8 @@ public sealed class PlaybackTests
         {
             "{}", "{\"title\":7}", "{\"title\":\"series/tmdb/1399\"}", "{\"title\":\"movie/tmdb/0949\"}",
             "{\"title\":\"movie/tmdb/949\",\"startPositionMs\":-1}", "{\"title\":\"movie/tmdb/949\",\"audioTrack\":\"a01\"}",
-            "{\"title\":\"movie/tmdb/949\",\"subtitleTrack\":\"s007\"}", "{\"title\":\"movie/tmdb/949\",\"capabilities\":{\"containers\":[\"mp4\",1]}}",
-            "{\"title\":\"movie/tmdb/949\",\"capabilities\":{\"containers\":\"mp4\"}}", "{\"title\":\"movie/tmdb/949\",\"capabilities\":\"mp4\"}",
+            "{\"title\":\"movie/tmdb/949\",\"subtitleTrack\":\"s007\"}", "{\"title\":\"movie/tmdb/949\",\"delivery\":\"File\"}",
+            "{\"title\":\"movie/tmdb/949\",\"delivery\":\"remux\",\"container\":\"\"}",
             "{\"title\":\"movie/tmdb/949\",\"audioLanguage\":\"fr_CA\"}", "{\"title\":\"movie/tmdb/949\",\"maxBitrateKbps\":10000001}",
         })
         {
@@ -108,9 +105,7 @@ public sealed class PlaybackTests
         Assert.Equal(404, await CallAsync(s, "play", "{\"title\":\"movie/tmdb/9999999999\"}"));
         // Unknown values and members ignored; a track the copy hasn't, as absent.
         Assert.Equal(200, await CallAsync(s, "play", "{\"title\":\"movie/tmdb/949\",\"capabilities\":{\"containers\":[\"MP4\",\"x\"]},\"audioTrack\":\"a7\",\"other\":1}"));
-        var got = h.Starts()[0];
-        Assert.Empty(got.Capabilities.Containers);
-        Assert.Equal("a0", got.AudioTrack);
+        Assert.Equal("a0", h.Starts()[0].AudioTrack);
         var url = (string)JsonNode.Parse(s.Exchanges("play")[^1].ResponseBody)!["stream"]!["url"]!;
         Assert.StartsWith(s.A.Address + "/api/v1/stream/", url, StringComparison.Ordinal);
         var target = url[s.A.Address.Length..];
@@ -362,7 +357,7 @@ public sealed class PlaybackTests
     [Fact]
     public async Task MusicPlay()
     {
-        var h = new FakeHost { Libs = [new Library { Id = "music", Name = "Music", Kind = "music" }], Protocol = "file" };
+        var h = new FakeHost { Libs = [new Library { Id = "music", Name = "Music", Kind = "music" }] };
         const string Track = "track/mb/0c000000-0000-4000-8000-000000000003";
         h.Titles[Track] = HostKit.MusicTrack(Track, "t");
         h.Info["t"] = new CopyInfo
@@ -371,7 +366,7 @@ public sealed class PlaybackTests
             Trickplay = new Trickplay { TileWidth = 10, TileHeight = 10, Columns = 1, Rows = 1, IntervalMs = 1000, TileCount = 1 },
         };
         using var s = await Sharing.StartAsync(h, c => c with { NewPairing = new Limits { Streams = 0, Audio = true, AudioStreams = 1 } });
-        var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Track, SubtitleTrack = "s0" });
+        var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Track, SubtitleTrack = "s0", Delivery = Playback.DeliveryFile });
         Assert.True(h.Starts()[0].AudioOnly);
         Assert.Empty(pb.SubtitleTracks);
         Assert.Null(pb.Trickplay);
@@ -413,7 +408,7 @@ public sealed class PlaybackTests
         const string Unknown = "{\"id\":\"play_aaaaaaaaaaaaaaaaaaaaaaaaaa\"}";
         foreach (var (call, body, want) in new[]
         {
-            ("progress", Unknown, 410), ("stop", Unknown, 200), ("progress", "{\"id\":\"play_x\"}", 400),
+            ("progress", Unknown, 410), ("stop", Unknown, 200), ("progress", "{\"id\":\"play.x\"}", 400),
             ("progress", "{}", 400), ("stop", "{\"id\":\"play_aaaaaaaaaaaaaaaaaaaaaaaaaa\",\"positionMs\":-1}", 400),
             ("progress", "{\"id\":\"play_aaaaaaaaaaaaaaaaaaaaaaaaaa\",\"positionMs\":8640000001}", 400),
         })
@@ -457,7 +452,7 @@ public sealed class PlaybackTests
             };
         }
 
-        pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film, Capabilities = new PlayCapabilities { Containers = ["mp4"] } });
+        pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film, Delivery = Playback.DeliveryFile });
         var done = s.B.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.File }, "", new MemorySink());
         await Task.Delay(100);
         if (s.A.Engine.Playbacks() is [var v])

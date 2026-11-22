@@ -78,13 +78,13 @@ public sealed class TitlesTests
 
     // Local titles are shared only once the owner allows it, per pairing
     // (catalog section 5): the change forces a whole reading. Extras go with
-    // their title only, never theme songs.
+    // their title only, theme songs among them (video section 3.9).
     [Fact]
     public async Task LocalTitlesAndExtras()
     {
         var (h, local, _) = LocalHost();
         using var s = await Sharing.StartAsync(h);
-        Assert.Equal(["movie/tmdb/1", "movie/tmdb/1/x/Tr7aQ1"], Keys(await s.PeerTitlesAsync()));
+        Assert.Equal(["movie/tmdb/1", "movie/tmdb/1/x/Th3me", "movie/tmdb/1/x/Tr7aQ1"], Keys(await s.PeerTitlesAsync()));
         Assert.Equal(MsfpError.NotFound, (await Assert.ThrowsAsync<MsfpException>(() => s.B.Engine.TitleImageAsync(s.OnB, local))).Code);
         var x = (VideoTitle)(await s.PeerTitlesAsync())["movie/tmdb/1/x/Tr7aQ1"];
         Assert.Equal(("trailer", "Teaser", 1), (x.ExtraType, x.Name, x.Copies!.Count));
@@ -97,7 +97,7 @@ public sealed class TitlesTests
         Assert.DoesNotContain("tt0133093", body, StringComparison.Ordinal);
         Assert.DoesNotContain("NoName", body, StringComparison.Ordinal);
         var got = await s.PeerTitlesAsync();
-        Assert.Equal([local, local + "/x/Ex1", "movie/tmdb/1", "movie/tmdb/1/x/Tr7aQ1"], Keys(got));
+        Assert.Equal([local, local + "/x/Ex1", "movie/tmdb/1", "movie/tmdb/1/x/Th3me", "movie/tmdb/1/x/Tr7aQ1"], Keys(got));
         var v = (VideoTitle)got[local];
         Assert.Equal(("Summer 2019", 2019, true), (v.Name, v.Year, v.Image));
         Assert.Null(v.Ids);
@@ -105,7 +105,7 @@ public sealed class TitlesTests
         // Off again: a whole reading drops them.
         await s.A.Engine.SetLocalAsync(s.OnA, false);
         await s.B.Engine.ReadNowAsync(s.OnB);
-        Assert.Equal(["movie/tmdb/1", "movie/tmdb/1/x/Tr7aQ1"], Keys(await s.PeerTitlesAsync()));
+        Assert.Equal(["movie/tmdb/1", "movie/tmdb/1/x/Th3me", "movie/tmdb/1/x/Tr7aQ1"], Keys(await s.PeerTitlesAsync()));
 
         // The film gone: its extra goes with it.
         h.Remove("movie/tmdb/1");
@@ -188,18 +188,18 @@ public sealed class TitlesTests
     [InlineData("Film x264", "")]
     [InlineData("Extended-GRP", "")]
     [InlineData(" Copy\ten ", "Copy en")]
-    public void CopyLabels(string name, string want) => Assert.Equal(want, MsfpEngine.CopyLabel(name));
+    public void CopyLabels(string name, string want) => Assert.Equal(want, MsfpDefaults.CopyName(name));
 
     [Theory]
     [InlineData("Commentary", "Commentary")]
     [InlineData("Signs & Songs", "Signs & Songs")]
     [InlineData("SDH", "SDH")]
-    [InlineData("Commentaire du réalisateur", null)]
+    [InlineData("Commentaire du réalisateur", "")]
     [InlineData("Forcés", "Forcés")]
     [InlineData("Stereo 5.1", "Stereo 5.1")]
-    [InlineData("German DTS-HD by GRP", null)]
-    [InlineData("", null)]
-    public void TrackTitles(string title, string? want) => Assert.Equal(want, MsfpEngine.TrackTitle(title));
+    [InlineData("German DTS-HD by GRP", "")]
+    [InlineData("", "")]
+    public void TrackTitles(string title, string want) => Assert.Equal(want, MsfpDefaults.TrackTitle(title));
 
     // A PNG of PngImage's re-encoding: each filter undone, an interlaced one
     // kept so, what isn't a PNG refused.

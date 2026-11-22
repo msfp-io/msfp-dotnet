@@ -471,7 +471,7 @@ public sealed partial class MsfpEngine
                     return StreamOutcome.Served;
                 }
 
-                if (!Media.TryScanSpan(pb.ScanSent, h, size, Playback.ScanBytesRecommended, out start, out end)) // P17: the pairing's scanBytes
+                if (!Media.TryScanSpan(pb.ScanSent, h, size, pb.ScanCap, out start, out end))
                 {
                     return Unsatisfied();
                 }
@@ -754,6 +754,30 @@ public sealed partial class MsfpEngine
 
     internal delegate bool TryRebuildFn(ReadOnlySpan<byte> input, out byte[] output);
 
+    // Notes font n of a copy, of size bytes, among those a playback served or
+    // relayed (sizes, by index), and says whether they stay within 64 MiB in
+    // all (video section 6.6): a font past that isn't served, and isn't
+    // noted.
+    internal static bool FontsWithin(Dictionary<int, int> sizes, int n, int size)
+    {
+        long total = size;
+        foreach (var (i, s) in sizes)
+        {
+            if (i != n)
+            {
+                total += s;
+            }
+        }
+
+        if (total > Font.MaxFontSet)
+        {
+            return false;
+        }
+
+        sizes[n] = size;
+        return true;
+    }
+
     // Serves what is read whole: a stretch or a whole text track, rebuilt as
     // WebVTT or ASS; a stretch of a picture track, checked as PGS; a font,
     // checked (video sections 6.3 to 6.6). What the host made outside MSFP's
@@ -785,6 +809,14 @@ public sealed partial class MsfpEngine
         }
 
         var (body, contentType) = rebuild(buffer.Body.ToArray());
+        if (body is not null && path.Kind == MediaKind.Font)
+        {
+            lock (_plays)
+            {
+                body = FontsWithin(pb.FontBytes, path.Font, body.Length) ? body : null;
+            }
+        }
+
         if (body is null)
         {
             _log.LogWarning("msfp: the host's subtitles or font are outside what MSFP allows; they aren't sent: {Kind}", path.Kind);
@@ -900,7 +932,7 @@ public sealed partial record MediaPath
                 path = new MediaPath { Kind = MediaKind.Sheet, Sheet = sheet };
                 return true;
             case 2 when parts[0] == "fonts":
-                if (!Number(parts[1], 7, out var font))
+                if (!Number(parts[1], Protocol.Font.MaxFonts - 1, out var font))
                 {
                     return false;
                 }
