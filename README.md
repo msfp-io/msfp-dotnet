@@ -25,7 +25,8 @@ it writes none of the protocol itself.
   This library follows the same design as the Go engine,
   [msfp-go](https://github.com/msfp-io/msfp-go), in .NET's own style.
 
-**Status: 0.7.1-preview, not released.** The protocol layer is complete
+**Status: 0.7.1-preview**, published on NuGet as previews (`Msfp.Engine`,
+`Msfp.Protocol`); before 1.0 the API may change. The protocol layer is complete
 and passes every test vector of MSFP version 0. The engine pairs (keys,
 codes, `pair`, `hello`, accepting and ending, signed answers, limits),
 rotates and revokes its key (with its next key, or replaced without it),
@@ -40,7 +41,9 @@ tickets and the relay of a peer's media (HLS, WebVTT, PGS, preview
 sheets), for films, series and music. And groups (MSFP's groups part):
 founding one, inviting with codes, members' requests and answers, pairing
 through the group, roles, bans, leaving, dissolving, offers and pools per
-group.
+group, and what this server shows from each group. And relations (MSFP
+core section 7.7): a link lasts while the individual relation or a group
+holds it.
 
 ## Packages
 
@@ -114,7 +117,7 @@ await engine.AcceptAsync(id);                            // once both compared f
 ```
 
 `MsfpConfig.Notifier` tells your server what happened, for its panel and
-logs. Every method throws `MsfpException`, whose `Code` says why
+logs. `CodeTextAsync` gives a live code's text again, to send once more. Every method throws `MsfpException`, whose `Code` says why
 (`MsfpError.CodeExpired`, `MsfpError.AlreadyPeer`…).
 
 ## Sharing and playing
@@ -172,7 +175,17 @@ maker's operator answers with `AcceptJoinAsync` or `RefuseJoinAsync`.
 `SetAdminAsync`, `BanAsync`, `GiveGroupAsync`, `LeaveGroupAsync`,
 `DissolveGroupAsync` and `BlockAsync` act on them. A link's offers are
 what it has by hand and what each of its groups gives it; a playback
-counts against the first pool with room (`SetGroupPoolAsync`).
+counts against the first pool with room (`SetGroupPoolAsync`). What
+this server shows from a group is one choice for the whole group:
+`GroupShowsAsync` lists each member's libraries and `SetGroupShowsAsync`
+hides some.
+
+A link lasts while one relation holds it (MSFP core section 7.7): the
+individual one, made by hand with a code, or a group both servers are
+in. `AskIndividualAsync` asks a peer linked through a group for the
+individual relation (or accepts its ask), `EndIndividualAsync` ends it
+(the link stays while a group holds it), and `BlockPeerAsync` ends the
+link and keeps the peer away from every group.
 
 ## The example
 
@@ -206,13 +219,14 @@ minutes). The comment at the top of
 
 Groups work the same way: `group-create <name>` in the first, `invite
 <group>` for a code the others redeem, `groups` to see the members and the
-requests waiting, and `pair <group> <mail>` to accept one.
+requests waiting, and `pair <group> <mail>` to accept one. Relations:
+`individual <id>`, `end-individual <id>` and `block <id>`.
 
 ## Versions
 
 The library follows [semantic versioning](https://semver.org). Its
 major.minor version is shared with the other MSFP engines: msfp-dotnet
-0.4.x follows the same API design as msfp-go 0.4.x (the spec's api/).
+0.7.x-preview follows the same API design as msfp-go 0.7.x (the spec's api/).
 Patch versions are each library's own. The library's version is separate
 from the protocol's: from 0.4.0-preview it speaks MSFP version 0, groups
 included; 0.2.0-preview and before speak the same protocol numbered 1, and
@@ -227,9 +241,10 @@ dotnet test
 The engine's tests run whole servers against each other in one process,
 and once over real TLS. The example host passes msfp-spec's
 [conformance suite](https://github.com/msfp-io/msfp-spec/tree/main/conformance)
-as msfp-go's does: 118 checks passed, 0 failed, 3 skipped (a title in
-several libraries, preview sheets and PGS subtitles, which a folder of
-films doesn't have), with `--code2`, `--load` and `--end`. The protocol's test vectors under
+as msfp-go's does, run with `--code2`, `--load` and `--end`, and
+`--group-code` for the groups checks; the checks a folder of films can't
+answer (a title in several libraries, preview sheets, PGS subtitles) are
+skipped. The protocol's test vectors under
 [tests/Msfp.Protocol.Tests/testdata](tests/Msfp.Protocol.Tests/testdata)
 come from the spec's
 [vectors/](https://github.com/msfp-io/msfp-spec/tree/main/vectors), copied
