@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased: the revision of version 0 (proposal 16)
+
+### Changed
+
+- Titles carry their copies: `VideoTitle.Copies` and `MusicTitle.Copies`
+  are `Protocol.Copy` and `MusicCopy`, each copy's ID the host's handle
+  (the engine sends the version ID `play` gives). `VideoTitle.Audio`,
+  `Subtitles`, `Pictures`, `Video` and `Picture` are gone: `BestCopy`,
+  `AudioLanguages` and `SubtitleLanguages` work them out from the copies.
+  `MusicTitle` has music's new description (`SortName`, `ReleaseType`,
+  `Compilation`, `Date`, `OriginalDate`, `Genres`, `Image`), no `Year` or
+  `DurationMs`. The stores write copies with the specification's names,
+  as the Go engine does.
+- `titles` pages are bounded by size too (5,000 titles, 3 MiB), `next`
+  set whenever titles remain; copies are cleaned before they leave (names
+  and track titles only when they are labels).
+
+### Added
+
+- Extras (`VideoTitle.ExtraType`, `Name`), sent only with their title,
+  and gone with it; the `tvdb` and `local` keys; a local title's
+  description (`Name`, `Year`, `Image`).
+- `SetLocalAsync` and `SetGroupLocalAsync` (`PeerView.Local`,
+  `GroupView.Local`): local titles shared, per pairing and per group, off
+  by default.
+- The `image` call: a host's `IImages` gives a local title's image,
+  served under a ticket of its own; `TitleImageAsync` asks a peer for
+  one, checked and re-encoded. `OpaqueKeyPart` makes opaque parts of
+  keys.
+
 ## v0.7.1-preview (2026-11-21)
 
 msfp-go v0.7.1 in .NET.
