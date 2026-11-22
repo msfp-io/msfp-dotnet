@@ -221,7 +221,9 @@ public static partial class Playback
     /// purpose and delivery, answered 200 (<paramref name="status"/>) with an
     /// answer <see cref="ReadPlayAnswer"/> keeps, of the same etag, compared
     /// byte for byte. <paramref name="root"/> is the owning server's stream
-    /// root.
+    /// root. The engine's RestartAsync follows these rules with its own
+    /// playbacks; this is for a host or another engine that keeps its
+    /// readings itself (Go's wire.Restart, the vectors' restarts).
     /// </summary>
     public static RestartOutcome Restart(FileReading reading, PlayRequest request, int status, ReadOnlySpan<byte> answer, string root)
     {

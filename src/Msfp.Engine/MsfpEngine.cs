@@ -143,6 +143,7 @@ public sealed partial class MsfpEngine : IDisposable
         try
         {
             await engine.LoadKeysAsync(ct).ConfigureAwait(false);
+            await engine.LoadDownloadsAsync(ct).ConfigureAwait(false);
             await engine.KeepsLogAsync(ct).ConfigureAwait(false);
         }
         catch

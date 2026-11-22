@@ -77,13 +77,16 @@ public sealed partial class MsfpEngine
             return HostRefusal(e, "describe");
         }
 
-        if (TrickplayOf(info.Trickplay) is not { } t)
+        // Sheets are re-encoded before they leave: without a SheetEncoder,
+        // there are none to give.
+        if (TrickplayOf(info.Trickplay) is not { } t || _cfg.SheetEncoder is null)
         {
             return Answer.Refuse(ProblemType.NotFound);
         }
 
         var ticket = Base64UrlText.Encode(RandomBytes(32));
-        AddImageTicket(ticket, new ImageTicket(TicketPreviews, p.Id, @in.Title, Now() + ImageTicketTime, c.Handle, t.Sheets));
+        AddImageTicket(ticket, new ImageTicket(TicketPreviews, p.Id, @in.Title, Now() + ImageTicketTime, c.Handle, t.Sheets,
+            t.Columns * t.TileWidth, t.Rows * t.TileHeight));
         var streamBase = StreamBase(req) + ticket + "/";
         return Answer.Ok(JsonOut.Object(o => o.Object("trickplay", w => WriteSheets(w, t, streamBase))));
     }
@@ -102,7 +105,7 @@ public sealed partial class MsfpEngine
         CancellationToken ct)
     {
         if (!PlainMediaRequest(request) || !MediaPath.TryParse(name, out var path) || path.Kind != MediaKind.Sheet || path.Sheet >= it.Sheets ||
-            _cfg.Media is not { } media)
+            _cfg.Media is null)
         {
             return StreamOutcome.NotFound;
         }
@@ -134,19 +137,8 @@ public sealed partial class MsfpEngine
 
         try
         {
-            var sink = new GuardedSink(output, ct);
-            Exception? error = null;
-            try
-            {
-                await media.ServeAsync(it.Handle, new MediaPath { Kind = MediaKind.Sheet, Sheet = path.Sheet, OfCopy = true }, null, sink, ct)
-                    .ConfigureAwait(false);
-            }
-            catch (Exception e)
-            {
-                error = e;
-            }
-
-            return sink.Started || ct.IsCancellationRequested ? StreamOutcome.Served : MediaError(output, error);
+            return await ServeSheetAsync(it.Handle, new MediaPath { Kind = MediaKind.Sheet, Sheet = path.Sheet, OfCopy = true },
+                it.SheetWidth, it.SheetHeight, output, ct).ConfigureAwait(false);
         }
         finally
         {

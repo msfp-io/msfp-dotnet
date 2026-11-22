@@ -574,6 +574,8 @@ public sealed partial class MsfpEngine
             _log.LogWarning(e, "msfp: a playback on a peer couldn't be noted");
         }
 
+        var past = new List<DownloadRecord>();
+        DownloadRecord? download = null;
         lock (_remotes)
         {
             _remotes[rm.View.Id] = rm;
@@ -585,11 +587,24 @@ public sealed partial class MsfpEngine
                     if (now - d.PlayedAt > Playback.LateReports)
                     {
                         _downloads.Remove(id);
+                        past.Add(new DownloadRecord { Id = id, Viewer = true });
                     }
                 }
 
-                _downloads[rm.View.Id] = new PastDownload(p.Id, rm.TheirId, request.Title, rm.View.Queue.Select(q => q.Title).ToList(), now);
+                var titles = rm.View.Queue.Select(q => q.Title).ToList();
+                _downloads[rm.View.Id] = new PastDownload(p.Id, rm.TheirId, request.Title, titles, now);
+                download = new DownloadRecord
+                {
+                    Id = rm.View.Id, Viewer = true, Peer = p.Id, TheirId = rm.TheirId, Title = request.Title, Queue = titles,
+                    PlayedAt = now.ToUniversalTime(),
+                };
             }
+        }
+
+        await DropDownloadsAsync(past, ct).ConfigureAwait(false);
+        if (download is not null)
+        {
+            await KeepDownloadAsync(download, ct).ConfigureAwait(false);
         }
 
         if (rm.View.CopyChanged)

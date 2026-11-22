@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Msfp.Protocol;
 
@@ -259,25 +258,28 @@ public sealed class DeliveryTests
         Assert.Equal(plays, s.Exchanges("play").Count);
     }
 
-    // A download's reads are paced at its speed cap, a play's are not.
+    // A download's reads are paced at its speed cap, on the engine's clock
+    // (its timers move it on: what was waited is counted, not waited); a
+    // play's are not.
     [Fact]
     public async Task DownloadPace()
     {
+        var clock = new TimerTime(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         var h = HostKit.FilmHost();
         var big = HostKit.Bytes(string.Concat(Enumerable.Repeat("0123456789", 30_000))); // 300,000 bytes
         h.Files["file"] = big;
         h.EditCopy(Film, 0, c => c with { Size = big.Length });
         var limits = new Limits { Streams = 1, Transcodes = 1, Downloads = 1, DownloadKbps = 800 }; // 100,000 bytes a second
-        using var s = await Sharing.StartAsync(h, c => c with { NewPairing = limits });
+        using var s = await Sharing.StartAsync(h, c => c with { NewPairing = limits }, clock: clock);
         async Task<TimeSpan> Read(string purpose)
         {
             var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film, Purpose = purpose, Delivery = Playback.DeliveryFile });
             try
             {
-                var start = Stopwatch.GetTimestamp();
+                var before = clock.Waited;
                 var o = await FetchAsync(s, pb.Id, new MediaPath { Kind = MediaKind.File });
                 Assert.Equal(big, o.Body);
-                return Stopwatch.GetElapsedTime(start);
+                return clock.Waited - before;
             }
             finally
             {
@@ -285,8 +287,96 @@ public sealed class DeliveryTests
             }
         }
 
-        Assert.True(await Read(Playback.PurposeDownload) >= TimeSpan.FromMilliseconds(1500), "a download of 300,000 bytes at 100,000 a second, too fast");
-        Assert.True(await Read(Playback.PurposePlay) <= TimeSpan.FromSeconds(1), "a play's reads paced");
+        // A second's worth at once, then nine tenths of the cap: 200,000
+        // bytes at 90,000 a second.
+        var waited = await Read(Playback.PurposeDownload);
+        Assert.True(waited >= TimeSpan.FromMilliseconds(2200) && waited <= TimeSpan.FromMilliseconds(2300), $"a download of 300,000 bytes at 100,000 a second waited {waited}");
+        Assert.Equal(TimeSpan.Zero, await Read(Playback.PurposePlay));
+    }
+
+    // A download's late reports count after a restart of either side: both
+    // keep it in their stores, 30 days after its play (playback section 7).
+    [Fact]
+    public async Task DownloadsAfterRestart()
+    {
+        var clock = new FakeTime(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        var h = HostKit.FilmHost();
+        var limits = new Limits { Streams = 1, Transcodes = 1, Downloads = 1 };
+        using var s = await Sharing.StartAsync(h, c => c with { NewPairing = limits }, clock: clock);
+        var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film, Purpose = Playback.PurposeDownload, Delivery = Playback.DeliveryFile });
+        static async Task<IReadOnlyList<DownloadRecord>> Kept(TestServer sv)
+        {
+            IReadOnlyList<DownloadRecord> got = [];
+            await sv.Store.ReadAsync(async tx => got = await ((IDownloadsTx)tx).DownloadsAsync(), CancellationToken.None);
+            return got;
+        }
+
+        var a = Assert.Single(await Kept(s.A));
+        var b = Assert.Single(await Kept(s.B));
+        Assert.True(!a.Viewer && a.Handle.Length > 0 && b.Viewer && b.Id == pb.Id, "the downloads kept");
+        Assert.Equal(TimeSpan.Zero, a.PlayedAt.Offset);
+        // Both restart, the download still live on A.
+        async Task RestartA()
+        {
+            s.A.Dispose();
+            s.A = await TestServer.StartAsync(s.Net, s.A.Address, "Server A", store: s.A.Store, clock: clock,
+                with: c => c with { Catalog = h, Playback = h, Media = h, SheetEncoder = new TestSheets(), NewPairing = limits });
+        }
+
+        await RestartA();
+        s.B.Dispose();
+        s.B = await TestServer.StartAsync(s.Net, s.B.Address, "Server B", store: s.B.Store, clock: clock);
+        Assert.Empty(s.A.Engine.Playbacks());
+        clock.Advance(TimeSpan.FromHours(48));
+        var at = DateTimeOffset.FromUnixTimeSeconds(clock.GetUtcNow().AddHours(-1).ToUnixTimeSeconds());
+        await s.B.Engine.ReportOfflineAsync(pb.Id, new OfflineReport(5_000, at));
+        await s.A.WaitAsync();
+        var last = h.Reports()[^1];
+        Assert.Equal((true, 5_000L, at), (last.Late, last.PositionMs, last.At));
+        Assert.Equal(at, Assert.Single(await Kept(s.A)).LastAt);
+        // Once more after a restart: what was kept (the at) still counts.
+        await RestartA();
+        var reports = h.Reports().Count;
+        await s.B.Engine.ReportOfflineAsync(pb.Id, new OfflineReport(1, at.AddMinutes(-1)));
+        await s.A.WaitAsync();
+        Assert.Equal(reports, h.Reports().Count);
+        // After 30 days, gone on both sides.
+        clock.Advance(TimeSpan.FromDays(30));
+        await s.A.Engine.RunOnceAsync();
+        Assert.Empty(await Kept(s.A));
+        Assert.Equal(MsfpError.NotFound, await ErrorOf(() => s.B.Engine.ReportOfflineAsync(pb.Id, new OfflineReport(0, clock.GetUtcNow()))));
+        s.B.Dispose();
+        s.B = await TestServer.StartAsync(s.Net, s.B.Address, "Server B", store: s.B.Store, clock: clock);
+        Assert.Empty(await Kept(s.B));
+    }
+
+    // A scan's cap counts the bytes sent: a read cut short counts only what
+    // went (media section 4.2).
+    [Fact]
+    public async Task ScanCapCountsSent()
+    {
+        var h = HostKit.FilmHost();
+        var big = new byte[Media.ScanCap + 1000];
+        h.Files["file"] = big;
+        h.EditCopy(Film, 0, c => c with { Size = big.Length });
+        using var s = await Sharing.StartAsync(h, c => c with { NewPairing = new Limits { Streams = 1, Transcodes = 1, ScansPerDay = 1 } });
+        var scan = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film, Purpose = Playback.PurposeScan });
+        // The host fails after 1,000 bytes of a read of the whole cap.
+        h.Serve = async (_, range, output, ct) =>
+        {
+            output.Start(206, "video/mp4", range!.Last - range.First + 1, "");
+            await output.WriteAsync(big.AsMemory(0, 1000), ct);
+            throw new IOException("the disk failed");
+        };
+        var file = StreamOf(s);
+        var cut = await HostKit.GetFullAsync(s.A, file, "GET", "Range", "bytes=0-");
+        Assert.Equal((206, 1000), (cut.Status, cut.Body.Length));
+        // Relayed, a file cut short fails on the viewer's side.
+        await Assert.ThrowsAsync<IOException>(() => s.B.Engine.FetchAsync(scan.Id, new MediaPath { Kind = MediaKind.File }, "bytes=0-1999", new MemorySink()));
+        h.Serve = null;
+        var o = await HostKit.GetFullAsync(s.A, file, "GET", "Range", "bytes=0-");
+        Assert.Equal((206, Media.ScanCap - 2000), (o.Status, o.Body.Length)); // 1,000 bytes sent twice
+        Assert.Equal(416, await HostKit.GetAsync(s.A, file, "GET", "Range", "bytes=0-0"));
     }
 
     // Scans: a range of the file only, within 32 MiB per ticket, cut at the
@@ -418,6 +508,15 @@ public sealed class DeliveryTests
         }
 
         Assert.Equal(405, await HostKit.GetAsync(s.A, streamBase + "trickplay/0", "HEAD"));
+        // The owning side re-encodes the host's sheets: only their pixels
+        // leave; one outside the layout isn't sent.
+        h.Files["trickplay/0"] = [.. Sheets.Jpeg20x10, .. HostKit.Bytes("trailing bytes")];
+        h.Files["trickplay/1"] = Sheets.Jpeg20x11;
+        var reencoded = await HostKit.GetFullAsync(s.A, streamBase + "trickplay/0");
+        Assert.Equal((200, "image/jpeg"), (reencoded.Status, reencoded.Header("Content-Type")));
+        Assert.Equal(Sheets.Jpeg20x10, reencoded.Body.ToArray());
+        Assert.Equal(500, await HostKit.GetAsync(s.A, streamBase + "trickplay/1"));
+        h.Files["trickplay/0"] = h.Files["trickplay/1"] = Sheets.Jpeg20x10;
         foreach (var (body, want) in new[]
         {
             ("{\"title\":\"movie/tmdb/949\"}", 400), ("{\"title\":\"series/tmdb/1\",\"versionId\":\"x\"}", 400),

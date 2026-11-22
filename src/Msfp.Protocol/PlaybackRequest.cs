@@ -145,9 +145,22 @@ public static partial class Playback
     /// 4 (<see cref="PlayRequest.TrackIdsOk"/>).
     /// </summary>
     /// <exception cref="PlayRefusal">The request is refused (400 invalid-request).</exception>
-    public static PlayRequest ReadPlay(ReadOnlySpan<byte> body, Func<string, bool>? playable = null)
+    public static PlayRequest ReadPlay(ReadOnlySpan<byte> body, Func<string, bool>? playable = null) => ReadPlay(body, playable, out _);
+
+    /// <summary>
+    /// Reads play's request as <see cref="ReadPlay(ReadOnlySpan{byte}, Func{string, bool}?)"/>
+    /// does, and gives the request's object as read: the members of a content
+    /// part (music's queue: <see cref="Music.TryCheckQueue"/>) are read from
+    /// it, the body parsed once.
+    /// </summary>
+    /// <param name="body">The request's body.</param>
+    /// <param name="playable">Whether play takes a key; null: <see cref="TitleKey.TryParse"/>'s.</param>
+    /// <param name="members">The request's object, as read.</param>
+    /// <exception cref="PlayRefusal">The request is refused (400 invalid-request).</exception>
+    public static PlayRequest ReadPlay(ReadOnlySpan<byte> body, Func<string, bool>? playable, out JsonObject members)
     {
         var o = RequestObject(body, PlayMembers);
+        members = o;
         playable ??= t => TitleKey.TryParse(t, out var k) && k.Playable;
         if (Text(o, "title") is not { } title || !playable(title))
         {
@@ -602,7 +615,7 @@ public sealed record TranscodeTargets
 }
 
 /// <summary>
-/// play's request, as <see cref="Playback.ReadPlay"/> reads it and as a
+/// play's request, as <see cref="Playback.ReadPlay(ReadOnlySpan{byte}, Func{string, bool}?)"/> reads it and as a
 /// viewer's server sends it (<see cref="ToJson"/> leaves out what is
 /// empty). Purpose is <see cref="Playback.PurposePlay"/> when the request
 /// says none. Music's queue is music's.

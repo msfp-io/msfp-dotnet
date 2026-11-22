@@ -7,7 +7,7 @@ using Msfp.Stores;
 namespace Msfp.Tests;
 
 /// <summary>A clock the test sets.</summary>
-internal sealed class FakeTime(long unix) : TimeProvider
+internal class FakeTime(long unix) : TimeProvider
 {
     private DateTimeOffset _now = DateTimeOffset.FromUnixTimeSeconds(unix);
 
@@ -33,6 +33,53 @@ internal sealed class FakeTime(long unix) : TimeProvider
         {
             _now += d;
         }
+    }
+}
+
+/// <summary>
+/// A FakeTime whose timers fire at once, moving it on (msfp-go's
+/// timerClock): what the engine waited is counted, not waited.
+/// </summary>
+internal sealed class TimerTime(long unix) : FakeTime(unix)
+{
+    private TimeSpan _waited;
+
+    public TimeSpan Waited
+    {
+        get
+        {
+            lock (this)
+            {
+                return _waited;
+            }
+        }
+    }
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+    {
+        if (dueTime != Timeout.InfiniteTimeSpan)
+        {
+            lock (this)
+            {
+                _waited += dueTime;
+            }
+
+            Advance(dueTime);
+            ThreadPool.QueueUserWorkItem(_ => callback(state));
+        }
+
+        return new Fired();
+    }
+
+    private sealed class Fired : ITimer
+    {
+        public bool Change(TimeSpan dueTime, TimeSpan period) => false;
+
+        public void Dispose()
+        {
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
 

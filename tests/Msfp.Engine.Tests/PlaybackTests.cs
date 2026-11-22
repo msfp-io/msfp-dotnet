@@ -129,6 +129,12 @@ public sealed class PlaybackTests
             (streamBase + "trickplay/0", "GET", [], 404), (streamBase + "subtitles/s0/01", "GET", [], 404),
             (streamBase + "subtitles/s0/0", "GET", [], 200), (streamBase + "pictures/s0/0", "GET", [], 404),
             ("/api/v1/stream/" + new string('A', 43) + "/master.m3u8", "GET", [], 404),
+            // HEAD on a ticket never given, of every media form: 405 still.
+            ("/api/v1/stream/" + new string('A', 43) + "/master.m3u8", "HEAD", [], 405),
+            ("/api/v1/stream/" + new string('A', 43) + "/file", "HEAD", [], 405),
+            ("/api/v1/stream/" + new string('A', 43) + "/image", "HEAD", [], 405),
+            ("/api/v1/stream/" + new string('A', 43) + "/queue/1/seg0.m4s", "PUT", [], 405),
+            ("/api/v1/stream/" + new string('A', 43) + "/not/a/media/form", "HEAD", [], 404),
         };
         foreach (var c in cases)
         {
@@ -250,6 +256,62 @@ public sealed class PlaybackTests
         Assert.Equal(EndReason.PairingEnded, await Reason());
         Assert.Equal(MsfpError.NotFound, await FetchErrorAsync(s.B, pb.Id, new MediaPath { Kind = MediaKind.Master }));
         Assert.Equal(5, h.Stops().Count);
+    }
+
+    // Every fetch of a playlist under one ticket gives the same playlist
+    // (media section 3.1): the first served is kept, whatever the host makes
+    // after; an ended ticket's HEAD is 405 still.
+    [Fact]
+    public async Task PlaylistSameEachFetch()
+    {
+        var h = HostKit.FilmHost();
+        using var s = await Sharing.StartAsync(h);
+        var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film });
+        var url = ((string)JsonNode.Parse(s.Exchanges("play")[^1].ResponseBody)!["stream"]!["url"]!)[s.A.Address.Length..];
+        var first = await HostKit.GetFullAsync(s.A, url);
+        Assert.Equal((200, HostKit.Master), (first.Status, first.Text()));
+        h.Files["master.m3u8"] = HostKit.Bytes("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nother.m3u8\n");
+        var again = await HostKit.GetFullAsync(s.A, url);
+        Assert.Equal((200, HostKit.Master), (again.Status, again.Text()));
+        await s.B.Engine.StopAsync(pb.Id, -1);
+        await s.A.WaitAsync();
+        Assert.Equal(405, await HostKit.GetAsync(s.A, url, "HEAD"));
+        Assert.Equal(404, await HostKit.GetAsync(s.A, url));
+    }
+
+    // The owning side re-encodes the host's preview sheets under a
+    // playback's ticket: only their pixels leave; one outside the layout,
+    // or not a JPEG, isn't sent (video section 6.2). Without a
+    // SheetEncoder, none are offered.
+    [Fact]
+    public async Task SheetsReencoded()
+    {
+        var h = HostKit.FilmHost();
+        h.EditCopy(Film, 0, c => c with { Previews = true });
+        h.Info["movie/tmdb/949#0"] = new CopyInfo { Trickplay = new Trickplay { TileWidth = 10, TileHeight = 10, Columns = 2, Rows = 1, IntervalMs = 10_000, TileCount = 4 } };
+        h.Files["trickplay/0"] = [.. Sheets.Jpeg20x10, .. HostKit.Bytes("trailing bytes")];
+        h.Files["trickplay/1"] = Sheets.Jpeg21x10;
+        using (var s = await Sharing.StartAsync(h))
+        {
+            var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film });
+            Assert.NotNull(pb.Trickplay);
+            var url = ((string)JsonNode.Parse(s.Exchanges("play")[^1].ResponseBody)!["stream"]!["url"]!)[s.A.Address.Length..];
+            var streamBase = url[..^"master.m3u8".Length];
+            var sheet = await HostKit.GetFullAsync(s.A, streamBase + "trickplay/0");
+            Assert.Equal((200, "image/jpeg"), (sheet.Status, sheet.Header("Content-Type")));
+            Assert.Equal(Sheets.Jpeg20x10, sheet.Body.ToArray());
+            Assert.Equal(500, await HostKit.GetAsync(s.A, streamBase + "trickplay/1"));
+            h.Files["trickplay/1"] = Sheets.Png20x10;
+            Assert.Equal(500, await HostKit.GetAsync(s.A, streamBase + "trickplay/1"));
+        }
+
+        using (var s = await Sharing.StartAsync(h, c => c with { SheetEncoder = null }))
+        {
+            await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film });
+            Assert.DoesNotContain("trickplay", s.Exchanges("play")[^1].ResponseBody, StringComparison.Ordinal);
+            Assert.Equal(404, await CallAsync(s, "previews", "{\"title\":\"movie/tmdb/949\",\"versionId\":\"" +
+                ((VideoTitle)(await s.PeerTitlesAsync())[Film]).Copies![0].Id + "\"}"));
+        }
     }
 
     // After a restart, the playbacks left on peers are stopped.

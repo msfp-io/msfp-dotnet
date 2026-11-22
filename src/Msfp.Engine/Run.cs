@@ -142,7 +142,7 @@ public sealed partial class MsfpEngine
         }
 
         await ReadDueAsync(true, ct).ConfigureAwait(false);
-        ExpirePlaybacks(true);
+        await ExpirePlaybacksAsync(true, ct).ConfigureAwait(false);
         await TickAsync(ct).ConfigureAwait(false);
     }
 
@@ -154,7 +154,7 @@ public sealed partial class MsfpEngine
         await ReachAndAnnounceAsync(ct).ConfigureAwait(false);
         await ScheduledHellosAsync(ct).ConfigureAwait(false);
         await ReadDueAsync(false, ct).ConfigureAwait(false);
-        ExpirePlaybacks(false);
+        await ExpirePlaybacksAsync(false, ct).ConfigureAwait(false);
         TellWatched();
         // The groups looked at every 30 seconds for a sync (MSFP groups
         // section 6); a clock set back looks at once.

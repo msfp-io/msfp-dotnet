@@ -451,7 +451,8 @@ public sealed partial class MsfpEngine
                 var n = await body.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, left)), ct).ConfigureAwait(false);
                 if (n == 0)
                 {
-                    break;
+                    // Fewer bytes than its length: cut, never a whole file.
+                    throw new IOException("msfp: a relayed file ended short");
                 }
 
                 await output.WriteAsync(buffer.AsMemory(0, n), ct).ConfigureAwait(false);

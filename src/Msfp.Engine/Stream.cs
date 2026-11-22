@@ -212,6 +212,12 @@ public sealed partial class MsfpEngine
     /// ETag the engine gives it (<see cref="IETagSink"/>, which a sink must
     /// implement: the file's answers carry their copy's ETag), and
     /// Allow: GET to a 405 (HEAD and every method but GET get one).
+    /// The 405 is the engine's on every media URL form
+    /// (<see cref="MediaPath.TryParse"/>, and <c>&lt;ticket&gt;/image</c>),
+    /// whatever the ticket: live, ended or never given (MSFP media section
+    /// 2.2); Fallback is given GETs only there. A host that answers its own
+    /// clients' HEAD (a copy presented as a file) does so on a route of its
+    /// own.
     /// </summary>
     /// <param name="request">The request, its body unread.</param>
     /// <param name="output">Where the answer goes.</param>
@@ -242,6 +248,13 @@ public sealed partial class MsfpEngine
             return StreamOutcome.Fallback;
         }
 
+        // HEAD and the rest get 405 on every media URL, whatever its ticket:
+        // live, ended, or never given (media section 2.2).
+        if ((name == "image" || MediaPath.TryParse(name, out _)) && MediaMethod(request, output) is { } refused)
+        {
+            return refused;
+        }
+
         if (await ServeImageAsync(request, ticket, name, output, ct).ConfigureAwait(false) is { } served)
         {
             return served;
@@ -261,9 +274,9 @@ public sealed partial class MsfpEngine
             return StreamOutcome.Fallback;
         }
 
-        if (MediaMethod(request, output) is { } refused)
+        if (MediaMethod(request, output) is { } other)
         {
-            return refused;
+            return other;
         }
 
         if (!PlainMediaRequest(request) || !MediaPathOf(name, pb, out var media) || _cfg.Media is null ||
@@ -319,6 +332,8 @@ public sealed partial class MsfpEngine
                             return await ServeFileAsync(request, pb, media, output, token).ConfigureAwait(false);
                         case MediaKind.Subtitles or MediaKind.Ass or MediaKind.Pictures or MediaKind.Font:
                             return await ServeSmallAsync(pb, media, output, token).ConfigureAwait(false);
+                        case MediaKind.Sheet:
+                            return await ServeSheetAsync(pb.Handle, media, pb.SheetWidth, pb.SheetHeight, output, token).ConfigureAwait(false);
                     }
 
                     var sink = new GuardedSink(output, token, pb.Pace);
@@ -461,6 +476,10 @@ public sealed partial class MsfpEngine
                     return Unsatisfied();
                 }
 
+                // The range is held against the cap while it is served, so
+                // that two fetches at once never pass it together; what wasn't
+                // sent (a fetch cut, a host's failure) is given back after:
+                // the cap counts the bytes sent (media section 4.2).
                 pb.ScanSent += end - start + 1;
                 pb.ScanReads++;
             }
@@ -473,6 +492,7 @@ public sealed partial class MsfpEngine
             }
         }
 
+        long unsent = 0; // of a scan's range held, what wasn't sent
         try
         {
             var ranged = h.Length > 0;
@@ -487,6 +507,8 @@ public sealed partial class MsfpEngine
             {
                 error = e;
             }
+
+            unsent = sink.Left;
 
             if (sink.Started || ct.IsCancellationRequested)
             {
@@ -508,6 +530,7 @@ public sealed partial class MsfpEngine
                 lock (_plays)
                 {
                     pb.ScanReads--;
+                    pb.ScanSent -= unsent;
                 }
             }
         }
@@ -554,8 +577,25 @@ public sealed partial class MsfpEngine
     // renditions named by the copy's audio track IDs only. One the host made
     // outside it is refused, with a warning, rather than refused by every
     // peer.
+    //
+    // The first served of each name is kept and served again on every fetch
+    // under the ticket: the same playlist on every fetch (section 3.1),
+    // whatever the host makes the next time. At most PlaylistsKept are kept,
+    // of PlaylistBytesKept bytes together; past that, each is checked only.
     private async Task<StreamOutcome> ServePlaylistAsync(LivePlayback pb, MediaPath path, IResponseSink output, CancellationToken ct)
     {
+        var key = path.Entry.ToString(CultureInfo.InvariantCulture) + "/" + path.Kind + "/" + path.Name;
+        byte[]? first;
+        lock (_plays)
+        {
+            first = pb.Playlists.GetValueOrDefault(key);
+        }
+
+        if (first is not null)
+        {
+            return await WritePlaylistAsync(output, first, ct).ConfigureAwait(false);
+        }
+
         var buffer = new BoundedSink(Media.MaxPlaylist);
         Exception? error = null;
         try
@@ -596,9 +636,102 @@ public sealed partial class MsfpEngine
             return StreamOutcome.Served;
         }
 
+        lock (_plays)
+        {
+            if (pb.Playlists.TryGetValue(key, out var other))
+            {
+                kept = other; // another fetch kept it meanwhile
+            }
+            else if (pb.Playlists.Count < PlaylistsKept && pb.PlaylistBytes + kept.Length <= PlaylistBytesKept)
+            {
+                pb.Playlists[key] = kept;
+                pb.PlaylistBytes += kept.Length;
+            }
+        }
+
+        return await WritePlaylistAsync(output, kept, ct).ConfigureAwait(false);
+    }
+
+    // Bounds of the playlists a playback keeps, to serve them the same.
+    private const int PlaylistsKept = 16;
+    private const int PlaylistBytesKept = 4 << 20;
+
+    // Answers with a checked playlist.
+    private static async Task<StreamOutcome> WritePlaylistAsync(IResponseSink output, byte[] kept, CancellationToken ct)
+    {
         output.Start(200, Playback.HlsType, kept.Length, "");
         await output.WriteAsync(kept, ct).ConfigureAwait(false);
         return StreamOutcome.Served;
+    }
+
+    // Serves a preview sheet the host made, checked (a JPEG within the
+    // layout, video section 6.2) and re-encoded with the SheetEncoder, so
+    // that only its pixels leave: whatever else the host's file holds
+    // (metadata, trailing bytes) stays here. One outside the layout isn't
+    // sent. Sheets are offered only with a SheetEncoder (Register, previews).
+    private async Task<StreamOutcome> ServeSheetAsync(string handle, MediaPath path, int width, int height, IResponseSink output,
+        CancellationToken ct)
+    {
+        if (_cfg.SheetEncoder is not { } encoder)
+        {
+            return StreamOutcome.NotFound;
+        }
+
+        await _sheetGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var buffer = new BoundedSink(Protocol.Trickplay.MaxSheetBytes);
+            Exception? error = null;
+            try
+            {
+                await _cfg.Media!.ServeAsync(handle, path, null, buffer, ct).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                error = e;
+            }
+
+            if (!buffer.Started)
+            {
+                return MediaError(output, error);
+            }
+
+            if (error is not null || buffer.Over || buffer.Status != 200)
+            {
+                _log.LogWarning(error, "msfp: the host's preview sheet couldn't be served: {Status}", buffer.Status);
+                output.Start(500, "", 0, "");
+                return StreamOutcome.Served;
+            }
+
+            var body = buffer.Body.ToArray();
+            byte[]? sheet = null;
+            if (Jpeg.Fits(body, width, height))
+            {
+                try
+                {
+                    sheet = await encoder.ReencodeAsync(body, width, height, ct).ConfigureAwait(false);
+                }
+                catch (Exception e) when (e is not OperationCanceledException)
+                {
+                    error = e;
+                }
+            }
+
+            if (sheet is null)
+            {
+                _log.LogWarning(error, "msfp: the host's preview sheet isn't a JPEG within its layout; it isn't sent");
+                output.Start(500, "", 0, "");
+                return StreamOutcome.Served;
+            }
+
+            output.Start(200, "image/jpeg", sheet.Length, "");
+            await output.WriteAsync(sheet, ct).ConfigureAwait(false);
+            return StreamOutcome.Served;
+        }
+        finally
+        {
+            _sheetGate.Release();
+        }
     }
 
     // For what is read whole: its bound as read, how it is rebuilt or

@@ -25,8 +25,9 @@ public sealed partial class MsfpEngine
     // What a short ticket opens, for one peer, for 10 minutes: of kind
     // image, one title's image, while the library it was sent in is still
     // shared with it; of kind previews, one copy's sheets (its handle, their
-    // count), while the title is still sent to it.
-    private sealed record ImageTicket(string Kind, string Peer, string Key, DateTimeOffset Expires, string Handle = "", int Sheets = 0);
+    // count and layout's full sheet), while the title is still sent to it.
+    private sealed record ImageTicket(string Kind, string Peer, string Key, DateTimeOffset Expires, string Handle = "", int Sheets = 0,
+        int SheetWidth = 0, int SheetHeight = 0);
 
     // The kinds of short tickets.
     private const string TicketImage = "image";

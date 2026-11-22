@@ -83,7 +83,13 @@ public sealed record MsfpConfig
     /// <summary>The limits a new pairing starts with. Default: 2 streams, 1 transcode, no bitrate cap.</summary>
     public Limits? NewPairing { get; init; }
 
-    /// <summary>The time; the system's by default. Tests give a fake one and make time's work happen.</summary>
+    /// <summary>
+    /// The time; the system's by default. Tests give a fake one and make time's
+    /// work happen. Where the engine waits on time inside a request (a
+    /// download's pace), it waits with this provider's timers
+    /// (<see cref="System.TimeProvider.CreateTimer"/>): a fake one whose
+    /// timers move it on paces without waiting.
+    /// </summary>
     public TimeProvider? TimeProvider { get; init; }
 
     /// <summary>

@@ -76,6 +76,11 @@ internal sealed class LivePlayback
 
     public int Sheets { get; set; }
 
+    /// <summary>A sheet's bound: its layout's full sheet.</summary>
+    public int SheetWidth { get; set; }
+
+    public int SheetHeight { get; set; }
+
     public int Fonts { get; set; }
 
     /// <summary>The copy's audio track IDs.</summary>
@@ -106,6 +111,11 @@ internal sealed class LivePlayback
     public long ScanSent { get; set; }
 
     public int ScanReads { get; set; }
+
+    /// <summary>The playlists served, by entry/name: served the same again (media section 3.1).</summary>
+    public Dictionary<string, byte[]> Playlists { get; } = new(StringComparer.Ordinal);
+
+    public int PlaylistBytes { get; set; }
 }
 
 /// <summary>
@@ -319,13 +329,14 @@ internal sealed record OfferedCopy
 /// its fetches together; it slows the body, never refuses. It lets a
 /// second's worth through at once and refills at nine tenths of the cap, so
 /// that a second's burst and nine seconds' refill stay within ten seconds'
-/// worth.
+/// worth. It follows the engine's clock (Config.TimeProvider), and waits
+/// with its timers: a test's clock paces without waiting.
 /// </summary>
-internal sealed class Pacer(int kbps)
+internal sealed class Pacer(int kbps, TimeProvider time)
 {
     private readonly double _rate = kbps * 1000.0 / 8; // bytes per second
     private double _tokens = kbps * 1000.0 / 8;
-    private long _last = System.Diagnostics.Stopwatch.GetTimestamp();
+    private DateTimeOffset _last = time.GetUtcNow();
 
     /// <summary>Waits until n bytes may go, or ct is cancelled.</summary>
     public Task TakeAsync(int n, CancellationToken ct)
@@ -333,15 +344,18 @@ internal sealed class Pacer(int kbps)
         double debt;
         lock (this)
         {
-            var now = System.Diagnostics.Stopwatch.GetTimestamp();
-            var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(_last, now).TotalSeconds;
-            _tokens = Math.Min(_rate, _tokens + (elapsed * _rate * 0.9));
-            _last = now;
+            var now = time.GetUtcNow();
+            if (now > _last)
+            {
+                _tokens = Math.Min(_rate, _tokens + ((now - _last).TotalSeconds * _rate * 0.9));
+                _last = now;
+            }
+
             _tokens -= n;
             debt = -_tokens;
         }
 
-        return debt <= 0 ? Task.CompletedTask : Task.Delay(TimeSpan.FromSeconds(debt / (_rate * 0.9)), ct);
+        return debt <= 0 ? Task.CompletedTask : Task.Delay(TimeSpan.FromSeconds(debt / (_rate * 0.9)), time, ct);
     }
 }
 
@@ -352,7 +366,8 @@ internal sealed class Pacer(int kbps)
 // the pool's limits counted in one step with the host's start (Admit), the
 // playbacks' states, tickets and endings, and a download's late reports.
 // Playbacks live in memory: after a restart, a peer's progress gets 410 and
-// it starts again.
+// it starts again; downloads alone are kept in the store for their late
+// reports (Downloads.cs).
 public sealed partial class MsfpEngine
 {
     // Times of a playback (playback section 6.3): expired playbacks are
@@ -687,9 +702,10 @@ public sealed partial class MsfpEngine
 
         // 1. The request, as MSFP reads it: a key of a content part on.
         Protocol.PlayRequest @in;
+        JsonObject members;
         try
         {
-            @in = Playback.ReadPlay(req.Body, t => KeyOn(p, t, out var tk) && tk.Playable);
+            @in = Playback.ReadPlay(req.Body, t => KeyOn(p, t, out var tk) && tk.Playable, out members);
         }
         catch (PlayRefusal e)
         {
@@ -700,22 +716,9 @@ public sealed partial class MsfpEngine
         var video = k.Part == Versions.PartVideo;
         var audioOnly = k.Part == Versions.PartMusic;
         IReadOnlyList<string> queue = [];
-        if (audioOnly)
+        if (audioOnly && !Music.TryCheckQueue(@in.Title, members["queue"], out queue))
         {
-            JsonNode? q;
-            try
-            {
-                q = JsonNode.Parse(req.Body)?["queue"];
-            }
-            catch (System.Text.Json.JsonException)
-            {
-                return Answer.Refuse(ProblemType.Invalid);
-            }
-
-            if (!Music.TryCheckQueue(@in.Title, q, out queue))
-            {
-                return Answer.Refuse(ProblemType.Invalid);
-            }
+            return Answer.Refuse(ProblemType.Invalid);
         }
 
         if (!video)
@@ -894,6 +897,14 @@ public sealed partial class MsfpEngine
             return Answer.Refuse(ProblemType.Internal);
         }
 
+        if (pb.Purpose == Playback.PurposeDownload)
+        {
+            await KeepDownloadAsync(new DownloadRecord
+            {
+                Id = pb.Id, Peer = pb.Peer, Title = pb.Title, Queue = [.. pb.Queue], Handle = pb.Handle, PlayedAt = pb.Started.ToUniversalTime(),
+            }, ct).ConfigureAwait(false);
+        }
+
         // The pairing ended, or the library is no longer offered, while it
         // started: it ends at once, saying which.
         try
@@ -1064,7 +1075,7 @@ public sealed partial class MsfpEngine
         pb.Entries[0] = new EntryServed(s.Protocol, c.Size, c.Etag);
         if (@in.Purpose == Playback.PurposeDownload && slot.Limits.DownloadKbps > 0)
         {
-            pb.Pace = new Pacer(slot.Limits.DownloadKbps);
+            pb.Pace = new Pacer(slot.Limits.DownloadKbps, _time);
         }
 
         if (!audioOnly)
@@ -1074,9 +1085,13 @@ public sealed partial class MsfpEngine
 
         if (!audioOnly && @in.Purpose != Playback.PurposeScan)
         {
-            if (TrickplayOf(info.Trickplay) is { } t && c.Previews && @in.Purpose == Playback.PurposePlay)
+            // Sheets are re-encoded before they leave: without a SheetEncoder,
+            // none are offered.
+            if (TrickplayOf(info.Trickplay) is { } t && c.Previews && @in.Purpose == Playback.PurposePlay && _cfg.SheetEncoder is not null)
             {
                 pb.Sheets = t.Sheets;
+                pb.SheetWidth = t.Columns * t.TileWidth;
+                pb.SheetHeight = t.Rows * t.TileHeight;
             }
 
             var hasAss = false;
@@ -1239,11 +1254,12 @@ public sealed partial class MsfpEngine
     // past their life (a download's 24 hours, a scan's 10 minutes) and those
     // longer than LongestPlayback (a download's 24 hours stand instead);
     // forgets endings past their time.
-    private void ExpirePlaybacks(bool force)
+    private async Task ExpirePlaybacksAsync(bool force, CancellationToken ct)
     {
         var now = Now();
         var expired = new List<LivePlayback>();
         var tooLong = new List<LivePlayback>();
+        var past = new List<DownloadRecord>();
         lock (_plays)
         {
             if (!force && now - _plays.Expired < ExpiryEvery)
@@ -1281,9 +1297,15 @@ public sealed partial class MsfpEngine
                 if (ended.Purpose == Playback.PurposeDownload ? now - ended.PlayedAt > Playback.LateReports : now - ended.At >= EndedKept)
                 {
                     _plays.Ended.Remove(id);
+                    if (ended.Purpose == Playback.PurposeDownload)
+                    {
+                        past.Add(new DownloadRecord { Id = id });
+                    }
                 }
             }
         }
+
+        await DropDownloadsAsync(past, ct).ConfigureAwait(false);
 
         foreach (var pb in tooLong)
         {
@@ -1375,18 +1397,40 @@ public sealed partial class MsfpEngine
         if (outcome.Effect is Playback.EffectRecorded or Playback.EffectRecordedAndEnded && _cfg.Playback is { } playback)
         {
             var handle = "";
+            DownloadRecord? kept = null; // a download's, its latest at kept across restarts
             lock (_plays)
             {
                 if (pb is not null)
                 {
                     pb.LastAt = outcome.At;
                     handle = pb.Handle;
+                    if (pb.Purpose == Playback.PurposeDownload)
+                    {
+                        kept = new DownloadRecord
+                        {
+                            Id = pb.Id, Peer = pb.Peer, Title = pb.Title, Queue = [.. pb.Queue], Handle = pb.Handle,
+                            PlayedAt = pb.Started.ToUniversalTime(), LastAt = outcome.At.ToUniversalTime(),
+                        };
+                    }
                 }
                 else if (_plays.Ended.TryGetValue(r.Id, out var ended))
                 {
                     ended.LastAt = outcome.At;
                     handle = ended.Handle;
+                    if (ended.Purpose == Playback.PurposeDownload)
+                    {
+                        kept = new DownloadRecord
+                        {
+                            Id = r.Id, Peer = ended.Peer, Title = ended.Title, Queue = [.. ended.Queue], Handle = ended.Handle,
+                            PlayedAt = ended.PlayedAt.ToUniversalTime(), LastAt = outcome.At.ToUniversalTime(),
+                        };
+                    }
                 }
+            }
+
+            if (kept is not null)
+            {
+                await KeepDownloadAsync(kept, ct).ConfigureAwait(false);
             }
 
             var hr = new Report
