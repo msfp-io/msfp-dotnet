@@ -17,6 +17,7 @@
     <!-- The example's folder, tested here (FolderTests.cs). -->
     <Compile Include="../../examples/ShareFolder/Folder.cs" Link="ShareFolder/Folder.cs" />
     <Compile Include="../../examples/ShareFolder/Probes.cs" Link="ShareFolder/Probes.cs" />
+    <Compile Include="../../examples/ShareFolder/Sniff.cs" Link="ShareFolder/Sniff.cs" />
     <None Include="../Msfp.Protocol.Tests/testdata/**" LinkBase="testdata" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

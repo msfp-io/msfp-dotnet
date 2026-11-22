@@ -12,7 +12,7 @@
 // every interface. Then type "code" in the first, "redeem <code>" in the
 // second, compare the fingerprints both print, and "accept <id>" in the
 // first. With ffprobe installed, copies are described from their files
-// (length, bitrate, picture, audio tracks); with ffmpeg, preview sheets and
+// (length, picture, audio tracks: codecs, colour, Dolby Vision); with ffmpeg, preview sheets and
 // JPEG images are re-encoded (.NET has no JPEG codec: without it, no
 // previews are offered or relayed). The commands:
 //
@@ -44,7 +44,7 @@
 //   download <id> <key>  download a peer's title: prints the URL of the file to save (a download
 //                      lives 24 hours, its late reports 30 days)
 //   late <download> <position ms>  send a download's late report (watched offline)
-//   previews <id> <key>  fetch a peer's film's previews before it plays
+//   previews <id> <key>  fetch a peer's film's previews, sheet by sheet
 //   stop <playback>    end a playback
 //   rescan             tell the engine the folder changed
 //   group-create <name>          found a group
@@ -247,7 +247,7 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
                 };
                 if (limits.ScansPerDay > 0)
                 {
-                    limits.ScanBytes = Playback.ScanBytesRecommended; // a scan reads at most 32 MiB
+                    limits.ScanBytes = Playback.ScanBytesRecommended; // a scan reads at most 32 MiB: the scan's answer says so
                 }
 
                 await engine.SetLimitsAsync(lw.Length > 0 ? lw[0] : "", limits);
@@ -269,8 +269,7 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
                 break;
             case "previews":
                 var pk = arg.Split(' ', 2);
-                var pv = await PreviewsOfAsync(pk[0], pk.Length > 1 ? pk[1] : "");
-                Console.WriteLine($"{pv.Sheets.Count} sheets of {pv.Trickplay.TileCount} tiles");
+                Console.WriteLine($"{await PreviewsOfAsync(pk[0], pk.Length > 1 ? pk[1] : "")} sheets fetched");
                 break;
             case "want":
                 var libraries = await engine.TheirLibrariesAsync(arg);
@@ -407,17 +406,23 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
 await stop.CancelAsync();
 await app.StopAsync();
 
-// The previews of a peer's title's best copy.
-async Task<PreviewSheets> PreviewsOfAsync(string peer, string key)
+// Fetches the seek-bar previews of a peer's title's first copy, sheet by
+// sheet: someone opened it (MSFP video section 5.5).
+async Task<int> PreviewsOfAsync(string peer, string key)
 {
     Msfp.Title? t = null;
     await store.ReadAsync(async tx => t = await tx.PeerTitleAsync(peer, key), default);
-    if (t is not Msfp.VideoTitle v || v.BestCopy() is not { PreviewLayout: not null } c) // P17b
+    if (t is not Msfp.VideoTitle v || v.BestCopy() is not { PreviewLayout: { } layout } c)
     {
         throw new MsfpException(MsfpError.NotFound);
     }
 
-    return await engine.PreviewsAsync(peer, key, c.Id);
+    for (var n = 0; n < layout.Sheets; n++)
+    {
+        await engine.PreviewSheetAsync(peer, key, c.Id, n);
+    }
+
+    return layout.Sheets;
 }
 
 MsfpRequest Request(HttpContext ctx, Stream body) => new()

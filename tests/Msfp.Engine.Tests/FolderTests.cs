@@ -54,19 +54,20 @@ public sealed class FolderTests : IDisposable
         Assert.Equal(8, keys.Count);
         Assert.Equal(keys.Order(StringComparer.Ordinal), keys);
         var heat = byKey["movie/tmdb/949"].Copies![0];
-        Assert.Equal((4L, "matroska", "Heat (1995) [tmdbid-949].mkv", true), (heat.Size, heat.MediaType, heat.Id, heat.PreviewLayout is not null)); // P17b
-        Assert.NotEmpty(heat.ETag);
+        Assert.Equal((4L, "video/matroska", "Heat (1995) [tmdbid-949].mkv", 12), (heat.Size, heat.MediaType, heat.Id, heat.PreviewLayout?.TileCount));
+        Assert.True(Playback.Id(heat.ETag));
         Assert.Equal("fr", Assert.Single(heat.SubtitleTracks).Language);
         Assert.Equal(Path.Combine("Alien (1979) [tmdbid-348]", "Alien.mp4"), byKey["movie/tmdb/348"].Copies![0].Id);
         Assert.Equal(new Place { Season = 1, Episode = 1 }, byKey["series/tmdb/95396/e1949537"].Place);
         var extra = byKey.Single(kv => kv.Key.StartsWith("movie/tmdb/348/x/", StringComparison.Ordinal)).Value;
-        Assert.Equal(("extra", "trailer", "Teaser"), (extra.Kind, extra.ExtraType, extra.Name));
+        Assert.Equal(("extra", "trailer", null), (extra.Kind, extra.ExtraType, extra.Name)); // an extra carries no name
         var local = byKey.Single(kv => kv.Key.StartsWith("movie/local/", StringComparison.Ordinal)).Value;
         Assert.Equal(("Holidays", 2019, true), (local.Name, local.Year, local.Image));
         Assert.Equal("picture", Encoding.UTF8.GetString(await f.ImageAsync(local.Key, Ct)));
         Assert.Equal(MsfpError.NotFound, (await Assert.ThrowsAsync<MsfpException>(async () => await f.ImageAsync("movie/tmdb/949", Ct))).Code);
-        var info = await f.DescribeAsync(heat.Id, Ct);
-        Assert.Equal(12, info.Trickplay?.TileCount);
+        // The etag follows the bytes: the same content, the same etag.
+        var again = await f.TitlesAsync([], "", 100, Ct);
+        Assert.Equal(heat.ETag, again.Titles.Cast<VideoTitle>().Single(t => t.Key == "movie/tmdb/949").Copies![0].ETag);
 
         // Its subtitles by stretch, and nothing outside the folder.
         var sink = new MemorySink();
@@ -105,5 +106,73 @@ public sealed class FolderTests : IDisposable
         var sink = new MemorySink();
         await b.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.File }, "", sink);
         Assert.Equal("heat file", sink.Text);
+    }
+
+    // A file's media type from its first bytes (MSFP video section 3.5, the
+    // registry's brand table).
+    [Theory]
+    [InlineData("isom", "", "video/mp4")]
+    [InlineData("qt  ", "", "video/quicktime")]
+    [InlineData("M4A ", "", "audio/mp4")]
+    [InlineData("3gp5", "", "video/3gpp")]
+    [InlineData("zzzz", "mp42", "video/mp4")] // unknown, a compatible brand
+    [InlineData("zzzz", "", "video/mp4")] // unknown
+    public void SniffBrands(string major, string compatible, string want)
+    {
+        var b = new List<byte> { 0, 0, 0, (byte)(16 + compatible.Length) };
+        b.AddRange(Encoding.Latin1.GetBytes("ftyp" + major + "\0\0\0\0" + compatible));
+        Assert.Equal(want, Sniff.Of(b.ToArray()));
+    }
+
+    [Fact]
+    public void SniffOthers()
+    {
+        static byte[] Ts(int n, int off)
+        {
+            var b = new byte[(3 * n) + off];
+            for (var k = 0; k < 3; k++)
+            {
+                b[off + (k * n)] = 0x47;
+            }
+
+            return b;
+        }
+
+        Assert.Equal("video/matroska", Sniff.Of([0x1a, 0x45, 0xdf, 0xa3, 0x42, 0x82, 0x88, .. "matroska"u8]));
+        Assert.Equal("video/webm", Sniff.Of([0x1a, 0x45, 0xdf, 0xa3, 0x42, 0x82, 0x84, .. "webm"u8]));
+        Assert.Equal("video/mp2t", Sniff.Of(Ts(188, 0)));
+        Assert.Equal("video/vnd.dlna.mpeg-tts", Sniff.Of(Ts(192, 4)));
+        Assert.Equal("", Sniff.Of("plain"u8));
+        Assert.Equal(("audio/matroska", "video/quicktime", "video/mp4"),
+            (Sniff.AudioOrVideo("video/matroska", false), Sniff.AudioOrVideo("video/quicktime", false), Sniff.AudioOrVideo("video/mp4", true)));
+    }
+
+    // ffprobe's facts in MSFP's vocabularies: H.273 numbers, codecs strings.
+    [Fact]
+    public void ProbeMapping()
+    {
+        var v = Probes.VideoStreamOf(new FfprobeStream
+        {
+            CodecName = "hevc", CodecTag = "hvc1", Profile = "Main 10", Level = 153, Width = 3840, Height = 2160, PixFmt = "yuv420p10le",
+            ColorRange = "tv", ColorSpace = "bt2020nc", ColorTransfer = "smpte2084", ColorPrimaries = "bt2020", AvgFrameRate = "48000/2002",
+            SampleAspectRatio = "1:1", FieldOrder = "progressive", SideData = [new FfprobeSide { Type = "Display Matrix", Rotation = -90 }],
+        });
+        Assert.Equal(("hvc1.2.4.L153", 10, "24000/1001", null, false, 90), (v.Codecs, v.BitDepth, v.Fps, v.SampleAspect, v.Interlaced, v.Rotation));
+        Assert.Equal(new VideoColour(9, 16, 9, false), v.Colour);
+        Assert.NotNull(Rfc6381.Read(v.Codec, v.Codecs, v.BitDepth, v.Dv, out var why));
+        Assert.Empty(why);
+        var h = Probes.VideoStreamOf(new FfprobeStream { CodecName = "h264", Profile = "High", Level = 41, Width = 1920, Height = 1080, PixFmt = "yuv420p", Refs = 4 });
+        Assert.Equal(("avc1.640029", 4, 8), (h.Codecs, h.RefFrames, h.BitDepth));
+        Assert.Null(Probes.VideoStreamOf(new FfprobeStream { CodecName = "hevc", Profile = "Rext", Level = 120, Width = 1, Height = 1 }).Codecs);
+        var a = Probes.AudioTrack(new FfprobeStream { Index = 1, CodecName = "eac3", Profile = "Dolby Digital Plus + Dolby Atmos", Channels = 6 });
+        Assert.Equal(("a1", "ec-3", "dolby-atmos"), (a.Id, a.Codecs, a.Objects));
+        foreach (var (codec, profile, want) in new[]
+        {
+            ("aac", "LC", "mp4a.40.2"), ("aac", "HE-AACv2", "mp4a.40.29"), ("dts", "DTS-HD MA", "dtsh"), ("dts", "DTS", "dtsc"),
+            ("dts", "DTS Express", "dtse"), ("flac", "", "fLaC"),
+        })
+        {
+            Assert.Equal(want, Probes.AudioCodecs(codec, profile));
+        }
     }
 }

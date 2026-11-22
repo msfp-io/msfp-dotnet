@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Msfp.Protocol;
 
@@ -191,7 +192,7 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
                 var key = t.Key + "/x/" + Opaque(rel);
                 items[key] = new Item(new VideoTitle
                 {
-                    Key = key, Kind = "extra", Libraries = [Lib], ExtraType = kind, Name = Cut(Stem(Path.GetFileName(path)), 64),
+                    Key = key, Kind = "extra", Libraries = [Lib], ExtraType = kind, // an extra carries no name
                 }, rel);
             }
         }
@@ -239,7 +240,7 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
     }
 
     public ValueTask<IReadOnlyList<Library>> LibrariesAsync(CancellationToken ct) =>
-        ValueTask.FromResult<IReadOnlyList<Library>>([new Library { Id = Lib, Name = Path.GetFileName(Path.TrimEndingDirectorySeparator(dir)), Kind = "mixed" }]);
+        ValueTask.FromResult<IReadOnlyList<Library>>([new Library { Id = Lib, Name = Path.GetFileName(Path.TrimEndingDirectorySeparator(dir)) }]);
 
     public ValueTask<TitlePage> TitlesAsync(IReadOnlyList<string> libraries, string after, int limit, CancellationToken ct)
     {
@@ -284,9 +285,9 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
             : throw new MsfpException(MsfpError.NotFound);
 
     // Describes a video file as the catalog lists a copy (MSFP video section
-    // 3.2): its exact size, an etag from its size and its time, its
-    // container's ffmpeg name from its extension, what ffprobe says of it (Probes.cs), its .vtt
-    // subtitles, its previews. Its ID is its handle: its path in the folder.
+    // 3.2): its exact size, its media type and etag, what ffprobe says of it
+    // (Probes.cs), its .vtt subtitles (numbered after the file's streams), its
+    // previews' layout. Its ID is its handle: its path in the folder.
     private Protocol.Copy? CopyOf(string rel)
     {
         var path = Path.Combine(dir, rel);
@@ -297,27 +298,22 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
         }
 
         var probed = _probes.Describe(path, info);
-        var etag = Convert.ToString(info.Length, 16) + "-" + Convert.ToString(info.LastWriteTimeUtc.Ticks, 16);
-        return new Protocol.Copy(rel, probed.DurationMs, Muxers.GetValueOrDefault(Path.GetExtension(rel).TrimStart('.').ToLowerInvariant(), ""),
-            info.Length, etag, probed.Audio)
+        if (probed.Etag.Length == 0)
         {
-            Video = probed.Video, // P17b: no bitrateKbps since proposal 17
-            SubtitleTracks = Subtitles(path).Select((s, i) => new CopySubtitle("s" + i.ToString(CultureInfo.InvariantCulture), "webvtt")
+            return null;
+        }
+
+        return new Protocol.Copy(rel, probed.DurationMs, probed.MediaType, info.Length, probed.Etag, probed.Audio)
+        {
+            Video = probed.Video,
+            SubtitleTracks = Subtitles(path).Select((s, i) => new CopySubtitle("s" + (probed.Streams + i).ToString(CultureInfo.InvariantCulture), "webvtt")
             {
                 Language = Language(s),
                 External = true,
             }).ToList(),
-            // P17b: previews as a previewLayout since proposal 17.
+            PreviewLayout = Previews(path),
         };
     }
-
-    // The ffmpeg muxer names (what ffmpeg -f takes) of the containers this
-    // example shares, by extension: MSFP's container (video section 3.5), not
-    // ffprobe's list of demuxers ("matroska,webm").
-    private static readonly Dictionary<string, string> Muxers = new(StringComparer.Ordinal)
-    {
-        ["mkv"] = "matroska", ["webm"] = "webm", ["mp4"] = "mp4", ["m4v"] = "mp4", ["mov"] = "mov", ["ts"] = "mpegts",
-    };
 
     // The .vtt files beside a video file, s<n> by position.
     private static List<string> Subtitles(string path)
@@ -333,23 +329,16 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
     private static string? Language(string path) =>
         Languages.TrySentTag(Path.GetExtension(Path.GetFileNameWithoutExtension(path)).TrimStart('.'), out var tag) ? tag : null;
 
-    private sealed record Layout(int TileWidth, int TileHeight, int Columns, int Rows, int IntervalMs, int TileCount);
-
-    private static readonly JsonSerializerOptions LayoutJson = new() { PropertyNameCaseInsensitive = true };
-
     // A video file's previews' layout, layout.json in its .trickplay folder:
     // {"tileWidth":320,"tileHeight":180,"columns":10,"rows":10,
     // "intervalMs":10000,"tileCount":540}, its sheets beside it named 0.jpg,
-    // 1.jpg… (the engine checks and re-encodes each before it leaves).
-    private static Msfp.Trickplay? Previews(string path)
+    // 1.jpg… (the engine checks and re-encodes each before it leaves); null
+    // for none, or out of MSFP's bounds.
+    private static PreviewLayout? Previews(string path)
     {
         try
         {
-            var l = JsonSerializer.Deserialize<Layout>(File.ReadAllBytes(Stem(path) + ".trickplay/layout.json"), LayoutJson);
-            return l is null ? null : new Msfp.Trickplay
-            {
-                TileWidth = l.TileWidth, TileHeight = l.TileHeight, Columns = l.Columns, Rows = l.Rows, IntervalMs = l.IntervalMs, TileCount = l.TileCount,
-            };
+            return Copies.ReadPreviewLayout(JsonNode.Parse(File.ReadAllBytes(Stem(path) + ".trickplay/layout.json")));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException)
         {
@@ -357,15 +346,16 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
         }
     }
 
-    /// <summary>Tells what the catalog doesn't: the previews' layout; no fonts; every .vtt file served apart.</summary>
-    public ValueTask<CopyInfo> DescribeAsync(string copy, CancellationToken ct) =>
-        ValueTask.FromResult(new CopyInfo { Trickplay = Local(copy) ? Previews(Path.Combine(dir, copy)) : null });
+    /// <summary>Tells what the catalog doesn't: no fonts; every .vtt file is served apart (as text: video section 5.4).</summary>
+    public ValueTask<CopyInfo> DescribeAsync(string copy, CancellationToken ct) => ValueTask.FromResult(new CopyInfo());
 
     /// <summary>
     /// Serves the file when the viewer's server asks it (delivery file, always
     /// that of a download or a scan); its HLS copy, made beside it, for a remux
-    /// or without delivery (the baseline: this example counts on its HLS
-    /// copies being H.264 and AAC, as an operator makes them); it makes no
+    /// to its segments' media type (video/mp2t for .ts segments, video/mp4
+    /// otherwise) or without delivery (the baseline: this example counts on
+    /// its HLS copies being within it, H.264 High 4.1 8-bit SDR and AAC-LC
+    /// stereo, as an operator makes them); it makes no
     /// transcode, and no audio renditions, which the answer then says
     /// (<see cref="Started"/>'s AudioRenditions false: MSFP playback section
     /// 2.3). The handle is the protocol and the file's path.
@@ -378,8 +368,8 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
         }
 
         var path = Path.Combine(dir, request.Copy);
-        var ext = Path.GetExtension(path).TrimStart('.');
-        var hls = File.Exists(Path.Combine(Stem(path) + ".hls", "master.m3u8"));
+        var hlsDir = Stem(path) + ".hls";
+        var hls = File.Exists(Path.Combine(hlsDir, "master.m3u8"));
         var (method, protocol) = ("direct", "file");
         switch (request.Delivery)
         {
@@ -388,7 +378,8 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
             case Playback.DeliveryTranscode:
                 throw new MsfpException(MsfpError.DeliveryRefused);
             case Playback.DeliveryRemux:
-                (method, protocol) = hls ? ("remux", "hls") : throw new MsfpException(MsfpError.DeliveryRefused);
+                var segments = hls && Directory.EnumerateFiles(hlsDir, "*.ts").Any() ? "mp2t" : "mp4";
+                (method, protocol) = hls && request.Served.Segments == segments ? ("remux", "hls") : throw new MsfpException(MsfpError.DeliveryRefused);
                 break;
             default:
                 (method, protocol) = hls ? ("remux", "hls") : throw new MsfpException(MsfpError.NotPlayable);
@@ -401,7 +392,6 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
             Handle = protocol + " " + request.Copy,
             Method = method,
             Protocol = protocol,
-            MimeType = "video/" + ext.Replace("mkv", "x-matroska", StringComparison.Ordinal),
             PositionMs = request.StartMs,
         });
     }
@@ -440,7 +430,9 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
                 return;
             case MediaKind.Subtitles:
                 var subs = Subtitles(file);
-                var n = path.Track.StartsWith('s') && int.TryParse(path.Track.AsSpan(1), NumberStyles.None, CultureInfo.InvariantCulture, out var i) ? i : -1;
+                var streams = _probes.Describe(file, new FileInfo(file)).Streams;
+                var n = path.Track.StartsWith('s') && int.TryParse(path.Track.AsSpan(1), NumberStyles.None, CultureInfo.InvariantCulture, out var i)
+                    ? i - streams : -1;
                 if (n < 0 || n >= subs.Count)
                 {
                     throw new MsfpException(MsfpError.NotFound);
@@ -553,6 +545,4 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
     private static int Number(string s) => int.TryParse(s, NumberStyles.None, CultureInfo.InvariantCulture, out var n) ? n : 0;
 
     private static int Year(string s) => Number(s) is var y and >= 1800 and <= 9999 ? y : 0;
-
-    private static string Cut(string s, int n) => s.EnumerateRunes().Count() > n ? string.Concat(s.EnumerateRunes().Take(n)) : s;
 }
