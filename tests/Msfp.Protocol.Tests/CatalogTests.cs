@@ -263,4 +263,24 @@ public class CatalogTests
         Assert.Equal("imax", Names.NameOrOther(Names.Editions, "imax"));
         Assert.Equal(Names.Other, Names.NameOrOther(Names.Editions, "fan"));
     }
+
+    // The token of core section 8.5, and the open values a fact keeps.
+    [Fact]
+    public void Tokens()
+    {
+        foreach (var t in new[] { "h264", "matroska", "hdmv_pgs_subtitle", "x-new_kind.2", "other", new string('a', 32) })
+        {
+            Assert.True(Names.IsToken(t), t);
+        }
+
+        foreach (var t in new[] { null, "", new string('a', 33), "H264", "a b", "a/b", "é", "mixed,music" })
+        {
+            Assert.False(Names.IsToken(t), t);
+        }
+
+        Assert.Equal("vvc", Names.Token(System.Text.Json.Nodes.JsonValue.Create("vvc")));
+        Assert.Null(Names.Token(System.Text.Json.Nodes.JsonValue.Create(1)));
+        Assert.Null(Names.Token(null));
+        Assert.Equal(["mpegts", "mp4"], Names.RemuxContainers);
+    }
 }

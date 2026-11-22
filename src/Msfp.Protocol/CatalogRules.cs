@@ -116,6 +116,15 @@ public static class CatalogRules
     public static bool OpaqueKeyPart(string? s) => s is not null && Playback.Id(s);
 
     /// <summary>
+    /// The kind a caller keeps of a library (catalog sections 2 and 2.2): an
+    /// open field, kept when it is a token (movies, tvshows, music, mixed,
+    /// or any other); null, absent, when the library has none, or its kind
+    /// isn't a string or isn't a token ("" included).
+    /// </summary>
+    /// <param name="library">The library's JSON object.</param>
+    public static string? LibraryKind(JsonNode? library) => library is JsonObject o ? Names.Token(o["kind"]) : null;
+
+    /// <summary>
     /// Reads a local title's description from the title's JSON object, within
     /// <paramref name="bounds"/> (catalog section 4.3): name cleaned as
     /// <see cref="Music.CleanText"/> does, a name that isn't a string counting

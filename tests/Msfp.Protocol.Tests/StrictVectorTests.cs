@@ -1,14 +1,42 @@
 using System.Net;
+using System.Text.Json.Nodes;
 
 namespace Msfp.Protocol.Tests;
 
 /// <summary>
 /// wire/vectors_test.go's cases of strict.json in this part: media names
-/// (TestStrictVectors), language codes (TestLanguageCodeVectors), and
-/// destinations (core section 3.3).
+/// (TestStrictVectors), language codes (TestLanguageCodeVectors),
+/// destinations (core section 3.3), open tokens (core section 8.5) and
+/// libraries' kinds (catalog section 2.2).
 /// </summary>
 public class StrictVectorTests
 {
+    [Fact]
+    public void OpenTokenVectors()
+    {
+        var cases = TestVectors.Cases("strict.json", "openTokens");
+        var failures = cases.Where(c => Names.IsToken(c.Str("text")) != c.Valid())
+            .Select(c => $"\"{c.Str("text")}\": want valid {c.Valid()} ({c.Str("reason")})").ToList();
+        TestVectors.NoFailures(failures, cases.Count, "strict.json openTokens");
+    }
+
+    [Fact]
+    public void LibraryKindVectors()
+    {
+        var cases = TestVectors.Cases("strict.json", "libraryKinds");
+        var failures = new List<string>();
+        foreach (var c in cases)
+        {
+            var got = CatalogRules.LibraryKind(JsonNode.Parse(c.Str("library"))) ?? "";
+            if (got != c.Str("kind"))
+            {
+                failures.Add($"{c.Str("name")}: \"{got}\", want \"{c.Str("kind")}\"");
+            }
+        }
+
+        TestVectors.NoFailures(failures, cases.Count, "strict.json libraryKinds");
+    }
+
     [Fact]
     public void MediaNameVectors()
     {

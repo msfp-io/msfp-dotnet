@@ -1,3 +1,5 @@
+using System.Text.Json.Nodes;
+
 namespace Msfp.Protocol;
 
 /// <summary>
@@ -103,4 +105,53 @@ public static class Names
 
     private static bool In(IReadOnlyList<string> list, string? s) =>
         s is not null && list.Contains(s, StringComparer.Ordinal);
+
+    /// <summary>The most characters of a token.</summary>
+    public const int MaxToken = 32;
+
+    /// <summary>
+    /// The containers a remux names (playback section 2.7), as ffmpeg names
+    /// them: mpegts (MPEG-TS segments) and mp4 (fragmented MP4 segments),
+    /// the two segment formats of HLS. Another token is refused with 409
+    /// delivery-refused.
+    /// </summary>
+    public static readonly IReadOnlyList<string> RemuxContainers = ["mpegts", "mp4"];
+
+    /// <summary>
+    /// The baseline's video codec (playback section 2.7): what the owning
+    /// server serves without delivery, and a transcode's videoCodec left out.
+    /// </summary>
+    public const string BaselineVideoCodec = "h264";
+
+    /// <summary>The baseline's audio codec (playback section 2.7), and a transcode's audioCodec left out.</summary>
+    public const string BaselineAudioCodec = "aac";
+
+    /// <summary>The baseline's most audio channels (playback section 2.7), and a transcode's audioChannels left out.</summary>
+    public const int BaselineChannels = 2;
+
+    /// <summary>Whether <paramref name="s"/> is a token: 1 to <see cref="MaxToken"/> characters of a–z 0–9 . _ -.</summary>
+    public static bool IsToken(string? s)
+    {
+        if (s is null || s.Length is < 1 or > MaxToken)
+        {
+            return false;
+        }
+
+        foreach (var c in s)
+        {
+            if (c is not ((>= 'a' and <= 'z') or (>= '0' and <= '9') or '.' or '_' or '-'))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The value of an open field as a fact keeps it (core section 8.5): the
+    /// string when it is a token, known or not; null, malformed, for any
+    /// other value (another JSON type included).
+    /// </summary>
+    public static string? Token(JsonNode? node) => JsonMembers.AsString(node) is { } s && IsToken(s) ? s : null;
 }
