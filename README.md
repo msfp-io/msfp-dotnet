@@ -129,19 +129,20 @@ logs. `CodeTextAsync` gives a live code's text again, to send once more. Every m
 A host that shares gives the engine its libraries and playback
 (`MsfpConfig.Catalog`, `Playback`, `Media`: `ICatalog`, `IPlayback`,
 `IMedia`): each film, episode and extra with its copies described as
-MSFP lists them: exact values, ffmpeg's names for containers, codecs and
-subtitle formats, its copies in its order of preference. The engine
+facts: the file's media type, the MSFP registry's codec and subtitle
+tokens, RFC 6381 codecs strings, H.273 colour, exact values, the layout
+of its previews; its copies in its order of preference. The engine
 serves a copy's file by byte ranges itself, against the size and etag
-the catalog gave, and checks or rebuilds what leaves (playlists, served
-the same on every fetch; subtitles, fonts; preview sheets re-encoded).
-It maps no names: a media server that names things otherwise maps them
-to ffmpeg's, and a value MSFP doesn't list is sent and kept as it is
-(any token). What the engine chooses for a peer when its play names
-nothing (the copy, the tracks) and what a copy's name and a track's
-title may say are hooks with the recommended defaults
-(`MsfpConfig.ChooseCopy`, `ChooseTracks`, `CopyName`, `TrackTitle`;
-`MsfpDefaults`); `MsfpConfig.Encoders` lists the codecs its transcodes
-make. The host mounts the stream route of peers'
+the catalog gave, serves exactly the names a playback's answer opened,
+and checks or rebuilds what leaves (playlists, served the same on every
+fetch, their missing attributes filled from the copy's facts;
+subtitles, fonts; preview sheets re-encoded). It maps no names: a media
+server that names things otherwise maps them, and a value MSFP doesn't
+know is sent and kept as it is. The host's server chooses nothing for a
+peer: its play names the copy and the audio, else the first copy and
+the file's default audio, and the engine decides what is served
+(`StartRequest.Served`); `MsfpConfig.Encoders` says what its transcoder
+makes (codecs, ranges, what each segment format carries). The host mounts the stream route of peers'
 tickets beside the federation route:
 
 ```csharp
@@ -173,23 +174,27 @@ then `RunAsync` reads them on schedule (or `ReadNowAsync`) into the
 store, where the host reads them; `PlayableAsync` says whether they can
 be played now. A viewer plays with `PlayAsync` (to watch, to download, or
 to let a media server scan the file: `PlayRequest.Purpose`). The host has
-every copy's facts in the catalog and knows its device: a play names the
-copy (`VersionId`) and asks a delivery (the file as it is, a remux into
-`mpegts` or `mp4`, a transcode to ffmpeg's codecs), or none for the
-baseline every server plays, H.264 and AAC in HLS; nothing of the device
-is sent. The host serves the media at its own route through `FetchAsync`
-(`MediaPath.TryParse` reads its URL), and reports with `Progress` and
-`StopAsync` (a download's late reports with `ReportOfflineAsync`);
-`PreviewsAsync` and `TrackLyricsAsync` fetch a copy's previews and a
-track's lyrics before any play.
+every copy's facts in the catalog and knows its device: it chooses the
+copy (`VersionId`), its audio (`AudioTrack`) and its subtitles, and asks
+a delivery (the file as it is, a remux to `video/mp2t` or `video/mp4`
+segments, a transcode, a stream of which may be `copy`, to SDR or
+keeping the range), or none for the baseline every server plays, H.264
+and AAC in HLS; nothing of the device is sent, and every media URL is
+built from the peer's ticket: none a peer wrote is fetched.
+`Rfc6381.Read` reads a copy's codecs strings. The host serves the media
+at its own route through `FetchAsync` (`MediaPath.TryParse` reads its
+URL), and reports with `Progress` and `StopAsync` (a download's late
+reports with `ReportOfflineAsync`); `PreviewSheetAsync` fetches a
+copy's seek-bar previews when someone opens it, never ahead, and
+`TrackLyricsAsync` a track's lyrics.
 
 Two things are off until the operator turns them on: **local titles**
 (those no public database knows: `SetLocalAsync` per pairing and
 `SetGroupLocalAsync` per group; their keys made with `OpaqueKeyPart`,
 their images given by `IImages`) and **downloads and scans** (`Limits`:
 `Downloads`, `DownloadsPerDay`, `DownloadKbps`, `ScansPerDay`, and
-`ScanBytes`, what one scan may read: 4 MiB unless you say more, 32 MiB
-recommended). Theme songs and theme videos are extras like the others:
+`ScanBytes`, a pool's scan cap, stated in each scan's answer: 4 MiB
+unless you say more, 32 MiB suggested). Theme songs and theme videos are extras like the others:
 whether you offer them is your operator's choice. A download's late
 reports count for 30 days, across restarts: the shipped
 stores keep downloads (`IDownloadsTx`); a store of your own implements it
@@ -203,8 +208,9 @@ its layout first; a peer's JPEG image of a local title too. .NET has no
 JPEG codec, so the engine has no default `ISheetEncoder` (msfp-go's is
 `JPEGSheets`): give one (ImageSharp, SkiaSharp, ffmpeg as the example
 does, the host's own). Without one, previews are left out both ways: the
-host serves no sheets to peers (its plays answer without them, a
-`previews` call gets 404), peers' playbacks come without them, and only
+host's copies leave without their `PreviewLayout` (so its plays open no
+sheets, a `previews` call gets 404), peers' sheets aren't fetched
+(`RemotePlayback.Sheets` is 0, `PreviewSheetAsync` is NotSupported), and only
 a peer's PNG images can be fetched (the engine re-encodes PNGs itself).
 
 The engine hands headers to the host through its sink only:
@@ -260,8 +266,10 @@ the name has one), extras in `Trailers/` and `Extras/`, local titles (no
 ID, an image beside them), `.vtt` subtitles, HLS copies
 (`<same name>.hls/`, H.264 and AAC: the baseline a play without a
 delivery gets) and previews (`<same name>.trickplay/`) made beforehand;
-nothing is transcoded. Copies are described from their files,
-with `ffprobe` when it is installed; with `ffmpeg`, it re-encodes preview
+nothing is transcoded. Copies are described from their files (the
+media type from their first bytes, an etag from their content; codecs
+strings, H.273 colour, Dolby Vision and track IDs by stream index with
+`ffprobe` when it is installed); with `ffmpeg`, it re-encodes preview
 sheets and JPEG images (its `ISheetEncoder`). The comment at the top of
 Folder.cs shows the layout. Run two of them on one machine:
 

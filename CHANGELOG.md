@@ -5,95 +5,115 @@
 MSFP version 0 is revised, and stays a draft until version 1: titles
 carry their copies, plays ask a delivery and a purpose (downloads and
 scans), extras and local titles are shared, and a copy's file is served
-by byte ranges. Proposal 17 (neutrality) then makes the protocol carry
-facts in outside vocabularies (ffmpeg's names, RFC 6381, ITU-T H.273,
-the DASH roles, MusicBrainz's types) with open lists, and leaves the
-choices to the viewer's server: no capabilities, a baseline. Servers on
+by byte ranges. Proposal 17 (neutrality), as frozen on 2026-11-22, then
+makes the protocol carry facts in outside vocabularies (IANA media
+types, RFC 6381, ITU-T H.273, the DASH roles, MusicBrainz's types) and
+MSFP's registry, with open lists; drops every field that is only safe
+through guidance, said twice, or that the receiver can work out; builds
+every media URL from a ticket; and leaves the choices to the viewer's
+server: no capabilities, a defined baseline. Servers on
 the draft before (0.7.1-preview and before) and on the revised one don't
 pair with each other: move every server at once. The migration guide at
 the end of this section says what hosts change; its last part is
-proposal 17's.
+proposal 17's, and wins where the parts before name a member it removed.
 
 ### Changed by proposal 17
 
-- One rule for unknown values (`Names.IsToken`, `Names.Token`, MSFP core
-  section 8.5): open fields take tokens (1 to 32 of `a–z 0–9 . _ -`),
-  kept as they are when unknown, never turned into `other`. The names
-  lists are gone (`Names.Containers`, `VideoCodecs`, `AudioCodecs`,
-  `HdrFormats`, `DvProfiles`, `AudioProfiles`, `Editions`, `ExtraTypes`,
-  `SubtitleFormats`, `Other`, `NameOrOther`, `Copies.AudioRoles`,
-  `Copies.SegmentKinds`, `Music.ReleaseTypes`): containers, codecs and
-  subtitle formats are ffmpeg's names (`matroska`, `hevc`,
-  `hdmv_pgs_subtitle`), library kinds, editions, roles, segment kinds
-  and extra types are open (`CatalogRules.LibraryKind`); an optional
-  malformed member is dropped alone, a required one drops its holder.
-- Copies: exact `DurationMs` and `BitrateKbps` (no rounding); `Fps` is
-  ffmpeg's rational string (`"24000/1001"`); the dynamic range comes
-  from `Colour` (its members open), `Hdr` lists only enhancement layers
-  (`dv`, `hdr10plus`…, sorted), `VideoDv` is the whole configuration
-  record (`El`, `Bl`, `Rpu`); new `Codecs` (RFC 6381) on the video and
-  each audio track, `SampleAspect`, `Rotation`; profiles as ffmpeg
-  prints them (`Copies.MaxProfile`); names and track titles plain text
-  of 64 (`Copies.MaxName`); up to 16 copies (`Copies.MaxCopies`); a
-  subtitle track's `Format` may be absent. `Copies.HighRange`;
-  `Video.OtherId(VideoKey, …)` takes `tmdb` on a series or episode keyed
-  under another scheme.
-- The host's order of its copies is its preference: the engine no
-  longer sorts them (`Copies.Sorted` stays, as the recommended default).
-- Music: `MusicTitle.ReleaseType` is replaced by `PrimaryType` and
-  `SecondaryTypes` (MusicBrainz's, lowercased, open), in the protocol's
-  and the engine's titles; a track may carry its own `Date`,
-  `OriginalDate` and `Genres`; a track copy has `Codecs`, its container
-  and codec are tokens, its bitrate exact. A lyrics set's kind is open.
-- Playback: no capabilities (`PlayCapabilities`,
-  `PlayRequest.Capabilities` on both sides, `StartRequest.Capabilities`,
-  `Playback.CoarsenBitrate`, `DefaultCapKbps`, `SampleRateSteps`,
-  `BitDepthSteps` are gone; a peer's `capabilities` is an unknown
-  member). Without `delivery`, the owning side serves the baseline,
-  H.264 and AAC in complete HLS (AAC alone for a track), never the file.
-  A remux is into `mpegts` or `mp4` (`Names.RemuxContainers`); a
-  delivery, container or transcode codec that is a token not made here
-  is refused `409` `delivery-refused`, before the host is asked
-  (`MsfpConfig.Encoders`; `Playback.RefuseDelivery` takes the owning
-  server's encoders); a transcode's targets left out reach the host as
-  the baseline's (`h264`, `aac`, 2 channels:
-  `TranscodeTargets.WithBaseline`, `PlayRequest.TargetsServed`). No
-  default ceiling (the 120,000 kbit/s cap is gone):
-  `PlayRequest.BitrateCap` and `StartRequest.MaxBitrateKbps` are 0 for
-  none. The viewer's `MaxBitrateKbps` is sent as it is.
-- play's answer: no `versions`, `info` or `subtitleStretchSeconds`
-  (`Version`, `PlaybackInfo`, `StreamInfo`, `Started.Info`,
-  `RemotePlayback.Versions` and `Info`, `PlayAnswer.Versions`,
-  `PlayVersion`, `MaxVersionName` are gone); it says `audioRenditions`
-  (`Started.AudioRenditions`, `RemotePlayback.AudioRenditions`,
-  `PlayAnswer.AudioRenditions`), false when the host made none. Playback
-  IDs take the opaque form (`Playback.PlayId`). `PlayReport.TitleSaid`.
-- Limits: `streams` and `downloads` up to 1,000 (`Playback.MaxStreams`,
-  `MaxDownloads`); `Limits.ScanBytes`, what one scan reads (4 MiB to
-  1 GiB, 4 MiB when not sent: `PlaybackLimits.ScanBytes` and `ScanCap`,
-  `Playback.ScanBytesFloor`, `ScanBytesTop`, `ScanBytesRecommended`):
-  the owning side announces its pools' most generous and cuts each scan
-  at its counting pool's (`Media.TryScanSpan` takes the cap;
-  `Media.ScanCap` and `Playback.ScanReadCap` are gone), the viewer's
-  side keeps a peer's in `TheirLimits`.
-- Fonts: 64 a copy (`fonts/0` to `fonts/63`), 10 MiB each, 64 MiB in
-  all, served and relayed within those (`Font.MaxFonts`, `MaxFontSet`,
-  `CheckSet`, `ReadUrls`).
-- Theme songs and theme videos (`themesong`, `themevideo`) are extras
-  like the others: the engine sends what the host gives.
+- One rule for unknown values (`Names.IsToken`, `Names.Token`,
+  `Names.IsMediaType`, MSFP core section 8.5): open fields take tokens,
+  or media types, kept as they are when unknown; an optional malformed
+  member is dropped alone, a required one drops its holder. No list of
+  names in the packages: the registry (spec/registry.md) is the
+  authority.
+- Copies (`Protocol.Copy`): `MediaType` (the file's media type) replaces
+  `Container`; codec and subtitle tokens are the registry's (ffprobe's
+  `codec_name`); `Codecs` (RFC 6381) is required for h264, hevc, av1,
+  vp9, aac and dts (`Rfc6381.Required`) and read by `Rfc6381.Read`;
+  `Colour` is H.273 code points with `FullRange`; `Hdr` holds
+  enhancement layers only (`hdr10plus`); new `RefFrames`, `Objects`
+  (`dolby-atmos`, `dts-x`), subtitle `Role`, `EndMs`, `PreviewLayout`;
+  `Parts` is a count; track IDs are the stream's index in the file.
+  Gone: a copy's `Name`, `BitrateKbps` (the overall rate is `Size` × 8 /
+  `DurationMs`), `Added`, `Previews`, `CopyPart`, a track's `Title`,
+  `Profile`, `Layout`.
+- Titles carry no kind on the wire (their key names it), libraries no
+  kind (`Library.Kind`, `WantedLibrary.Kind`, `ShownLibrary.Kind`,
+  `CatalogRules.LibraryKind` gone), extras no name; `ids` are sent only
+  on episodes and on titles keyed under `tvdb`.
+- Music: copies take `MediaType` (no `Name`, `Added`, `BitrateKbps`),
+  up to 16; no `SortName`; `ids` only on `mb` titles; a track's artists,
+  names, dates and genres leave only when they differ from its album's.
+  Lyrics: no `synced`, `offset` or display names.
+- play's request: `MediaType` (`video/mp2t`, `video/mp4`, `audio/…` for
+  a copy with no video) replaces `Container`; transcode targets take
+  `copy` (`Names.Copy`) and a `Range` (`sdr`, `keep`); no
+  `AudioLanguage`, `SubtitleLanguage`, `SubtitleTrack`; queue entries
+  are objects with their own copy and delivery (`QueuedTrack` on the
+  viewer's side, `Protocol.QueueAsk`, `Playback.ReadQueueEntry`).
+  Progress carries no `paused` (`Report.Paused` is gone).
+- The owning side no longer chooses: the copy is the one `versionId`
+  names, else the first; the audio the one `audioTrack` names, else the
+  file's default (`Playback.ChooseCopy`, `ChooseAudio`). The engine
+  decides what is served (`Served`: the defined baseline, H.264 High 4.1
+  8-bit SDR BT.709 and AAC-LC stereo 48 kHz, each stream within it left
+  unchanged, `Playback.Baseline`; remux segment formats; copied streams;
+  ranges) and passes it to the host (`StartRequest.Served`,
+  `QueuedCopy.Served`, with each entry's own `Delivery`, `MediaType` and
+  `Transcode`). `StartRequest.MediaType` replaces `Container`;
+  `StartRequest.SubtitleTrack` is gone.
+- play's answer carries a `ticket`, `protocol`, `subtitles` (`id`,
+  `form`, `ass`), `fontCount`, `scanBytes` (scans) and no URL, track,
+  length or trickplay: the viewer's side builds every URL from the
+  peer's stream root and the ticket (`MediaUrls`), never fetching an
+  address a peer wrote. The owning side serves exactly those names
+  (playlists' and segments' names only once a playlist served gave them)
+  and `404`s past the counts. `previews` answers `{ticket, etag}`,
+  `image` `{ticket}`.
+- Previews: the layout is the catalog's (`Copy.PreviewLayout`);
+  `CopyInfo.Trickplay` and `Msfp.Trickplay` are gone; sheets are
+  fetched on demand (`PreviewSheetAsync`) under the playback's ticket or
+  a previews ticket, cached by etag and layout; `PreviewsAsync` and
+  `PreviewSheets`, which fetched every sheet ahead, are gone. Without a
+  `SheetEncoder`, a copy leaves without its `PreviewLayout`.
+- `RemotePlayback`: `Subtitles`, `Fonts`, `Sheets`, `ScanBytes`; its
+  `DurationMs` and `MimeType` come from the catalog's copy. Gone:
+  `AudioTracks`, `SubtitleTracks`, `SubtitleTrack`, `ForcedTracks`,
+  `ForcedTrack`, `BurnedTrack`, `SubtitleStretchSeconds` (it is
+  `WebVtt.StretchSeconds`), `Trickplay`, and the `Track` type.
+- Limits: no `scanBytes`; a pool's `Limits.ScanBytes` is its own scan
+  cap, stated in each scan's answer (`Playback.ScanCapOf`).
+- Groups: no name in a mail nor in `group-pair`: a member's name is its
+  profile's.
+- The file is served and relayed with the copy's own `mediaType`
+  (`Media.RelayFileType`); `Started.MimeType` and `StartedEntry`'s are
+  gone.
+- The master playlist: the engine fills `CODECS`, `RESOLUTION`,
+  `VIDEO-RANGE`, `SUPPLEMENTAL-CODECS`, `BANDWIDTH` and `CHANNELS
+  "16/JOC"` that the copy's facts tell when a stream is served
+  unchanged, and logs the required ones still missing.
+- The ShareFolder example: `mediaType` from the file's first bytes,
+  codecs strings, H.273 colour, Dolby Vision, objects and track IDs from
+  ffprobe, an etag from the file's content (SHA-256, kept by size and
+  time), the previews' layout in the catalog, a remux by its segments'
+  media type.
+
+### Removed by proposal 17
+
+- `MsfpConfig.ChooseCopy`, `ChooseTracks`, `CopyName`, `TrackTitle` and
+  `MsfpDefaults`; `Copies.MaxName`; `CatalogRules.LibraryKind`.
 
 ### Added by proposal 17
 
-- `MsfpConfig.ChooseCopy` and `MsfpConfig.ChooseTracks`: what the owning
-  side plays when a peer's play names no copy or track (a named one
-  wins); `MsfpDefaults.ChooseCopy` and `MsfpDefaults.ChooseTracks`, the
-  recommended defaults, by default.
-- `MsfpConfig.CopyName` and `MsfpConfig.TrackTitle`: what a copy's name
-  and a track's title say as they leave; `MsfpDefaults.CopyName` and
-  `MsfpDefaults.TrackTitle` (labels only, no file or release group
-  names) by default.
-- `MsfpConfig.Encoders` (`Encoders`: `Video`, `Audio`), the baseline's
-  `Names.BaselineVideoCodec`, `BaselineAudioCodec`, `BaselineChannels`.
+- `Served`, `Encoders.Ranges`, `Encoders.Segments`,
+  `Encoders.DefaultSegments`; `CopyInfo.Forms` (the form of a track
+  whose format video section 5.4 doesn't list); `QueuedTrack`;
+  `RemotePlayback.Subtitles`, `Sheets`, `ScanBytes`;
+  `PreviewSheetAsync`. In Msfp.Protocol: `Rfc6381`, `Names.IsMediaType`,
+  `OwnerMakes`, `Playback.Baseline`, `TakesTranscode`, `PlayAsked`,
+  `ServedSubtitle`, `Video.FormOf`, `ReadServed`, `ReadFontCount`,
+  `PreviewsAnswer`, `MediaUrls`, `PlayAnswer.Urls`, `QueueAsk`,
+  `Playback.ReadQueueEntry`, `Media.RelayFileType`, `Media.Serves`,
+  `Playback.ScanCapOf`.
 
 ### Changed
 
@@ -250,56 +270,67 @@ proposal 17's.
 
 **Proposal 17, a host that shares:**
 
-1. Name containers, codecs and subtitle formats as ffmpeg does: the
-   container's muxer name (`ffmpeg -f`: `matroska`, `mp4`, `mov`,
-   `mpegts`), not ffprobe's demuxer list; `codec_name` for the codecs
-   and subtitle formats (`hdmv_pgs_subtitle`, `dvd_subtitle`, not `pgs`,
-   `vobsub`). Map your media server's own names to those; send any
-   other value as it is, a token: nothing becomes `other`.
-2. Send exact values: `DurationMs` in milliseconds, `BitrateKbps` as
-   known, `Fps` as ffmpeg's `avg_frame_rate` (`"24000/1001"`). Give the
-   colour description (`Colour`): HDR10 and HLG are its `Transfer`
-   (`smpte2084`, `arib-std-b67`); `Hdr` holds only `dv`, `hdr10plus` and
-   the like. Fill `Codecs`, `SampleAspect`, `Rotation`, the profiles as
-   ffmpeg prints them, when you know them.
-3. Order each title's copies as you prefer them: the engine keeps your
-   order (`Copies.Sorted` is the recommended one).
-4. `IPlayback.StartAsync`: no `Capabilities`. Without a delivery, serve
-   H.264 and AAC in complete HLS (as they are when the copy already is
-   that), never the file. A transcode's targets arrive with the
-   baseline's values for those left out. Set `MsfpConfig.Encoders` to the
-   codecs your transcodes make. Say in `Started.AudioRenditions` whether
-   the master playlist has audio renditions; drop `Started.Info`.
-5. `Limits.ScanBytes` for pairings with scans: 32 MiB
-   (`Playback.ScanBytesRecommended`) is the recommended value; without
-   it, scans stop at 4 MiB. `Limits` allow up to 1,000 streams and
-   downloads.
-6. Up to 64 fonts a copy (`CopyInfo.Fonts`), 64 MiB in all.
-7. Theme songs and videos may be extras (`themesong`, `themevideo`):
-   offer them behind an operator setting if you like.
-8. Music: `PrimaryType` and `SecondaryTypes` in place of `ReleaseType`;
-   a track's own dates and genres when it has them.
-9. To choose otherwise than the recommended defaults, or to keep names
-   and titles another way: `MsfpConfig.ChooseCopy`, `ChooseTracks`,
-   `CopyName`, `TrackTitle`.
+1. Describe each copy in outside vocabularies, as facts: `MediaType`
+   read from the file's first bytes (the ISO BMFF brand table of the
+   registry, the EBML DocType, the TS packet size; `audio/…` when there
+   is no picture but cover art), the registry's codec and subtitle
+   tokens (ffprobe's `codec_name`), `Codecs` for h264, hevc, av1, vp9,
+   aac and dts at least (built from your media server's profile and
+   level or the file's records: examples/ShareFolder/Probes.cs does it
+   from ffprobe), `Colour` as H.273 numbers with `FullRange`, `Dv`
+   whenever there is Dolby Vision, `Hdr` only `hdr10plus`, `Objects`,
+   `RefFrames`, exact values; track IDs `a<n>`/`s<n>` with n the
+   stream's index. Drop names, titles, bitrates, dates, profiles and
+   layouts.
+2. `ETag` changes when and only when the bytes change.
+3. Put the previews' layout on the copy (`PreviewLayout`), not in
+   `CopyInfo`; a change of it is a change of the title. Give a
+   `SheetEncoder`, or it doesn't leave.
+4. The first copy is the one played when a peer names none; the audio
+   the file's default when it names none. There are no choice or name
+   hooks.
+5. `IPlayback.StartAsync`: read `MediaType` (a remux's segment format,
+   `Served.Segments`), `Transcode` (`copy` streams left unchanged, a
+   `Range` to make) and `Served` (what the engine decided, the
+   baseline's streams left unchanged when within it); no
+   `SubtitleTrack`. Queue entries carry their own delivery. Set
+   `MsfpConfig.Encoders` (codecs, ranges, the codecs your segment
+   formats carry). In fMP4 segments write HEVC `hvc1`, Dolby Vision
+   `dvh1` (`dav1` on AV1), parameter sets out of band; give each master
+   playlist variant `BANDWIDTH`, `CODECS` and, with video,
+   `RESOLUTION`, plus `VIDEO-RANGE` and `SUPPLEMENTAL-CODECS` where
+   they apply. Drop `Started.MimeType` and `StartedEntry`'s.
+6. Serve every subtitle track of a format video section 5.4 lists in
+   its form; list in `NotApart` those you can't, and don't list in the
+   catalog an external track you can't serve apart; give `Forms` for
+   other formats you serve apart.
+7. A pool's scan cap is `Limits.ScanBytes` (32 MiB suggested,
+   `Playback.ScanBytesRecommended`); it is no longer sent in limits.
+   Up to 64 fonts a copy (`CopyInfo.Fonts`), 64 MiB in all.
+8. Drop `Library.Kind` and extras' `Name`; music titles' `SortName`.
 
 **Proposal 17, a host that plays peers' titles:**
 
-1. Drop `PlayRequest.Capabilities`. Choose the copy (`VersionId`) and
-   the delivery from the copy's facts in the catalog and your device: a
-   copy with a value you don't know (a codec, a container) is one you
-   can't play as it is; ask a `remux` (into `mpegts` or `mp4`) or a
-   `transcode` (ffmpeg's codec names), or leave `Delivery` empty for the
-   baseline, H.264 and AAC in HLS.
-2. `RemotePlayback.Versions` and `Info` are gone (the catalog has the
-   copies); `AudioRenditions` says whether switching tracks needs a new
-   playback.
-3. Keep open values as they are: library kinds, editions, roles, segment
-   kinds (show an unknown one as a plain "Skip"), extra types (a plain
-   extra), `Hdr` entries, music types. A role you don't know is never
-   the title's own sound.
-4. Read `TheirLimits.ScanBytes`: let your media server read no more in
-   one scan.
+1. Choose the copy (`VersionId`), the audio (`AudioTrack`) and the
+   delivery from the copy's facts and your device: a copy whose media
+   type, codec or 3D layout you don't know, or whose `Codecs` can't be
+   read (`Rfc6381.Read`), is one you can't play as it is: ask a `remux`
+   (`MediaType` `video/mp2t` or `video/mp4`), a `transcode` (registry
+   tokens, `copy` for a stream your device plays, `Range` `keep` for
+   HDR), or nothing for the baseline.
+2. Choose the subtitles yourself, among the copy's tracks and
+   `RemotePlayback.Subtitles` (served apart); name one only to burn it
+   in.
+3. Label copies and tracks from their facts (height, range, edition,
+   codecs; role, flags, channels, objects); show "recently added" from
+   the day you first saw a copy; type an empty library by its first
+   titles; show an extra by its type and a number.
+4. Fetch previews only for a copy someone opened, with
+   `PreviewSheetAsync`; never for a whole library.
+5. A scan's cap is `RemotePlayback.ScanBytes`.
+6. Music queues are `QueuedTrack`s, each with its own copy and delivery
+   if you like; a track's absent artists, dates and genres are its
+   album's.
 
 ## v0.7.1-preview (2026-11-21)
 
