@@ -624,17 +624,27 @@ public static partial class Copies
                 .String("transfer", Absent(c.Transfer)).String("matrix", Absent(c.Matrix)).String("range", Absent(c.Range)) : null);
     }
 
-    private static void WriteAudio(JsonOut w, CopyAudio t) =>
+    /// <summary>Writes an audio track's members into an object being written, as a copy's audioTracks carries them.</summary>
+    public static void WriteAudio(JsonOut w, CopyAudio t)
+    {
+        ArgumentNullException.ThrowIfNull(w);
+        ArgumentNullException.ThrowIfNull(t);
         w.String("id", t.Id).String("language", Absent(t.Language)).Integer("channels", t.Channels)
             .String("role", Absent(t.Role)).Bool("default", Flag(t.Default)).Bool("forced", Flag(t.Forced))
             .Integer("fileIndex", t.FileIndex).String("codec", t.Codec).String("profile", Absent(t.Profile))
             .String("layout", Absent(t.Layout)).Integer("sampleRate", t.SampleRate).Integer("bitDepth", t.BitDepth)
             .String("title", Absent(t.Title)).Bool("original", Flag(t.Original));
+    }
 
-    private static void WriteSubtitle(JsonOut w, CopySubtitle t) =>
+    /// <summary>Writes a subtitle track's members into an object being written, as a copy's subtitleTracks carries them.</summary>
+    public static void WriteSubtitle(JsonOut w, CopySubtitle t)
+    {
+        ArgumentNullException.ThrowIfNull(w);
+        ArgumentNullException.ThrowIfNull(t);
         w.String("id", t.Id).String("language", Absent(t.Language)).Bool("default", Flag(t.Default))
             .Bool("forced", Flag(t.Forced)).Bool("hearingImpaired", Flag(t.HearingImpaired)).String("format", t.Format)
             .Bool("external", Flag(t.External)).Integer("fileIndex", t.FileIndex).String("title", Absent(t.Title));
+    }
 
     private static string? Absent(string? s) => string.IsNullOrEmpty(s) ? null : s;
 
