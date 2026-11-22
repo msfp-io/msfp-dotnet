@@ -291,9 +291,9 @@ public sealed partial class MsfpEngine
             }
 
             var root = PeerStreamRoot(p);
-            if (!CatalogRules.TryReadImageAnswer(r.Body, root, out var ticket))
+            if (!CatalogRules.TryReadImageAnswer(r.Body, out var ticket)) // P17b: {"ticket"} since proposal 17
             {
-                throw new MsfpException(MsfpError.Unreachable, "an image answer not under its stream root");
+                throw new MsfpException(MsfpError.Unreachable, "an image answer without a ticket");
             }
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);

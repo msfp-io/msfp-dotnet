@@ -236,7 +236,7 @@ public sealed partial class MsfpEngine
                 var pins = Pins.Clean(opened.Certificates ?? []);
                 req = new GroupRequest
                 {
-                    Mail = m.Id, From = m.From, Name = Music.CleanText(opened.Name ?? "", PairingCode.MaxGroupName), Address = opened.Address,
+                    Mail = m.Id, From = m.From, Name = "", Address = opened.Address, // P17b: the mail carries no name since proposal 17: the member's profile's
                     NextCommitment = Base64UrlText.Decode(opened.NextCommitment, 32), Inbound = opened.Inbound,
                     Pins = pins.Count > 0 ? pins : null, Received = Now(),
                 };

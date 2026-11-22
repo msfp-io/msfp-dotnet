@@ -54,7 +54,7 @@ public sealed class FolderTests : IDisposable
         Assert.Equal(8, keys.Count);
         Assert.Equal(keys.Order(StringComparer.Ordinal), keys);
         var heat = byKey["movie/tmdb/949"].Copies![0];
-        Assert.Equal((4L, "matroska", "Heat (1995) [tmdbid-949].mkv", true), (heat.Size, heat.Container, heat.Id, heat.Previews));
+        Assert.Equal((4L, "matroska", "Heat (1995) [tmdbid-949].mkv", true), (heat.Size, heat.MediaType, heat.Id, heat.PreviewLayout is not null)); // P17b
         Assert.NotEmpty(heat.ETag);
         Assert.Equal("fr", Assert.Single(heat.SubtitleTracks).Language);
         Assert.Equal(Path.Combine("Alien (1979) [tmdbid-348]", "Alien.mp4"), byKey["movie/tmdb/348"].Copies![0].Id);

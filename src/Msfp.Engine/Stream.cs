@@ -680,7 +680,7 @@ public sealed partial class MsfpEngine
         await _sheetGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var buffer = new BoundedSink(Protocol.Trickplay.MaxSheetBytes);
+            var buffer = new BoundedSink(PreviewLayout.MaxSheetBytes); // P17b
             Exception? error = null;
             try
             {
@@ -924,7 +924,7 @@ public sealed partial record MediaPath
         switch (parts.Length)
         {
             case 2 when parts[0] == "trickplay":
-                if (!Number(parts[1], Protocol.Trickplay.MaxSheets - 1, out var sheet))
+                if (!Number(parts[1], PreviewLayout.MaxSheets - 1, out var sheet)) // P17b
                 {
                     return false;
                 }

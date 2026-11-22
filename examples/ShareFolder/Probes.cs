@@ -99,13 +99,13 @@ internal sealed class Probes
                     // ("24000/1001"; "0/0" for none, which a receiver drops).
                     video = new VideoStream(st.CodecName ?? "", st.Width, st.Height)
                     {
-                        Profile = Present(st.Profile), Fps = Present(st.AvgFrameRate),
+                        Fps = Present(st.AvgFrameRate), // P17b: no profile since proposal 17
                     };
                     break;
                 case "audio":
                     audio.Add(new CopyAudio("a" + audio.Count.ToString(CultureInfo.InvariantCulture), st.CodecName ?? "")
                     {
-                        Profile = Present(st.Profile), Layout = Present(st.Layout),
+                        // P17b: no profile nor layout since proposal 17.
                         Language = Languages.TrySentTag(st.Tags?.Language ?? "", out var tag) ? tag : null,
                         Channels = st.Channels > 0 ? st.Channels : null,
                         SampleRate = int.TryParse(st.SampleRate, NumberStyles.None, CultureInfo.InvariantCulture, out var rate) && rate > 0 ? rate : null,

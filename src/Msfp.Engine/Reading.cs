@@ -300,7 +300,7 @@ public sealed partial class MsfpEngine
         {
             Streams = w.Streams, Transcodes = w.Transcodes, BitrateKbps = w.BitrateKbps, Downloads = w.Downloads,
             DownloadsPerDay = w.DownloadsPerDay, DownloadKbps = w.DownloadKbps, ScansPerDay = w.ScansPerDay,
-            ScanBytes = w.ScanBytes,
+            // P17b: scanBytes left limits with proposal 17: a scan's answer states it.
         };
         if (music && k.HasAudioStreams && k.HasAudioTranscodes)
         {
@@ -633,7 +633,7 @@ public sealed partial class MsfpEngine
                 Ids = v.Ids.Count > 0 ? new Dictionary<string, string>(v.Ids) : null,
                 Place = v.Place is { } pl ? new Place { Season = pl.Season, Episode = pl.Episode } : null,
                 ExtraType = v.ExtraType.Length > 0 ? v.ExtraType : null,
-                Name = (v.Description?.Name ?? v.Name) is { Length: > 0 } name ? name : null,
+                Name = v.Description?.Name is { Length: > 0 } name ? name : null, // P17b: an extra carries no name since proposal 17
                 Year = v.Description?.Year ?? 0,
                 Image = v.Description?.Image ?? false,
             };
@@ -649,7 +649,7 @@ public sealed partial class MsfpEngine
             return new MusicTitle
             {
                 Key = m.Key, Kind = m.Kind, Libraries = [m.Library], Name = m.Name,
-                SortName = m.SortName.Length > 0 ? m.SortName : null,
+                // P17b: no sortName since proposal 17.
                 Artists = m.Artists.Count > 0 ? [.. m.Artists] : null,
                 ArtistNames = m.ArtistNames.Length > 0 ? m.ArtistNames : null,
                 PrimaryType = m.PrimaryType.Length > 0 ? m.PrimaryType : null,

@@ -154,7 +154,7 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
                 t.Copies.Add(new Msfp.Protocol.Copy(handle, 5_400_000, "mkv", 20, "e" + i.ToString(CultureInfo.InvariantCulture),
                     [new CopyAudio("a0", "aac") { Language = a, Channels = 2, Default = true }])
                 {
-                    Name = "Copy " + a,
+                    // P17b: no name since proposal 17.
                     SubtitleTracks = [new CopySubtitle("s0", "subrip") { Language = "fr" }, new CopySubtitle("s1", "hdmv_pgs_subtitle") { Language = "fr" }],
                 });
             }
@@ -595,6 +595,6 @@ internal static class HostKit
     public static MusicTitle MusicTrack(string key, string copy, string lyrics = "") => new()
     {
         Key = key, Kind = "track", Libraries = ["music"], Name = "x", Album = "album/mb/0b000000-0000-4000-8000-000000000002", Disc = 1, Number = 1,
-        Copies = [new MusicCopy { Id = copy, Name = "FLAC", DurationMs = 200_000, Container = "flac", Codec = "flac", Size = 20, Etag = "m-" + copy, Lyrics = lyrics }],
+        Copies = [new MusicCopy { Id = copy, DurationMs = 200_000, MediaType = "audio/flac", Codec = "flac", Size = 20, Etag = "m-" + copy, Lyrics = lyrics }], // P17b
     };
 }

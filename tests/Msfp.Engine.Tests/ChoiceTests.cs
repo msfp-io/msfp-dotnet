@@ -46,15 +46,16 @@ public sealed class ChoiceTests
         ];
         using var store = new MemoryStore();
         var cfg = new MsfpConfig { Address = "https://a.example", Store = store };
-        Assert.Equal(1, MsfpEngine.ChosenCopy(cfg, copies, new Protocol.PlayRequest { AudioLanguage = "fr" })); // the default by language
+        // P17b: no language in the request since proposal 17.
+        Assert.Equal(1, MsfpEngine.ChosenCopy(cfg, copies, new Protocol.PlayRequest())); // the default by language
         cfg = cfg with { ChooseCopy = (_, _) => 7 };
-        Assert.Equal(0, MsfpEngine.ChosenCopy(cfg, copies, new Protocol.PlayRequest { AudioLanguage = "fr" })); // a hook out of range
+        Assert.Equal(0, MsfpEngine.ChosenCopy(cfg, copies, new Protocol.PlayRequest())); // a hook out of range
         Assert.Equal(1, MsfpEngine.ChosenCopy(cfg, copies, new Protocol.PlayRequest { VersionId = "v1" })); // versionId named
         cfg = cfg with { ChooseTracks = (_, _) => ("a1", "s9") };
         // The hook's audio, the default's subtitles.
-        Assert.Equal(("a1", "s0"), MsfpEngine.ChosenTracks(cfg, copies[1], new Protocol.PlayRequest { SubtitleLanguage = "en" }));
+        Assert.Equal(("a1", "s0"), MsfpEngine.ChosenTracks(cfg, copies[1], new Protocol.PlayRequest())); // P17b
         // Named tracks.
-        Assert.Equal(("a0", ""), MsfpEngine.ChosenTracks(cfg, copies[1], new Protocol.PlayRequest { AudioTrack = "a0", SubtitleTrack = "off" }));
+        Assert.Equal(("a0", ""), MsfpEngine.ChosenTracks(cfg, copies[1], new Protocol.PlayRequest { AudioTrack = "a0" })); // P17b
         // The default names and titles.
         Assert.Equal("", MsfpDefaults.CopyName("Film.2160p.WEB-DL-GRP.mkv"));
         Assert.Equal("4K HDR", MsfpDefaults.CopyName(" 4K  HDR "));

@@ -97,7 +97,7 @@ public sealed class DeliveryTests
         }
 
         // A file above the pairing's bitrate cap.
-        h.EditCopy(Film, 0, c => c with { BitrateKbps = 50_000 });
+        h.EditCopy(Film, 0, c => c with { Size = 50_000L * c.DurationMs / 8 }); // P17b: the overall rate, size × 8 / durationMs
         await s.A.Engine.SetLimitsAsync(s.OnA, new Limits { Streams = 2, Transcodes = 1, BitrateKbps = 10_000 });
         Assert.Equal(MsfpError.DeliveryRefused, await ErrorOf(() => Play(new PlayRequest { Title = Film, Delivery = Playback.DeliveryFile })));
         Assert.Equal(before, h.Starts().Count);
@@ -430,7 +430,7 @@ public sealed class DeliveryTests
         }
 
         h.Files["file"] = big;
-        h.EditCopy(Film, 0, c => c with { Size = big.Length, Previews = true });
+        h.EditCopy(Film, 0, c => c with { Size = big.Length, PreviewLayout = new PreviewLayout(10, 10, 2, 1, 10_000, 3) }); // P17b
         h.Info["movie/tmdb/949#0"] = new CopyInfo { Trickplay = new Trickplay { TileWidth = 10, TileHeight = 10, Columns = 2, Rows = 1, IntervalMs = 10_000, TileCount = 3 } };
         using var s = await Sharing.StartAsync(h, c => c with { NewPairing = new Limits
         {
@@ -520,17 +520,17 @@ public sealed class DeliveryTests
     {
         var h = HostKit.FilmHost();
         h.Libs = [new Library { Id = "films", Name = "Films", Kind = "movies" }, new Library { Id = "music", Name = "Music", Kind = "music" }];
-        h.EditCopy(Film, 0, c => c with { Previews = true });
+        h.EditCopy(Film, 0, c => c with { PreviewLayout = new PreviewLayout(10, 10, 2, 1, 10_000, 3) }); // P17b
         h.Info["movie/tmdb/949#0"] = new CopyInfo { Trickplay = new Trickplay { TileWidth = 10, TileHeight = 10, Columns = 2, Rows = 1, IntervalMs = 10_000, TileCount = 3 } };
         h.Files["trickplay/0"] = Sheets.Jpeg20x10;
         h.Files["trickplay/1"] = Sheets.Jpeg20x10;
         const string Track = "track/mb/0c000000-0000-4000-8000-000000000003";
         h.Titles[Track] = HostKit.MusicTrack(Track, "t", "synced");
-        h.Lyrics["t"] = [new LyricsSet("en", "main", true, 0, "", "", [new LyricsLine(0, "Hello\u0007"), new LyricsLine(1500, "")])];
+        h.Lyrics["t"] = [new LyricsSet("en", "main", [new LyricsLine(0, "Hello\u0007"), new LyricsLine(1500, "")])]; // P17b
         using var s = await Sharing.StartAsync(h);
         var titles = await s.PeerTitlesAsync();
         var copies = ((VideoTitle)titles[Film]).Copies!;
-        Assert.True(copies[0].Previews && !copies[1].Previews);
+        Assert.True(copies[0].PreviewLayout is not null && copies[1].PreviewLayout is null); // P17b
         var pv = await s.B.Engine.PreviewsAsync(s.OnB, Film, copies[0].Id);
         Assert.Equal((2, 2, 3), (pv.Trickplay.Sheets, pv.Sheets.Count, pv.Trickplay.TileCount));
         Assert.Empty(s.A.Engine.Playbacks());

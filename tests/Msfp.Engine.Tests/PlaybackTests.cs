@@ -282,7 +282,7 @@ public sealed class PlaybackTests
     public async Task SheetsReencoded()
     {
         var h = HostKit.FilmHost();
-        h.EditCopy(Film, 0, c => c with { Previews = true });
+        h.EditCopy(Film, 0, c => c with { PreviewLayout = new PreviewLayout(10, 10, 2, 1, 10_000, 4) }); // P17b
         h.Info["movie/tmdb/949#0"] = new CopyInfo { Trickplay = new Trickplay { TileWidth = 10, TileHeight = 10, Columns = 2, Rows = 1, IntervalMs = 10_000, TileCount = 4 } };
         h.Files["trickplay/0"] = [.. Sheets.Jpeg20x10, .. HostKit.Bytes("trailing bytes")];
         h.Files["trickplay/1"] = Sheets.Jpeg21x10;

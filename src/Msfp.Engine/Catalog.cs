@@ -1036,7 +1036,7 @@ public sealed partial class MsfpEngine
             return null;
         }
 
-        var name = v.Description?.Name ?? v.Name;
+        var name = v.Description?.Name ?? ""; // P17b: an extra carries no name since proposal 17
         var year = v.Description?.Year ?? 0;
         var image = v.Description?.Image ?? false;
         var with = v.With.Order(StringComparer.Ordinal).ToList();
@@ -1067,20 +1067,20 @@ public sealed partial class MsfpEngine
     internal Protocol.Copy SendCopy(string peer, Protocol.Copy c) => c with
     {
         Id = VersionId(peer, c.Id),
-        Name = Label(_cfg.CopyName!, c.Name),
-        AudioTracks = (c.AudioTracks ?? []).Select(a => a with { Language = SentTag(a.Language), Title = Label(_cfg.TrackTitle!, a.Title) }).ToList(),
-        SubtitleTracks = (c.SubtitleTracks ?? []).Select(s => s with { Language = SentTag(s.Language), Title = Label(_cfg.TrackTitle!, s.Title) }).ToList(),
+        // P17b: copies and tracks carry no names since proposal 17.
+        AudioTracks = (c.AudioTracks ?? []).Select(a => a with { Language = SentTag(a.Language) }).ToList(),
+        SubtitleTracks = (c.SubtitleTracks ?? []).Select(s => s with { Language = SentTag(s.Language) }).ToList(),
     };
 
     // SendCopy for a track's copy (music section 3.3).
-    internal MusicCopy SendMusicCopy(string peer, MusicCopy c) => c with { Id = VersionId(peer, c.Id), Name = Label(_cfg.CopyName!, c.Name) ?? "" };
+    internal MusicCopy SendMusicCopy(string peer, MusicCopy c) => c with { Id = VersionId(peer, c.Id) }; // P17b: no name since proposal 17
 
     private static string? SentTag(string? code) => code is not null && Languages.TrySentTag(code, out var tag) ? tag : null;
 
     // A name or a title as the host's hook keeps it, plain text of at most
     // 64 characters; null for none.
     private static string? Label(Func<string, string> keep, string? s) =>
-        Music.CleanText(keep(s ?? "") ?? "", Copies.MaxName) is { Length: > 0 } kept ? kept : null;
+        Music.CleanText(keep(s ?? "") ?? "", 64) is { Length: > 0 } kept ? kept : null; // P17b: Copies.MaxName went with proposal 17
 
     // The host's music title as sent, its copies made ready to leave, read
     // back as a receiver reads it: what a receiver would skip or drop isn't
@@ -1089,7 +1089,7 @@ public sealed partial class MsfpEngine
     {
         var w = new Protocol.MusicTitle
         {
-            Key = t.Key, Kind = t.Kind, Library = library, Name = t.Name ?? "", SortName = t.SortName ?? "",
+            Key = t.Key, Kind = t.Kind, Library = library, Name = t.Name ?? "", // P17b: no sortName since proposal 17
             Artists = t.Artists ?? [], ArtistNames = t.ArtistNames ?? "", PrimaryType = t.PrimaryType ?? "", SecondaryTypes = t.SecondaryTypes ?? [],
             Compilation = t.Compilation, Date = t.Date ?? "", OriginalDate = t.OriginalDate ?? "", Genres = t.Genres ?? [],
             Album = t.Album ?? "", Disc = t.Disc, Number = t.Number,

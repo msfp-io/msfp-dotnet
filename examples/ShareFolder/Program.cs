@@ -412,7 +412,7 @@ async Task<PreviewSheets> PreviewsOfAsync(string peer, string key)
 {
     Msfp.Title? t = null;
     await store.ReadAsync(async tx => t = await tx.PeerTitleAsync(peer, key), default);
-    if (t is not Msfp.VideoTitle v || v.BestCopy() is not { Previews: true } c)
+    if (t is not Msfp.VideoTitle v || v.BestCopy() is not { PreviewLayout: not null } c) // P17b
     {
         throw new MsfpException(MsfpError.NotFound);
     }

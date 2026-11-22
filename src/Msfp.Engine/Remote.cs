@@ -481,8 +481,13 @@ public sealed partial class MsfpEngine
         }
         else if (request.Queue.Count > 0)
         {
-            var asked = new JsonArray(request.Queue.Select(q => (JsonNode?)JsonValue.Create(q)).ToArray());
-            if (!Music.TryCheckQueue(request.Title, asked, out _))
+            // P17b: queue entries are objects since proposal 17.
+            var asked = new JsonArray(request.Queue.Select(q => (JsonNode?)new JsonObject { ["title"] = q }).ToArray());
+            try
+            {
+                Music.CheckQueue(new JsonObject { ["title"] = request.Title, ["queue"] = asked });
+            }
+            catch (PlayRefusal)
             {
                 throw new MsfpException(MsfpError.InvalidRequest, "a queue MSFP doesn't allow");
             }
@@ -499,7 +504,7 @@ public sealed partial class MsfpEngine
             .String("audioTrack", Playback.TryTrackId(request.AudioTrack, 'a', out _) ? request.AudioTrack : null)
             .String("versionId", Playback.Id(request.VersionId) ? request.VersionId : null)
             .String("subtitleLanguage", subtitleLanguage).String("subtitleTrack", subtitleTrack)
-            .Strings("queue", queue));
+            .Objects("queue", queue, (w, q) => w.String("title", q))); // P17b
         Reply r;
         try
         {
@@ -613,7 +618,7 @@ public sealed partial class MsfpEngine
         CancellationToken ct)
     {
         var root = PeerStreamRoot(p);
-        if (Playback.ReadPlayAnswer(raw, req.Delivery, root, "") is not { } a)
+        if (Playback.ReadPlayAnswer(raw, new PlayAsked { Purpose = purpose, Delivery = req.Delivery, Video = !audioOnly }) is not { } a) // P17b
         {
             return (null, "the playback's members break MSFP's rules");
         }
@@ -628,25 +633,24 @@ public sealed partial class MsfpEngine
             return (null, "not an object");
         }
 
-        var streamBase = a.Stream.Base;
-        var ticket = streamBase[root.Length..].TrimEnd('/');
+        // P17b: the URLs are built from the ticket, and the tracks are the
+        // catalog's, since proposal 17.
+        var streamBase = MediaUrls.Base(root, a.Ticket);
+        var ticket = a.Ticket;
         var rm = new RemotePlay { Peer = p.Id, PeerName = p.Name, TheirId = a.Id, Base = streamBase, AudioOnly = audioOnly };
-        rm.Audio.UnionWith(a.AudioTracks.Select(t => t.Id));
         // The copy as the catalog gave it: its etag and size.
         var (catalogEtag, size) = await CatalogCopyAsync(p.Id, req.Title, a.VersionId.Length > 0 ? a.VersionId : req.VersionId, ct)
             .ConfigureAwait(false);
         var changed = catalogEtag != a.Etag;
         var view = new RemotePlayback
         {
-            Peer = p.Id, Title = req.Title, Purpose = purpose, Delivery = req.Delivery, Method = a.Method, Protocol = a.Stream.Protocol,
-            MimeType = a.Stream.Protocol == "file" ? Playback.RelayedMediaType(a.Stream.MimeType) : "",
+            // P17b: the media type, the length and the tracks are the catalog's since proposal 17.
+            Peer = p.Id, Title = req.Title, Purpose = purpose, Delivery = req.Delivery, Method = a.Method, Protocol = a.Protocol,
+            MimeType = "",
             Etag = a.Etag, Size = changed ? -1 : size, CopyChanged = changed,
-            PositionMs = a.PositionMs, DurationMs = a.DurationMs, MaxBitrateKbps = a.MaxBitrateKbps,
+            PositionMs = a.PositionMs, DurationMs = 0, MaxBitrateKbps = a.MaxBitrateKbps ?? 0,
             VersionId = a.VersionId, AudioTrack = a.AudioTrack, AudioRenditions = a.AudioRenditions,
-            AudioTracks = a.AudioTracks.Select(t => new Track
-            {
-                Id = t.Id, Language = Nonempty(t.Language), Channels = t.Channels, Role = Nonempty(t.Role), Default = t.Default, Forced = t.Forced,
-            }).ToList(),
+            AudioTracks = [],
         };
         rm.Entries[0] = new RemoteStream(view.Protocol, view.Size, view.Etag);
         if (!audioOnly)
@@ -662,13 +666,14 @@ public sealed partial class MsfpEngine
         else if (req.Queue.Count > 0)
         {
             var entries = new List<RemoteEntry>();
-            foreach (var q in Music.ReadQueue(o["queue"], req.Queue, req.Delivery, root, a.Stream.Url))
+            // P17b: entries carry no URL, media type nor length since proposal 17.
+            var asked = req.Queue.Select(q => new QueueAsk(q, "", req.Delivery, false)).ToList();
+            foreach (var q in Music.ReadQueue(o["queue"], asked))
             {
-                var place = req.Queue.ToList().IndexOf(q.Title);
-                entries.Add(new RemoteEntry(place, q.Title, q.VersionId, q.Method, q.Stream.Protocol,
-                    q.Stream.Protocol == "file" ? Playback.RelayedMediaType(q.Stream.MimeType) : "", q.DurationMs ?? 0));
+                var place = q.Place;
+                entries.Add(new RemoteEntry(place, q.Title, q.VersionId, q.Method, q.Protocol, "", 0));
                 var (etag, qsize) = await CatalogCopyAsync(p.Id, q.Title, q.VersionId, ct).ConfigureAwait(false);
-                rm.Entries[place + 1] = new RemoteStream(q.Stream.Protocol, etag.Length == 0 ? -1 : qsize, etag);
+                rm.Entries[place + 1] = new RemoteStream(q.Protocol, etag.Length == 0 ? -1 : qsize, etag);
             }
 
             view = view with { Queue = entries };
@@ -755,7 +760,7 @@ public sealed partial class MsfpEngine
                     // PGS; a format MSFP's table doesn't name may be served
                     // either way (video section 5.4).
                     var s = JsonMembers.AsString(u);
-                    bool text = s == Playback.SubtitleUrl(streamBase, id, false), pictures = s == Playback.SubtitleUrl(streamBase, id, true);
+                    bool text = s == streamBase + "subtitles/" + id, pictures = s == streamBase + "pictures/" + id; // P17b
                     var format = t.Format ?? "";
                     if ((TextFormats.Contains(format) && !text) || (PictureFormats.Contains(format) && !pictures) || (!text && !pictures))
                     {
@@ -793,11 +798,7 @@ public sealed partial class MsfpEngine
         }
 
         string Id(string name) => JsonMembers.AsString(o[name]) is { } s && Playback.Id(s) ? s : "";
-        var fonts = 0;
-        if (o.TryGetPropertyValue("fonts", out var fl) && Font.ReadUrls(fl, root) is { } urls && urls.All(f => f.StartsWith(streamBase, StringComparison.Ordinal)))
-        {
-            fonts = urls.Count;
-        }
+        var fonts = Video.ReadFontCount(o["fontCount"]); // P17b: fontCount since proposal 17
 
         v = v with
         {
@@ -805,37 +806,7 @@ public sealed partial class MsfpEngine
             BurnedTrack = Id("burnedTrack"), SubtitleStretchSeconds = subtitles.Count + forced.Count > 0 ? WebVtt.StretchSeconds : 0,
             Fonts = fonts,
         };
-        if (o.TryGetPropertyValue("trickplay", out var tp))
-        {
-            Previews? pv;
-            try
-            {
-                pv = Video.ReadTrickplay(tp, root);
-            }
-            catch (ProtocolException)
-            {
-                return (null, "previews outside what MSFP allows");
-            }
-
-            if (pv is not null && pv.Ticket != ticket)
-            {
-                return (null, "previews outside what MSFP allows");
-            }
-
-            if (pv is not null && _cfg.SheetEncoder is not null)
-            {
-                var t = pv.Trickplay;
-                v = v with
-                {
-                    Trickplay = new Trickplay
-                    {
-                        TileWidth = t.TileWidth, TileHeight = t.TileHeight, Columns = t.Columns, Rows = t.Rows,
-                        IntervalMs = t.IntervalMs, TileCount = t.TileCount, Sheets = t.Sheets,
-                    },
-                };
-            }
-        }
-
+        // P17b: the previews' layout is the catalog's since proposal 17 (previewLayout).
         return (v, "");
     }
 

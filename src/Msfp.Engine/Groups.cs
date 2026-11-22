@@ -928,7 +928,7 @@ public sealed partial class MsfpEngine
             };
             var content = new SealedContent
             {
-                Address = Named(), Name = Name(), NextCommitment = Base64UrlText.Encode(OurKeys().Commitment),
+                Address = Named(), NextCommitment = Base64UrlText.Encode(OurKeys().Commitment), // P17b: no name since proposal 17
                 Inbound = !SaysUncallable(), Certificates = pins.Count > 0 ? pins : null,
             };
             var sealedMail = GroupEvents.SealMail(Current(), mail, m.EncryptionKey, content, _random);

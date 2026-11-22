@@ -81,7 +81,7 @@ public sealed class RelayTests
     {
         var h = HostKit.FilmHost();
         var sheet = Sheets.Jpeg20x10;
-        h.EditCopy(Film, 0, c => c with { Previews = true });
+        h.EditCopy(Film, 0, c => c with { PreviewLayout = new Msfp.Protocol.PreviewLayout(10, 10, 2, 1, 10_000, 3) }); // P17b
         h.Info["movie/tmdb/949#0"] = new CopyInfo
         {
             Trickplay = new Trickplay { TileWidth = 10, TileHeight = 10, Columns = 2, Rows = 1, IntervalMs = 10_000, TileCount = 3 },

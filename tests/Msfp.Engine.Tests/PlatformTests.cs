@@ -15,7 +15,7 @@ public sealed class PlatformTests
     public async Task SeveralPartsNeverFile()
     {
         var h = HostKit.FilmHost();
-        h.EditCopy(Film, 0, c => c with { Parts = [new CopyPart(10, 2_700_000), new CopyPart(10, 2_700_000)] });
+        h.EditCopy(Film, 0, c => c with { Parts = 2 }); // P17b: a count since proposal 17
         h.Protocol = "file";
         using var s = await Sharing.StartAsync(h);
         // Asked as file: refused before the host is asked.

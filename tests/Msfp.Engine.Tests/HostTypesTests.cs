@@ -129,7 +129,7 @@ public sealed class HostTypesTests
         if (t is VideoTitle v)
         {
             var c = Assert.Single(v.Copies!);
-            Assert.Equal(("ver_x", "4K", 5L, "e1", 2160), (c.Id, c.Name, c.StartMs, c.ETag, c.Video!.Height));
+            Assert.Equal(("ver_x", 5L, "e1", 2160), (c.Id, c.StartMs, c.ETag, c.Video!.Height)); // P17b: no name since proposal 17
             Assert.Equal(6, c.AudioTracks[0].Channels);
             Assert.True(c.SubtitleTracks[0].Forced);
             Assert.Equal("One", c.Chapters[0].Name);

@@ -352,7 +352,7 @@ public sealed class CatalogTests
         var v = (VideoTitle)got["movie/tmdb/2"];
         Assert.Equal(["fr"], v.AudioLanguages());
         Assert.Single(v.Ids!);
-        Assert.Equal("matroska", Assert.Single(v.Copies!).Container);
+        Assert.Equal("matroska", Assert.Single(v.Copies!).MediaType); // P17b: mediaType since proposal 17
         Assert.Equal("<b>x</b>", ((MusicTitle)got["track/mb/0c000000-0000-4000-8000-000000000003"]).Name);
         // Wrong types at the top: the reading fails, what was kept stays.
         foreach (var bad in new[] { "{\"titles\":{}}", "{\"titles\":[],\"next\":7}", "{\"titles\":[],\"seq\":\"1\"}", "{\"titles\":[],\"changes\":1}", "{\"titles\":[],\"gone\":\"x\"}" })
@@ -393,7 +393,7 @@ public sealed class CatalogTests
             Key = Track, Kind = "track", Libraries = ["music"], Name = "The\tBoxer",
             Artists = ["artist/mb/0a000000-0000-4000-8000-000000000001", "nope"], ArtistNames = "Simon & Garfunkel",
             Album = "album/mb/0b000000-0000-4000-8000-000000000002", Disc = 1, Number = 2, Date = "1970", Genres = ["Folk"],
-            Copies = [new MusicCopy { Id = "boxer.flac", Name = "The Boxer.flac", DurationMs = 308000, Container = "flac", Codec = "flac",
+            Copies = [new MusicCopy { Id = "boxer.flac", DurationMs = 308000, MediaType = "audio/flac", Codec = "flac", // P17b
                 Size = 36214455, Etag = "7f3a9c21", SampleRate = 44100, BitDepth = 16, Channels = 2 }],
             Ids = new() { ["isrc"] = "USSM17000123", ["imdb"] = "tt0133093" },
         };
@@ -418,7 +418,7 @@ public sealed class CatalogTests
         Assert.Equal(["Folk"], m.Genres!);
         var copy = Assert.Single(m.Copies!);
         Assert.Equal(308000, copy.DurationMs);
-        Assert.Equal("", copy.Name);
+        // P17b: a copy carries no name since proposal 17.
         Assert.StartsWith("ver_", copy.Id, StringComparison.Ordinal);
         Assert.Single(m.Ids!);
         Assert.Equal(s.LibraryPub, m.Libraries![0]);
@@ -458,8 +458,8 @@ public sealed class CatalogTests
         m1.Copies[1] = m1.Copies[1] with
         {
             Video = new VideoStream("hevc", 3840, 1600) { Hdr = ["dv", "hdr10"] },
-            Name = "Film.2160p.WEB-DL-GRP.mkv",
-            AudioTracks = [m1.Copies[1].AudioTracks[0] with { Title = "Commentary" }, new CopyAudio("a1", "dts") { Language = "ger", Title = "German DTS-HD by GRP" }],
+            // P17b: copies and tracks carry no names since proposal 17.
+            AudioTracks = [m1.Copies[1].AudioTracks[0], new CopyAudio("a1", "dts") { Language = "ger" }],
         };
         var m2 = (VideoTitle)h.Titles["movie/tmdb/2"];
         m2.Copies![0] = m2.Copies[0] with { Size = 0 }; // a receiver would skip it: so is the title
@@ -473,14 +473,11 @@ public sealed class CatalogTests
         Assert.Equal(1080, first.Video?.Height);
         var best = v.Copies[1];
         Assert.Equal(["dv", "hdr10"], best.Video!.Hdr); // sorted
-        Assert.Null(best.Name);
-        Assert.Equal("Commentary", best.AudioTracks[0].Title);
-        Assert.Null(best.AudioTracks[1].Title);
         Assert.Equal("de", best.AudioTracks[1].Language);
         Assert.Equal(["en", "fr", "de"], v.AudioLanguages());
         Assert.Equal(["fr"], v.SubtitleLanguages());
         var c = v.Copies[0];
-        Assert.Equal((2, 20L, "e0", "Copy en"), (c.Chapters.Count, c.Size, c.ETag, c.Name));
+        Assert.Equal((2, 20L, "e0"), (c.Chapters.Count, c.Size, c.ETag)); // P17b: no name since proposal 17
         Assert.All(v.Copies, x => Assert.StartsWith("ver_", x.Id, StringComparison.Ordinal));
         var body = s.Exchanges("titles")[^1].ResponseBody;
         Assert.DoesNotContain("movie/tmdb/1#", body, StringComparison.Ordinal);

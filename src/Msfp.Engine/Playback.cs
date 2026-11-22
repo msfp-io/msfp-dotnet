@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -324,13 +325,6 @@ internal sealed record OfferedCopy
 
     public IReadOnlyList<CopySubtitle> Subtitles { get; init; } = [];
 
-    /// <summary>What the choices of playback section 2.6 need of it.</summary>
-    public PlayCopy PlayCopy() => new()
-    {
-        Id = Id, Parts = Parts, BitrateKbps = Bitrate,
-        Audio = MsfpDefaults.AudioOf(Audio),
-        Subtitles = Subtitles.Select(s => s.Id).ToList(),
-    };
 }
 
 /// <summary>
@@ -521,9 +515,10 @@ public sealed partial class MsfpEngine
                 {
                     output.Add(new OfferedCopy
                     {
-                        Handle = handles.GetValueOrDefault(c.Id, ""), Whole = c, Id = c.Id, Name = c.Name ?? "", Etag = c.ETag, Size = c.Size,
-                        Parts = Math.Max(c.Parts.Count, 1), Bitrate = (int)Math.Min(c.BitrateKbps ?? 0, int.MaxValue), DurationMs = c.DurationMs,
-                        StartMs = c.StartMs, Previews = c.Previews, Audio = c.AudioTracks, Subtitles = c.SubtitleTracks,
+                        // P17b: no name, bitrate or previews flag since proposal 17; the rate from size and length.
+                        Handle = handles.GetValueOrDefault(c.Id, ""), Whole = c, Id = c.Id, Name = "", Etag = c.ETag, Size = c.Size,
+                        Parts = Math.Max(c.Parts ?? 1, 1), Bitrate = Rate(c.Size, c.DurationMs), DurationMs = c.DurationMs,
+                        StartMs = c.StartMs, Previews = c.PreviewLayout is not null, Audio = c.AudioTracks, Subtitles = c.SubtitleTracks,
                     });
                 }
 
@@ -545,14 +540,11 @@ public sealed partial class MsfpEngine
                             SampleRate = c.SampleRate == 0 ? null : c.SampleRate, BitDepth = c.BitDepth == 0 ? null : c.BitDepth,
                         },
                     ];
-                    var whole = new Copy(c.Id, c.DurationMs, c.Container, c.Size, c.Etag, audio)
-                    {
-                        Name = c.Name.Length > 0 ? c.Name : null, BitrateKbps = c.BitrateKbps, Added = c.Added.Length > 0 ? c.Added : null,
-                    };
+                    var whole = new Copy(c.Id, c.DurationMs, c.MediaType, c.Size, c.Etag, audio); // P17b: no name, bitrate or added since proposal 17
                     output.Add(new OfferedCopy
                     {
-                        Handle = mhandles.GetValueOrDefault(c.Id, ""), Whole = whole, Id = c.Id, Name = c.Name, Etag = c.Etag, Size = c.Size,
-                        Parts = 1, Bitrate = c.BitrateKbps, DurationMs = c.DurationMs, Lyrics = c.Lyrics, Audio = audio,
+                        Handle = mhandles.GetValueOrDefault(c.Id, ""), Whole = whole, Id = c.Id, Name = "", Etag = c.Etag, Size = c.Size,
+                        Parts = 1, Bitrate = Rate(c.Size, c.DurationMs), DurationMs = c.DurationMs, Lyrics = c.Lyrics, Audio = audio,
                     });
                 }
 
@@ -663,23 +655,30 @@ public sealed partial class MsfpEngine
         : new SubtitleServed(TextFormats.Contains(format), AssFormats.Contains(format), PictureFormats.Contains(format));
 
     // A copy's previews' layout, in MSFP's bounds; null without, or out of them.
-    private static Protocol.Trickplay? TrickplayOf(Trickplay? tp)
+    // P17b: the layout is the catalog's previewLayout now (Copies.ReadPreviewLayout).
+    private static PreviewLayout? TrickplayOf(Trickplay? tp)
     {
         if (tp is null)
         {
             return null;
         }
 
-        var t = new Protocol.Trickplay(tp.TileWidth, tp.TileHeight, tp.Columns, tp.Rows, tp.IntervalMs, tp.TileCount, 0);
-        t = t with { Sheets = t.SheetCount };
-        return t.InBounds ? t : null;
+        return Copies.ReadPreviewLayout(JsonNode.Parse(JsonOut.Object(o => o.Integer("tileWidth", tp.TileWidth)
+            .Integer("tileHeight", tp.TileHeight).Integer("columns", tp.Columns).Integer("rows", tp.Rows)
+            .Integer("intervalMs", tp.IntervalMs).Integer("tileCount", tp.TileCount))));
     }
 
     // Writes the trickplay object of a layout, its sheets under base.
-    private static void WriteSheets(JsonOut o, Protocol.Trickplay t, string streamBase) =>
+    // P17b: answers carry no layout nor URLs since proposal 17.
+    private static void WriteSheets(JsonOut o, PreviewLayout t, string streamBase) =>
         o.Integer("tileWidth", t.TileWidth).Integer("tileHeight", t.TileHeight).Integer("columns", t.Columns).Integer("rows", t.Rows)
             .Integer("intervalMs", t.IntervalMs).Integer("tileCount", t.TileCount)
-            .Strings("sheets", Enumerable.Range(0, t.Sheets).Select(n => Playback.SheetUrl(streamBase, n)));
+            .Strings("sheets", Enumerable.Range(0, t.Sheets).Select(n => streamBase + "trickplay/" + n.ToString(CultureInfo.InvariantCulture)));
+
+    // A copy's overall rate in kbit/s, size × 8 / durationMs (P17b: copies
+    // carry no bitrate since proposal 17); 0 for a copy of no length.
+    private static int Rate(long size, long durationMs) =>
+        durationMs > 0 ? (int)Math.Min(size * 8 / durationMs, int.MaxValue) : 0;
 
     // A refusal of play, progress or stop as answered.
     private static Answer RefusalOf(PlayRefusal r) => r.Problem switch
@@ -730,9 +729,17 @@ public sealed partial class MsfpEngine
         var video = k.Part == Versions.PartVideo;
         var audioOnly = k.Part == Versions.PartMusic;
         IReadOnlyList<string> queue = [];
-        if (audioOnly && !Music.TryCheckQueue(@in.Title, members["queue"], out queue))
+        if (audioOnly)
         {
-            return Answer.Refuse(ProblemType.Invalid);
+            // P17b: queue entries are objects with their own copy and delivery since proposal 17.
+            try
+            {
+                queue = Music.CheckQueue(members).Select(q => q.Title).ToList();
+            }
+            catch (PlayRefusal e)
+            {
+                return RefusalOf(e);
+            }
         }
 
         if (!video)
@@ -740,8 +747,7 @@ public sealed partial class MsfpEngine
             // Members of another content part are ignored (playback section 2.4).
             @in = @in with
             {
-                SubtitleLanguage = "", SubtitleTrack = "",
-                Transcode = @in.Transcode is { } tt ? tt with { BurnSubtitle = "" } : null,
+                Transcode = @in.Transcode is { } tt ? tt with { BurnSubtitle = "" } : null, // P17b: no subtitle members since proposal 17
             };
         }
 
@@ -794,7 +800,9 @@ public sealed partial class MsfpEngine
         // them.
         var kbps = @in.BitrateCap(_cfg.MaxBitrateKbps, Generous(p).BitrateKbps);
         var enc = _cfg.Encoders ?? new Encoders();
-        if (Playback.RefuseDelivery(@in, chosen.PlayCopy(), kbps, enc.AllVideo, enc.AllAudio, video) is { } refused)
+        // P17b: the copy as the catalog says it, and what is made here.
+        if (Playback.RefuseDelivery(@in, chosen.Whole, Playback.ChooseAudio(chosen.Whole, @in.AudioTrack), kbps,
+                new OwnerMakes { VideoEncoders = enc.AllVideo, AudioEncoders = enc.AllAudio }) is { } refused)
         {
             return RefusalOf(refused);
         }
@@ -868,7 +876,7 @@ public sealed partial class MsfpEngine
         var sr = new StartRequest
         {
             Copy = chosen.Handle, Title = @in.Title, AudioOnly = audioOnly, Purpose = purpose, Delivery = @in.Delivery,
-            Container = @in.Container, Transcode = @in.Transcode, AudioRenditions = @in.AudioRenditions, Parts = chosen.Parts,
+            Container = @in.MediaType, Transcode = @in.Transcode, AudioRenditions = @in.AudioRenditions, Parts = chosen.Parts,
             Peer = new PeerRef(p.Id, p.Name), AudioTrack = audio, SubtitleTrack = shown, StartMs = start,
             MaxBitrateKbps = kbps, Queue = queued,
             Admit = method =>
@@ -970,7 +978,7 @@ public sealed partial class MsfpEngine
         {
             Copies.WriteSubtitle(w, t);
             var how = pb.Subtitles.GetValueOrDefault(t.Id);
-            w.String("url", how.Text || how.Pictures ? Playback.SubtitleUrl(streamBase, t.Id, how.Pictures) : null)
+            w.String("url", how.Text || how.Pictures ? streamBase + (how.Pictures ? "pictures/" : "subtitles/") + t.Id : null) // P17b
                 .String("assUrl", how.Ass ? streamBase + "ass/" + t.Id : null);
         }
 
@@ -979,9 +987,7 @@ public sealed partial class MsfpEngine
         foreach (var e in started.Queue ?? [])
         {
             var qc = queueCopies[e.Place];
-            var mime = e.Protocol == "hls" ? Playback.HlsType : Playback.RelayedMediaType(e.MimeType);
-            entries.Add(new QueueEntry(queue[e.Place], qc.Id, e.Method, new QueueStream(Music.QueueUrl(root, ticket, e.Place, e.Protocol), e.Protocol, mime),
-                qc.DurationMs > 0 && qc.DurationMs <= Music.MaxDurationMs ? qc.DurationMs : null));
+            entries.Add(new QueueEntry(queue[e.Place], qc.Id, e.Method, e.Protocol, e.Place)); // P17b: no URL nor length since proposal 17
         }
 
         entries.Sort((a, b) => queue.ToList().IndexOf(a.Title).CompareTo(queue.ToList().IndexOf(b.Title)));
@@ -1101,7 +1107,7 @@ public sealed partial class MsfpEngine
         pb.Entries[0] = new EntryServed(s.Protocol, c.Size, c.Etag);
         if (@in.Purpose == Playback.PurposeScan)
         {
-            pb.ScanCap = new PlaybackLimits { ScanBytes = slot.Limits.ScanBytes }.ScanCap;
+            pb.ScanCap = Playback.ScanCapOf(slot.Limits.ScanBytes); // P17b
         }
 
         if (@in.Purpose == Playback.PurposeDownload && slot.Limits.DownloadKbps > 0)
@@ -1435,7 +1441,7 @@ public sealed partial class MsfpEngine
 
             var hr = new Report
             {
-                Handle = handle, Title = outcome.Title, PositionMs = outcome.PositionMs, HasPosition = outcome.HasPosition, Paused = r.Paused,
+                Handle = handle, Title = outcome.Title, PositionMs = outcome.PositionMs, HasPosition = outcome.HasPosition, Paused = false, // P17b: no paused since proposal 17
                 At = outcome.At, Stop = call == Playback.CallStop, Late = pb is null,
             };
             try

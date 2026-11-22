@@ -45,8 +45,8 @@ public static partial class MsfpDefaults
     {
         ArgumentNullException.ThrowIfNull(copies);
         ArgumentNullException.ThrowIfNull(request);
-        var choices = copies.Select(c => new PlayCopy { Id = c.Id, Audio = AudioOf(c.AudioTracks) }).ToList();
-        return Math.Max(Playback.ChooseCopy(choices, "", request.AudioLanguage), 0);
+        // P17b: no language in the request since proposal 17: the first copy.
+        return Math.Max(Playback.ChooseCopy(copies, ""), 0);
     }
 
     /// <summary>
@@ -63,12 +63,10 @@ public static partial class MsfpDefaults
     {
         ArgumentNullException.ThrowIfNull(copy);
         ArgumentNullException.ThrowIfNull(request);
-        return (Playback.ChooseAudio(AudioOf(copy.AudioTracks), "", request.AudioLanguage),
-            MsfpEngine.ChooseSubtitles(copy.SubtitleTracks ?? [], "", request.SubtitleLanguage));
+        // P17b: no language in the request since proposal 17: the file's
+        // default audio, no subtitles.
+        return (Playback.ChooseAudio(copy, ""), MsfpEngine.ChooseSubtitles(copy.SubtitleTracks ?? [], "", ""));
     }
-
-    internal static List<PlayCopyAudio> AudioOf(IReadOnlyList<CopyAudio>? audio) =>
-        (audio ?? []).Select(a => new PlayCopyAudio(a.Id, a.Language ?? "", a.Role ?? "", a.Default)).ToList();
 
     // The signs of a file name or a release's name in a label: a path, an
     // extension, words joined by dots or underscores, brackets, a release
@@ -87,7 +85,7 @@ public static partial class MsfpDefaults
     public static string CopyName(string name)
     {
         var s = Music.CleanText(name ?? "", (name ?? "").Length);
-        return FileLike().IsMatch(s) ? "" : Music.CleanText(s, Copies.MaxName);
+        return FileLike().IsMatch(s) ? "" : Music.CleanText(s, 64); // P17b: Copies.MaxName went with proposal 17
     }
 
     // The words a track's title may hold (video section 3.6: a description
@@ -123,7 +121,7 @@ public static partial class MsfpDefaults
     /// <param name="title">The host's title of the track.</param>
     public static string TrackTitle(string title)
     {
-        var s = Music.CleanText(title ?? "", Copies.MaxName);
+        var s = Music.CleanText(title ?? "", 64); // P17b: Copies.MaxName went with proposal 17
         var words = new List<string>();
         var word = new StringBuilder();
         foreach (var r in s.ToLowerInvariant().EnumerateRunes())
@@ -179,7 +177,7 @@ public sealed partial class MsfpEngine
     {
         bool HasAudio(string id) => (copy.AudioTracks ?? []).Any(a => a.Id == id);
         bool HasSub(string id) => (copy.SubtitleTracks ?? []).Any(s => s.Id == id);
-        string audio = request.AudioTrack, subtitle = request.SubtitleTrack;
+        string audio = request.AudioTrack, subtitle = ""; // P17b: no subtitleTrack in the request since proposal 17
         bool namedAudio = HasAudio(audio), namedSub = subtitle == "off" || HasSub(subtitle);
         if (!namedAudio || !namedSub)
         {

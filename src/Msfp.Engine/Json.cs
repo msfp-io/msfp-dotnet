@@ -97,7 +97,7 @@ public static class MsfpJson
 
     private static readonly HashSet<Type> CopyTypes =
     [
-        typeof(Protocol.Copy), typeof(Protocol.CopyPart), typeof(Protocol.VideoStream), typeof(Protocol.VideoDv),
+        typeof(Protocol.Copy), typeof(Protocol.PreviewLayout), typeof(Protocol.VideoStream), typeof(Protocol.VideoDv), // P17b: no CopyPart since proposal 17
         typeof(Protocol.VideoColour), typeof(Protocol.CopyAudio), typeof(Protocol.CopySubtitle), typeof(Protocol.CopyChapter),
         typeof(Protocol.CopySegment), typeof(Protocol.MusicCopy), typeof(Protocol.ReplayGain),
     ];

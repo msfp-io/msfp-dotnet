@@ -259,7 +259,7 @@ public sealed partial class MsfpEngine
             case MediaKind.Font:
                 return path.Font >= 0 && path.Font < v.Fonts && path.Entry == 0 ? "fonts/" + path.Font.ToString(CultureInfo.InvariantCulture) : null;
             case MediaKind.Sheet:
-                return v.Trickplay is { } tp && path.Sheet >= 0 && path.Sheet < tp.Sheets && path.Entry == 0 ? Playback.SheetUrl("", path.Sheet) : null;
+                return v.Trickplay is { } tp && path.Sheet >= 0 && path.Sheet < tp.Sheets && path.Entry == 0 ? "trickplay/" + path.Sheet.ToString(CultureInfo.InvariantCulture) : null; // P17b
         }
 
         return null;
@@ -563,7 +563,7 @@ public sealed partial class MsfpEngine
                 (limit, rebuild) = SmallRules(path);
                 break;
             case MediaKind.Sheet:
-                limit = Protocol.Trickplay.MaxSheetBytes;
+                limit = PreviewLayout.MaxSheetBytes; // P17b
                 break;
         }
 

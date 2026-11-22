@@ -262,8 +262,9 @@ public sealed partial class MsfpEngine
             throw new MsfpException(MsfpError.NotSupported);
         }
 
+        // P17b: the layout is the catalog copy's previewLayout since proposal 17.
         if (await KeptTitleAsync(peer, key, ct).ConfigureAwait(false) is not VideoTitle v ||
-            !(v.Copies ?? []).Any(c => c.Id == versionId && c.Previews))
+            (v.Copies ?? []).FirstOrDefault(c => c.Id == versionId)?.PreviewLayout is not { } tp)
         {
             throw new MsfpException(MsfpError.NotFound);
         }
@@ -279,27 +280,22 @@ public sealed partial class MsfpEngine
                 throw Refused(p, r);
             }
 
-            Previews? pv;
+            PreviewsAnswer pv;
             try
             {
-                pv = Video.ReadPreviewsAnswer(r.Body, PeerStreamRoot(p));
+                pv = Video.ReadPreviewsAnswer(r.Body); // P17b: {"ticket", "etag"} since proposal 17
             }
             catch (ProtocolException e)
             {
                 throw new MsfpException(MsfpError.Unreachable, e.Message, e);
             }
 
-            if (pv is null)
-            {
-                throw new MsfpException(MsfpError.NotFound);
-            }
-
-            var tp = pv.Trickplay;
+            var root = PeerStreamRoot(p);
             int w = tp.Columns * tp.TileWidth, h = tp.Rows * tp.TileHeight;
             var sheets = new List<byte[]>();
-            foreach (var u in pv.Urls)
+            foreach (var u in Enumerable.Range(0, tp.Sheets).Select(n => MediaUrls.Sheet(root, pv.Ticket, n)))
             {
-                var sheet = await FetchWholeAsync(p, u, Protocol.Trickplay.MaxSheetBytes, ct).ConfigureAwait(false);
+                var sheet = await FetchWholeAsync(p, u, PreviewLayout.MaxSheetBytes, ct).ConfigureAwait(false);
                 if (!Jpeg.Fits(sheet, w, h))
                 {
                     throw new MsfpException(MsfpError.Unreachable, "a sheet that isn't a JPEG within its layout");

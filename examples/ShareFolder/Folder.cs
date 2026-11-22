@@ -301,14 +301,13 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
         return new Protocol.Copy(rel, probed.DurationMs, Muxers.GetValueOrDefault(Path.GetExtension(rel).TrimStart('.').ToLowerInvariant(), ""),
             info.Length, etag, probed.Audio)
         {
-            BitrateKbps = probed.BitrateKbps,
-            Video = probed.Video,
+            Video = probed.Video, // P17b: no bitrateKbps since proposal 17
             SubtitleTracks = Subtitles(path).Select((s, i) => new CopySubtitle("s" + i.ToString(CultureInfo.InvariantCulture), "webvtt")
             {
                 Language = Language(s),
                 External = true,
             }).ToList(),
-            Previews = Previews(path) is not null,
+            // P17b: previews as a previewLayout since proposal 17.
         };
     }
 
