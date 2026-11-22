@@ -94,13 +94,13 @@ internal sealed class Probes
             switch (st.CodecType)
             {
                 case "video" when video is null && st.Width > 0 && st.Height > 0:
-                    video = new VideoStream(Names.NameOrOther(Names.VideoCodecs, st.CodecName ?? ""), st.Width, st.Height)
+                    video = new VideoStream(st.CodecName ?? "", st.Width, st.Height) // P17: ffmpeg's codec_name as it is
                     {
                         Fps = FrameRate(st.AvgFrameRate),
                     };
                     break;
                 case "audio":
-                    audio.Add(new CopyAudio("a" + audio.Count.ToString(CultureInfo.InvariantCulture), Names.NameOrOther(Names.AudioCodecs, st.CodecName ?? ""))
+                    audio.Add(new CopyAudio("a" + audio.Count.ToString(CultureInfo.InvariantCulture), st.CodecName ?? "") // P17
                     {
                         Language = Languages.TrySentTag(st.Tags?.Language ?? "", out var tag) ? tag : null,
                         Channels = st.Channels > 0 ? st.Channels : null,
@@ -118,17 +118,17 @@ internal sealed class Probes
         return new Probed(duration, bitrate, video, audio);
     }
 
-    // ffprobe's "24000/1001", to two decimals; null when unknown.
-    private static double? FrameRate(string? s)
+    // P17: ffprobe's "24000/1001" as it is (ffprobe reduces it); null when unknown.
+    private static string? FrameRate(string? s)
     {
         var parts = (s ?? "").Split('/');
-        if (parts.Length != 2 || !double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var num) ||
-            !double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var den) || den == 0 || num <= 0)
+        if (parts.Length != 2 || !long.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var num) ||
+            !long.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var den) || den == 0 || num <= 0)
         {
             return null;
         }
 
-        return Math.Floor(num / den * 100) / 100;
+        return s;
     }
 
     // What ffprobe's JSON says that a copy uses.

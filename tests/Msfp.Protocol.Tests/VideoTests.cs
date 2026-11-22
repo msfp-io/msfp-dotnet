@@ -37,7 +37,9 @@ public class VideoTests
                 return;
             }
 
-            var have = JsonNode.Parse(got);
+            // False members are left out of both sides: the writer drops a
+            // flag false, but keeps dv's el, bl and rpu when false.
+            var have = NoFalse(JsonNode.Parse(got));
             if (!JsonNode.DeepEquals(have, NoFalse(JsonNode.Parse(c.Str("output")))))
             {
                 failures.Add($"{list} {c.Str("name")}:\n    got  {have!.ToJsonString()}\n    want {c.Str("output")}");
@@ -94,6 +96,20 @@ public class VideoTests
                 .Integer("intervalMs", p.Trickplay.IntervalMs).Integer("tileCount", p.Trickplay.TileCount)
                 .Strings("sheets", p.Urls)));
             Check("previews", c, output, error is null);
+        }
+
+        foreach (var c in TestVectors.Cases("video.json", "fontURLs"))
+        {
+            var kept = Font.ReadUrls(JsonNode.Parse(c.Str("text")), root);
+            Check("fontURLs", c, kept is null ? null : JsonSerializer.SerializeToUtf8Bytes(kept), kept is not null);
+        }
+
+        foreach (var c in TestVectors.Cases("video.json", "fontSets"))
+        {
+            var sizes = (JsonNode.Parse(c.Str("text")) as JsonArray)?.Select(e => JsonMembers.AsInteger(e) ?? 0).ToList() ?? [0];
+            var ok = Font.CheckSet(sizes, out _);
+            var output = JsonOut.Object(o => o.Integer("fonts", sizes.Count).Integer("bytes", sizes.Sum()));
+            Check("fontSets", c, ok ? output : null, ok);
         }
 
         TestVectors.NoFailures(failures, total, "video.json");
@@ -252,13 +268,13 @@ public class VideoTests
         got = Read("""{"key":"series/tmdb/1399/s1","kind":"season","library":"L" """ + OneCopy + ""","ids":{"imdb":"tt0944947"}}""");
         Assert.True(got is { Copies.Count: 0, Ids.Count: 0 });
 
-        // Repeated copy IDs: the first kept; at most 8.
-        var list = Enumerable.Range(0, 10).Select(i =>
-            $$"""{"id":"v{{i % 9}}","durationMs":1,"container":"x","size":1,"etag":"t","audioTracks":[]}""");
+        // Repeated copy IDs: the first kept; at most 16.
+        var list = Enumerable.Range(0, 20).Select(i =>
+            $$"""{"id":"v{{i % 17}}","durationMs":1,"container":"x","size":1,"etag":"t","audioTracks":[]}""");
         got = Read("""{"key":"movie/tmdb/1","kind":"movie","library":"L","copies":[""" + string.Join(",", list) + "]}");
         Assert.NotNull(got);
         Assert.Equal(Copies.MaxCopies, got.Copies.Count);
-        Assert.Equal(Names.Other, got.Copies[0].Container);
+        Assert.Equal("x", got.Copies[0].Container);
 
         // The entry read isn't changed.
         var node = JsonNode.Parse("""{"key":"movie/tmdb/1","kind":"movie","library":"L","x":null""" + OneCopy + "}");
@@ -288,6 +304,18 @@ public class VideoTests
     [InlineData("tmdb", "949", false)]
     public void OtherId(string scheme, string value, bool ok) => Assert.Equal(ok, Video.OtherId(scheme, value));
 
+    // tmdb in ids: only on a series or an episode keyed under another scheme.
+    [Fact]
+    public void OtherIdTmdb()
+    {
+        Assert.True(Video.OtherId(new VideoKey("series", "tvdb", 81189), "tmdb", "1396"));
+        Assert.True(Video.OtherId(new VideoKey("episode", "tvdb", 81189, Episode: 3, Absolute: true), "tmdb", "62085"));
+        Assert.False(Video.OtherId(new VideoKey("series", "tmdb", 1396), "tmdb", "1396"));
+        Assert.False(Video.OtherId(new VideoKey("series", "tvdb", 81189), "tmdb", "01396"));
+        Assert.False(Video.OtherId(new VideoKey("movie", "local", Local: "x"), "imdb", "tt0133093"));
+        Assert.True(Video.OtherId(new VideoKey("movie", "tmdb", 603), "imdb", "tt0133093"));
+    }
+
     [Fact]
     public void StepHeight()
     {
@@ -300,5 +328,5 @@ public class VideoTests
 
     [Fact]
     public void CleanHdr() =>
-        Assert.Equal(["hdr10", "hdr10plus", "dv"], Video.CleanHdr(["dv", "x", "hdr10plus", "hdr10", "dv"]));
+        Assert.Equal(["dv", "hdr10", "hdr10plus", "x"], Video.CleanHdr(["dv", "x", "hdr10plus", "HDR10", "hdr10", "dv", ""]));
 }

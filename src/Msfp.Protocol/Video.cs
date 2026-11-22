@@ -239,7 +239,7 @@ public sealed record Place(int Season, int Episode)
 /// <param name="Place">Its place in TMDB's numbering: for episodes keyed by their TMDB episode ID, and always for them; null for any other title.</param>
 /// <param name="With">The other episodes it holds (episodes).</param>
 /// <param name="Ids">Its other identifiers, by scheme in byte order (films, series and episodes of a public database).</param>
-/// <param name="ExtraType">What an extra is, one of <see cref="Names.ExtraTypes"/> (clip when unknown); empty for any other title.</param>
+/// <param name="ExtraType">What an extra is, a token (trailer, featurette, behindthescenes, deletedscene, interview, scene, short, clip, themesong, themevideo…), known or not; empty for any other title.</param>
 /// <param name="Name">An extra's own name, cleaned; empty when it has none, and for any other title.</param>
 /// <param name="Description">A local film's or series' description (video section 3.10), and always for them; null for any other title.</param>
 public sealed record VideoTitle(
@@ -286,10 +286,7 @@ public static partial class Video
     /// <summary>The length of an extra's name, in code points (video section 3.9).</summary>
     public const int MaxExtraName = 64;
 
-    /// <summary>
-    /// The heights a picture is stepped to (video section 5.1's coarsening
-    /// of maxHeight); a copy's HDR formats are <see cref="Names.HdrFormats"/>.
-    /// </summary>
+    /// <summary>The values of a transcode's maxHeight (playback section 2.7).</summary>
     public static readonly IReadOnlyList<int> Heights = [480, 720, 1080, 1440, 2160, 4320];
 
     [GeneratedRegex(@"^tt[0-9]{7,10}\z")]
@@ -330,8 +327,9 @@ public static partial class Video
 
     /// <summary>
     /// Whether <paramref name="value"/> is an identifier of a known scheme
-    /// (video section 4.3: imdb, tvdb), in its form: what a sender sends, and
-    /// a receiver keeps.
+    /// (video section 4.3, the registry's ids schemes: imdb, tvdb), in its
+    /// form; tmdb, which only a title keyed under another scheme carries, is
+    /// <see cref="OtherId(VideoKey, string, string)"/>'s.
     /// </summary>
     public static bool OtherId(string scheme, string value)
     {
@@ -345,8 +343,30 @@ public static partial class Video
     }
 
     /// <summary>
+    /// Whether <paramref name="value"/> is an identifier a title of
+    /// <paramref name="key"/> carries in ids (video section 4.3): imdb and
+    /// tvdb on films, series and episodes of the tmdb and tvdb schemes; tmdb
+    /// on series and episodes keyed under another scheme than tmdb (tvdb), 1
+    /// to 10 digits without a leading zero. What a sender sends, and a
+    /// receiver keeps.
+    /// </summary>
+    public static bool OtherId(VideoKey key, string scheme, string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        if (key.Scheme == SchemeLocal || key.Kind is not ("movie" or "series" or "episode"))
+        {
+            return false;
+        }
+
+        return scheme == SchemeTmdb
+            ? key.Scheme != SchemeTmdb && key.Kind is "series" or "episode" && TvdbRe().IsMatch(value)
+            : OtherId(scheme, value);
+    }
+
+    /// <summary>
     /// Steps a height down to the greatest of <see cref="Heights"/> not above
-    /// it, 480 below 480 (video section 5.1's coarsening); 0 stays 0, unknown.
+    /// it, 480 below 480: a transcode's maxHeight for a picture at most that
+    /// tall (playback section 2.7); 0 stays 0, not said.
     /// </summary>
     public static int StepHeight(int height)
     {
@@ -367,12 +387,15 @@ public static partial class Video
         return out_;
     }
 
-    /// <summary>Keeps of formats those <see cref="Names.HdrFormats"/> lists, each once, in its order (video section 3.3); none for standard range.</summary>
+    /// <summary>
+    /// Keeps of a video stream's hdr entries (video sections 3.3 and 3.8)
+    /// the tokens, known or not, each once, sorted in byte order, the first
+    /// <see cref="Copies.MaxHdr"/>; an entry that isn't a token is skipped.
+    /// </summary>
     public static IReadOnlyList<string> CleanHdr(IEnumerable<string> formats)
     {
         ArgumentNullException.ThrowIfNull(formats);
-        var given = formats.ToHashSet(StringComparer.Ordinal);
-        return Names.HdrFormats.Where(given.Contains).ToList();
+        return formats.Where(Names.IsToken).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).Take(Copies.MaxHdr).ToList();
     }
 
     /// <summary>
@@ -382,8 +405,9 @@ public static partial class Video
     /// a canonical video key of a known scheme, when its kind isn't the
     /// key's, when it is a film, an episode or an extra whose copies isn't an
     /// array or keeps no copy (<see cref="Copies.Read(JsonNode?)"/>), an
-    /// episode keyed by its TMDB episode ID without a valid place, or a local
-    /// film or series without a name. A member of the wrong type otherwise
+    /// extra whose extraType is missing or isn't a token, an episode keyed by
+    /// its TMDB episode ID without a valid place, or a local film or series
+    /// without a name. A member of the wrong type otherwise
     /// counts as absent (null among them); a bad entry of one of its lists is
     /// skipped alone; members a title may not carry are ignored. Whether
     /// library is one asked for is the caller's to check.
@@ -408,9 +432,12 @@ public static partial class Video
         string extraType = "", name = "";
         if (k.Kind == "extra")
         {
-            extraType = JsonMembers.AsString(o["extraType"]) is { } et && Names.ExtraTypes.Contains(et, StringComparer.Ordinal)
-                ? et
-                : "clip";
+            if (Names.Token(o["extraType"]) is not { } et)
+            {
+                return null;
+            }
+
+            extraType = et;
             if (JsonMembers.AsString(o["name"]) is { } n)
             {
                 name = Music.CleanText(n, MaxExtraName);
@@ -437,11 +464,11 @@ public static partial class Video
 
         // ids (section 4.3): films, series and episodes of a public database.
         var ids = new SortedDictionary<string, string>(StringComparer.Ordinal);
-        if (o["ids"] is JsonObject idList && k.Scheme != SchemeLocal && k.Kind is not ("season" or "extra"))
+        if (o["ids"] is JsonObject idList)
         {
             foreach (var (scheme, v) in idList)
             {
-                if (JsonMembers.AsString(v) is { } value && OtherId(scheme, value))
+                if (JsonMembers.AsString(v) is { } value && OtherId(k, scheme, value))
                 {
                     ids[scheme] = value;
                 }

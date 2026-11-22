@@ -1,18 +1,98 @@
 using System.Buffers.Binary;
+using System.Globalization;
 using System.Text;
+using System.Text.Json.Nodes;
 
 namespace Msfp.Protocol;
 
 /// <summary>
 /// Fonts (MSFP video, section 6.6): the fonts a copy's ASS tracks use,
-/// served apart, at most 8 a copy. Both sides check a font's structure
-/// before serving or relaying it; a viewer's server may refuse fonts
-/// entirely and never fetch them.
+/// served apart, at most 64 a copy, 64 MiB in all. Both sides check a
+/// font's structure before serving or relaying it; a viewer's server may
+/// refuse fonts entirely and never fetch them.
 /// </summary>
 public static class Font
 {
     /// <summary>The most a font may be, in bytes: 10 MiB (video section 6.6, media section 2.4).</summary>
     public const int MaxFont = 10 << 20;
+
+    /// <summary>The most fonts a copy lists (video section 6.6): its font URLs run from fonts/0 to fonts/63.</summary>
+    public const int MaxFonts = 64;
+
+    /// <summary>The most a copy's fonts may be in all, in bytes: 64 MiB (video section 6.6).</summary>
+    public const long MaxFontSet = 64 << 20;
+
+    /// <summary>
+    /// Checks one copy's fonts against the bounds of video section 6.6,
+    /// given their sizes in bytes in the order of fonts: at most
+    /// <see cref="MaxFonts"/>, each 1 to <see cref="MaxFont"/> bytes,
+    /// <see cref="MaxFontSet"/> in all. The owning server lists a set only
+    /// within them; a viewer's server refuses the font that breaks one, the
+    /// fonts it has relayed in the playback counted.
+    /// </summary>
+    /// <param name="sizes">The fonts' sizes, in order.</param>
+    /// <param name="bad">The first font that breaks a bound; -1 when none does.</param>
+    /// <returns>Whether every font is within the bounds.</returns>
+    public static bool CheckSet(IReadOnlyList<long> sizes, out int bad)
+    {
+        ArgumentNullException.ThrowIfNull(sizes);
+        long total = 0;
+        for (var i = 0; i < sizes.Count; i++)
+        {
+            if (i >= MaxFonts || sizes[i] < 1 || sizes[i] > MaxFont || total + sizes[i] > MaxFontSet)
+            {
+                bad = i;
+                return false;
+            }
+
+            total += sizes[i];
+        }
+
+        bad = -1;
+        return true;
+    }
+
+    /// <summary>
+    /// What a viewer's server keeps of the fonts member of play's answer
+    /// (video sections 5.3 and 6.1): an array of at most
+    /// <see cref="MaxFonts"/> strings, each exactly
+    /// &lt;root&gt;&lt;ticket&gt;/fonts/&lt;n&gt; for its index n, all under
+    /// one ticket (1 to 64 characters of A–Z a–z 0–9 _ -); null, the member
+    /// dropped, otherwise.
+    /// </summary>
+    /// <param name="fonts">The member.</param>
+    /// <param name="root">The owning server's stream root.</param>
+    public static IReadOnlyList<string>? ReadUrls(JsonNode? fonts, string root)
+    {
+        ArgumentNullException.ThrowIfNull(root);
+        if (fonts is not JsonArray list || list.Count > MaxFonts)
+        {
+            return null;
+        }
+
+        var out_ = new List<string>(list.Count);
+        string? ticket = null;
+        for (var i = 0; i < list.Count; i++)
+        {
+            if (JsonMembers.AsString(list[i]) is not { } s || !s.StartsWith(root, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            var rest = s[root.Length..];
+            var slash = rest.IndexOf('/', StringComparison.Ordinal);
+            if (slash < 0 || !Playback.Id(rest[..slash]) || rest[(slash + 1)..] != "fonts/" + i.ToString(CultureInfo.InvariantCulture) ||
+                (ticket is not null && rest[..slash] != ticket))
+            {
+                return null;
+            }
+
+            ticket = rest[..slash];
+            out_.Add(s);
+        }
+
+        return out_;
+    }
 
     /// <summary>The media type a TrueType font is served as (media section 3.4).</summary>
     public const string Ttf = "font/ttf";
