@@ -158,6 +158,11 @@ public sealed partial class MsfpEngine
             return StreamOutcome.Fallback;
         }
 
+        if (await ServeImageAsync(request, ticket, name, output, ct).ConfigureAwait(false) is { } served)
+        {
+            return served;
+        }
+
         LivePlayback? pb;
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(ticket)));
         lock (_plays)

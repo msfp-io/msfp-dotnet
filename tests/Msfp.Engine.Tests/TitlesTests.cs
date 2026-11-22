@@ -85,6 +85,7 @@ public sealed class TitlesTests
         var (h, local, _) = LocalHost();
         using var s = await Sharing.StartAsync(h);
         Assert.Equal(["movie/tmdb/1", "movie/tmdb/1/x/Tr7aQ1"], Keys(await s.PeerTitlesAsync()));
+        Assert.Equal(MsfpError.NotFound, (await Assert.ThrowsAsync<MsfpException>(() => s.B.Engine.TitleImageAsync(s.OnB, local))).Code);
         var x = (VideoTitle)(await s.PeerTitlesAsync())["movie/tmdb/1/x/Tr7aQ1"];
         Assert.Equal(("trailer", "Teaser", 1), (x.ExtraType, x.Name, x.Copies!.Count));
 
@@ -113,6 +114,68 @@ public sealed class TitlesTests
         Assert.Empty(await s.PeerTitlesAsync());
     }
 
+    // The image of a local title (catalog section 4.4): asked for, served
+    // under its ticket only, checked and re-encoded.
+    [Fact]
+    public async Task LocalTitleImage()
+    {
+        var (h, local, raw) = LocalHost();
+        using var s = await Sharing.StartAsync(h);
+        await s.A.Engine.SetLocalAsync(s.OnA, true);
+        await s.B.Engine.ReadNowAsync(s.OnB);
+        var (img, format) = await s.B.Engine.TitleImageAsync(s.OnB, local);
+        Assert.Equal(CatalogRules.ImagePng, format);
+        Assert.NotEqual(raw, img);
+        Assert.False(Encoding.Latin1.GetString(img).Contains("trailing", StringComparison.Ordinal), "the image wasn't re-encoded");
+        Assert.Equal((4, 3), (BinaryPrimitives.ReadInt32BigEndian(img.AsSpan(16)), BinaryPrimitives.ReadInt32BigEndian(img.AsSpan(20))));
+        Assert.Equal(Pixels(Png(4, 3)), Pixels(img));
+        var calls = s.Exchanges("federation/image");
+        Assert.Equal(200, Assert.Single(calls).Status);
+        var url = (string)JsonNode.Parse(calls[0].ResponseBody)!["url"]!;
+        Assert.EndsWith("/image", url, StringComparison.Ordinal);
+        var target = url[url.IndexOf("/api/v1/stream/", StringComparison.Ordinal)..];
+        Assert.Equal(200, await HostKit.GetAsync(s.A, target));
+
+        // The ticket opens that image only: another name, a HEAD, a browser.
+        var b = target[..^"image".Length];
+        Assert.Equal(404, await HostKit.GetAsync(s.A, b + "file"));
+        Assert.Equal(404, await HostKit.GetAsync(s.A, b + "master.m3u8"));
+        Assert.Equal(404, await HostKit.GetAsync(s.A, target, "HEAD"));
+        Assert.Equal(404, await HostKit.GetAsync(s.A, target, "GET", "Origin", "https://x.example"));
+
+        // A title that isn't local, or isn't kept with an image: not asked.
+        foreach (var key in new[] { "movie/tmdb/1", local + "/x/Ex1", "movie/local/Other" })
+        {
+            Assert.Equal(MsfpError.NotFound, (await Assert.ThrowsAsync<MsfpException>(() => s.B.Engine.TitleImageAsync(s.OnB, key))).Code);
+        }
+
+        Assert.Single(s.Exchanges("federation/image"));
+
+        // An image a receiver refuses is never sent; one it would take, but
+        // off its stream root, is dropped by the viewer.
+        lock (h.Lock)
+        {
+            h.Images[local] = "GIF89a"u8.ToArray();
+        }
+
+        await Assert.ThrowsAsync<MsfpException>(() => s.B.Engine.TitleImageAsync(s.OnB, local));
+        lock (h.Lock)
+        {
+            h.Images[local] = raw;
+        }
+
+        s.Hostile((path, _, _) => path.EndsWith("/federation/image", StringComparison.Ordinal)
+            ? "{\"url\":\"https://elsewhere.example/api/v1/stream/abc/image\"}"u8.ToArray()
+            : null);
+        Assert.Equal(MsfpError.Unreachable, (await Assert.ThrowsAsync<MsfpException>(() => s.B.Engine.TitleImageAsync(s.OnB, local))).Code);
+        s.Hostile(null);
+
+        // Local titles no longer shared: the owner refuses.
+        await s.A.Engine.SetLocalAsync(s.OnA, false);
+        Assert.Equal(MsfpError.NotFound, (await Assert.ThrowsAsync<MsfpException>(() => s.B.Engine.TitleImageAsync(s.OnB, local))).Code);
+        Assert.Equal(404, await HostKit.GetAsync(s.A, target));
+    }
+
     // A copy's names and track titles as sent (video section 3.6): labels
     // only, never a file's or a release's name.
     [Theory]
@@ -137,6 +200,26 @@ public sealed class TitlesTests
     [InlineData("German DTS-HD by GRP", null)]
     [InlineData("", null)]
     public void TrackTitles(string title, string? want) => Assert.Equal(want, MsfpEngine.TrackTitle(title));
+
+    // A PNG of PngImage's re-encoding: each filter undone, an interlaced one
+    // kept so, what isn't a PNG refused.
+    [Fact]
+    public void PngReencoded()
+    {
+        foreach (var filter in new byte[] { 0, 1, 2, 3, 4 })
+        {
+            var png = Png(5, 4, filter);
+            var again = PngImage.Reencode(png);
+            Assert.NotNull(again);
+            Assert.Equal(Pixels(Png(5, 4)), Pixels(again));
+        }
+
+        Assert.Null(PngImage.Reencode("GIF89a"u8.ToArray()));
+        var bad = Png(4, 3);
+        bad[^20] ^= 1; // the data's CRC no longer matches
+        Assert.Null(PngImage.Reencode(bad));
+        Assert.Null(PngImage.Reencode(Png(4097, 1)));
+    }
 
     // A width × height RGBA PNG, its pixels a pattern, each line with that
     // filter.
@@ -191,6 +274,29 @@ public sealed class TitlesTests
         Chunk(png, "IDAT", z.ToArray());
         Chunk(png, "IEND", []);
         return png.ToArray();
+    }
+
+    // A non-interlaced RGBA PNG's pixels, every line unfiltered (lines of
+    // filter 0 only, as PngImage writes them, and Png(…, 0)).
+    private static byte[] Pixels(byte[] png)
+    {
+        using var idat = new MemoryStream();
+        for (var at = 8; at < png.Length;)
+        {
+            var length = BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(at));
+            if (Encoding.ASCII.GetString(png, at + 4, 4) == "IDAT")
+            {
+                idat.Write(png, at + 8, length);
+            }
+
+            at += 12 + length;
+        }
+
+        idat.Position = 0;
+        using var z = new ZLibStream(idat, CompressionMode.Decompress);
+        using var output = new MemoryStream();
+        z.CopyTo(output);
+        return output.ToArray();
     }
 
     private static void Chunk(Stream s, string type, byte[] data)

@@ -37,7 +37,7 @@ public sealed partial class MsfpEngine
     private static readonly HashSet<string> Calls =
         new(StringComparer.Ordinal)
         {
-            CallPair, CallHello, CallRotate, CallRevoke, CallLibraries, CallTitles, CallPlay, CallProgress, CallStop,
+            CallPair, CallHello, CallRotate, CallRevoke, CallLibraries, CallTitles, CallImage, CallPlay, CallProgress, CallStop,
             CallGroupSync, CallGroupPush, CallGroupPair, CallGroupJoin,
         };
 
@@ -136,6 +136,7 @@ public sealed partial class MsfpEngine
         CallRevoke => await RevokeAsync(req, ct).ConfigureAwait(false),
         CallLibraries => await LibrariesAsync(req, ct).ConfigureAwait(false),
         CallTitles => await TitlesAsync(req, ct).ConfigureAwait(false),
+        CallImage => await ImageAsync(req, ct).ConfigureAwait(false),
         CallPlay => await PlayAsync(req, ct).ConfigureAwait(false),
         CallProgress => await ProgressAsync(req, ct).ConfigureAwait(false),
         CallStop => await StopAsync(req, ct).ConfigureAwait(false),
