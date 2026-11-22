@@ -132,19 +132,30 @@ public sealed record MusicTitle
     /// <summary>Its artists' names as credited (albums and tracks).</summary>
     public string ArtistNames { get; init; } = "";
 
-    /// <summary>Its release type, one of <see cref="Music.ReleaseTypes"/> (albums).</summary>
-    public string ReleaseType { get; init; } = "";
+    /// <summary>
+    /// Its release group's MusicBrainz primary type, lowercased (album,
+    /// single, ep, broadcast, other…), open (<see cref="Music.MusicType"/>):
+    /// kept as it is, known or not (albums).
+    /// </summary>
+    public string PrimaryType { get; init; } = "";
+
+    /// <summary>
+    /// Its release group's MusicBrainz secondary types, lowercased
+    /// (compilation, soundtrack, live, remix, dj-mix, audio drama,
+    /// mixtape/street…), open, each once, at most <see cref="Music.MaxSecondaryTypes"/> (albums).
+    /// </summary>
+    public IReadOnlyList<string> SecondaryTypes { get; init; } = [];
 
     /// <summary>Whether it is a compilation of several artists (albums); null when absent.</summary>
     public bool? Compilation { get; init; }
 
-    /// <summary>Its release's date, YYYY, YYYY-MM or YYYY-MM-DD (albums).</summary>
+    /// <summary>Its release's date, YYYY, YYYY-MM or YYYY-MM-DD (albums and tracks).</summary>
     public string Date { get; init; } = "";
 
-    /// <summary>The date of its first release, never after <see cref="Date"/>'s year (albums).</summary>
+    /// <summary>The date of its first release, never after <see cref="Date"/>'s year (albums and tracks).</summary>
     public string OriginalDate { get; init; } = "";
 
-    /// <summary>Its genres, cleaned (albums).</summary>
+    /// <summary>Its genres, cleaned (albums and tracks).</summary>
     public IReadOnlyList<string> Genres { get; init; } = [];
 
     /// <summary>Its album's key (tracks).</summary>
@@ -176,7 +187,8 @@ public sealed record MusicTitle
             .String("sortName", Music.Present(SortName))
             .Strings("artists", Artists.Count > 0 ? Artists : null)
             .String("artistNames", Music.Present(ArtistNames))
-            .String("releaseType", Music.Present(ReleaseType))
+            .String("primaryType", Music.Present(PrimaryType))
+            .Strings("secondaryTypes", SecondaryTypes.Count > 0 ? SecondaryTypes : null)
             .Bool("compilation", Compilation)
             .String("date", Music.Present(Date))
             .String("originalDate", Music.Present(OriginalDate))
@@ -199,17 +211,20 @@ public sealed record MusicCopy
     /// <summary>Its id, of an ID's form.</summary>
     public required string Id { get; init; }
 
-    /// <summary>A quality label, cleaned, never a file name.</summary>
+    /// <summary>A quality label, plain text of at most <see cref="Music.MaxCopyName"/> code points.</summary>
     public string Name { get; init; } = "";
 
     /// <summary>Its duration, 1 to <see cref="Music.MaxDurationMs"/>.</summary>
     public required long DurationMs { get; init; }
 
-    /// <summary>Its container, of the names list or <see cref="Names.Other"/>.</summary>
+    /// <summary>Its container, a token: ffmpeg's muxer name (flac, mp3, mp4, ogg, wav, matroska…), known or not.</summary>
     public required string Container { get; init; }
 
-    /// <summary>Its audio codec, of the names list or <see cref="Names.Other"/>.</summary>
+    /// <summary>Its audio codec, a token: ffmpeg's codec_name (flac, mp3, aac, alac, opus, vorbis, pcm_s16le…), known or not.</summary>
     public required string Codec { get; init; }
+
+    /// <summary>Its RFC 6381 codecs string (mp4a.40.2, fLaC, opus, ec-3), 1 to 64 characters of A-Z a-z 0-9 . -; "" when absent.</summary>
+    public string Codecs { get; init; } = "";
 
     /// <summary>Its size in bytes, 1 to <see cref="Music.MaxCopySize"/>.</summary>
     public required long Size { get; init; }
@@ -220,7 +235,7 @@ public sealed record MusicCopy
     /// <summary>When it was added, YYYY-MM-DD.</summary>
     public string Added { get; init; } = "";
 
-    /// <summary>Its bitrate in kbit/s, a whole 8.</summary>
+    /// <summary>Its bitrate in kbit/s, 1 to <see cref="Music.MaxAudioBitrate"/>, exact.</summary>
     public int BitrateKbps { get; init; }
 
     /// <summary>Its sample rate in Hz.</summary>
@@ -243,7 +258,8 @@ public sealed record MusicCopy
     {
         ArgumentNullException.ThrowIfNull(o);
         o.String("id", Id).String("name", Music.Present(Name)).Integer("durationMs", DurationMs)
-            .String("container", Container).String("codec", Codec).Integer("size", Size).String("etag", Etag)
+            .String("container", Container).String("codec", Codec).String("codecs", Music.Present(Codecs))
+            .Integer("size", Size).String("etag", Etag)
             .String("added", Music.Present(Added))
             .Integer("bitrateKbps", BitrateKbps != 0 ? BitrateKbps : null)
             .Integer("sampleRate", SampleRate != 0 ? SampleRate : null)
@@ -294,7 +310,7 @@ public static partial class Music
     /// <summary>The most artists a music title keeps (music section 3).</summary>
     public const int MaxMusicArtists = 16;
 
-    /// <summary>The most genres an album keeps (music section 3.2).</summary>
+    /// <summary>The most genres an album or a track keeps (music section 3.2).</summary>
     public const int MaxGenres = 8;
 
     /// <summary>The most code points of a genre (music section 3.2); a longer one is skipped, not cut.</summary>
@@ -313,10 +329,13 @@ public static partial class Music
     public const long MaxCopySize = 999_999_999_999_999;
 
     /// <summary>The most code points of a track copy's name (music section 3.3, as a video copy's).</summary>
-    public const int MaxCopyName = 32;
+    public const int MaxCopyName = 64;
 
-    /// <summary>A track copy's highest bitrate in kbit/s, from 8 (music section 3.3).</summary>
+    /// <summary>A track copy's highest bitrate in kbit/s, from 1 (music section 3.3).</summary>
     public const int MaxAudioBitrate = 100_000;
+
+    /// <summary>The most secondary types an album keeps (music section 3.2).</summary>
+    public const int MaxSecondaryTypes = 8;
 
     /// <summary>A ReplayGain gain's bound in dB, either way (music section 3.3).</summary>
     public const double MaxGain = 64;
@@ -332,9 +351,11 @@ public static partial class Music
     /// </summary>
     public static DescriptionBounds MusicDescription { get; } = new(true, MaxMusicName, 1, 9999);
 
-    /// <summary>An album's releaseType values (music section 3); an unknown string is kept as <see cref="Names.Other"/>.</summary>
-    public static readonly IReadOnlyList<string> ReleaseTypes =
-        ["album", "single", "ep", "compilation", "soundtrack", "live", "remix", Names.Other];
+    [GeneratedRegex(@"^[a-z0-9._/-](?:[a-z0-9 ._/-]{0,30}[a-z0-9._/-])?\z")]
+    private static partial Regex TypeRe();
+
+    [GeneratedRegex(@"^[A-Za-z0-9.-]{1,64}\z")]
+    private static partial Regex CodecsRe();
 
     [GeneratedRegex(@"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z")]
     private static partial Regex MbidRe();
@@ -347,6 +368,15 @@ public static partial class Music
 
     [GeneratedRegex(@"^[0-9]{4}-[0-9]{2}-[0-9]{2}\z")]
     private static partial Regex DayRe();
+
+    /// <summary>
+    /// Whether <paramref name="s"/> is a release-group type as music section
+    /// 3 sends it: MusicBrainz's name lowercased, 1 to 32 characters of
+    /// a–z 0–9 space . _ - /, with no space at either end. Open: a type the
+    /// viewer's server doesn't know is kept as it is; the caller doesn't
+    /// lowercase (Album isn't one).
+    /// </summary>
+    public static bool MusicType(string? s) => s is not null && TypeRe().IsMatch(s);
 
     /// <summary>Whether <paramref name="s"/> is a MusicBrainz ID in the form music section 2.1 gives: 36 characters, lowercase 8-4-4-4-12 hex. An AcoustID has the same form.</summary>
     public static bool Mbid(string s)
@@ -481,8 +511,9 @@ public static partial class Music
 
     /// <summary>
     /// Converts an EBU R128 gain (Opus's R128_TRACK_GAIN: 1/256 dB, relative
-    /// to −23 LUFS) to ReplayGain 2.0's reference, as an owning server sends
-    /// it: the value over 256, plus 5 dB.
+    /// to −23 LUFS) to ReplayGain 2.0's reference, as an owning server may
+    /// send it (music section 3.3 asks for the reference, not the way): the
+    /// value over 256, plus 5 dB.
     /// </summary>
     public static double R128Gain(int q78) => (q78 / 256.0) + 5;
 
@@ -545,30 +576,41 @@ public static partial class Music
         }
 
         var title = new MusicTitle { Key = key, Kind = kind, Library = library, Name = d.Name, Artists = artists, ArtistNames = artistNames };
+        if (k.Kind is "album" or "track")
+        {
+            string date = "", originalDate = "";
+            var dateYear = 0;
+            if (JsonMembers.AsString(t["date"]) is { } ds && TryMusicDate(ds, out var y))
+            {
+                (date, dateYear) = (ds, y);
+            }
+
+            if (JsonMembers.AsString(t["originalDate"]) is { } os && TryMusicDate(os, out var oy) && (dateYear == 0 || oy <= dateYear))
+            {
+                originalDate = os;
+            }
+
+            title = title with { Date = date, OriginalDate = originalDate, Genres = CleanGenres(StringsOf(t["genres"])) };
+        }
+
         switch (k.Kind)
         {
             case "album":
-                var releaseType = JsonMembers.AsString(t["releaseType"]) is { } rt ? Names.NameOrOther(ReleaseTypes, rt) : "";
-                string date = "", originalDate = "";
-                var dateYear = 0;
-                if (JsonMembers.AsString(t["date"]) is { } ds && TryMusicDate(ds, out var y))
+                var secondary = new List<string>();
+                foreach (var s in StringsOf(t["secondaryTypes"]))
                 {
-                    (date, dateYear) = (ds, y);
-                }
-
-                if (JsonMembers.AsString(t["originalDate"]) is { } os && TryMusicDate(os, out var oy) && (dateYear == 0 || oy <= dateYear))
-                {
-                    originalDate = os;
+                    if (secondary.Count < MaxSecondaryTypes && MusicType(s) && !secondary.Contains(s, StringComparer.Ordinal))
+                    {
+                        secondary.Add(s);
+                    }
                 }
 
                 title = title with
                 {
                     SortName = CleanText(JsonMembers.AsString(t["sortName"]) ?? "", MaxMusicName),
-                    ReleaseType = releaseType,
+                    PrimaryType = JsonMembers.AsString(t["primaryType"]) is { } pt && MusicType(pt) ? pt : "",
+                    SecondaryTypes = secondary,
                     Compilation = BoolOf(t["compilation"]),
-                    Date = date,
-                    OriginalDate = originalDate,
-                    Genres = CleanGenres(StringsOf(t["genres"])),
                 };
                 break;
             case "track":
@@ -633,9 +675,10 @@ public static partial class Music
     /// it isn't an object, misses a required member or breaks its form (id
     /// and etag of an ID's form, size from 1 to <see cref="MaxCopySize"/>,
     /// durationMs from 1 to <see cref="MaxDurationMs"/>, container and codec
-    /// strings), or repeats a kept copy's id. Its optional members out of
-    /// range or of the wrong type count as absent; video's members of a copy
-    /// are ignored.
+    /// tokens, core section 8.5, kept as they are, known or not), or repeats
+    /// a kept copy's id. Its optional members out of range, out of their form
+    /// or of the wrong type count as absent; durationMs and bitrateKbps are
+    /// kept exact; video's members of a copy are ignored.
     /// </summary>
     public static IReadOnlyList<MusicCopy>? ReadCopies(JsonNode? copies)
     {
@@ -671,8 +714,8 @@ public static partial class Music
 
         var id = JsonMembers.AsString(o["id"]);
         var etag = JsonMembers.AsString(o["etag"]);
-        var container = JsonMembers.AsString(o["container"]);
-        var codec = JsonMembers.AsString(o["codec"]);
+        var container = Names.Token(o["container"]);
+        var codec = Names.Token(o["codec"]);
         if (id is null || !Playback.Id(id) || etag is null || !Playback.Id(etag) || container is null || codec is null ||
             IntOf(o["durationMs"], 1, MaxDurationMs) is not { } duration || IntOf(o["size"], 1, MaxCopySize) is not { } size)
         {
@@ -699,12 +742,13 @@ public static partial class Music
             Id = id,
             Name = JsonMembers.AsString(o["name"]) is { } name ? CleanText(name, MaxCopyName) : "",
             DurationMs = duration,
-            Container = Names.NameOrOther(Names.Containers, container),
-            Codec = Names.NameOrOther(Names.AudioCodecs, codec),
+            Container = container,
+            Codec = codec,
+            Codecs = JsonMembers.AsString(o["codecs"]) is { } cs && CodecsRe().IsMatch(cs) ? cs : "",
             Size = size,
             Etag = etag,
             Added = JsonMembers.AsString(o["added"]) is { } added && Day(added) ? added : "",
-            BitrateKbps = IntOf(o["bitrateKbps"], 8, MaxAudioBitrate) is { } b ? (int)(b / 8 * 8) : 0,
+            BitrateKbps = (int)(IntOf(o["bitrateKbps"], 1, MaxAudioBitrate) ?? 0),
             SampleRate = (int)(IntOf(o["sampleRate"], 8_000, 768_000) ?? 0),
             BitDepth = (int)(IntOf(o["bitDepth"], 8, 32) ?? 0),
             Channels = (int)(IntOf(o["channels"], 1, 64) ?? 0),

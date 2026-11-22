@@ -649,7 +649,7 @@ public sealed partial class MsfpEngine
                 SortName = m.SortName.Length > 0 ? m.SortName : null,
                 Artists = m.Artists.Count > 0 ? [.. m.Artists] : null,
                 ArtistNames = m.ArtistNames.Length > 0 ? m.ArtistNames : null,
-                ReleaseType = m.ReleaseType.Length > 0 ? m.ReleaseType : null,
+                ReleaseType = m.PrimaryType.Length > 0 ? m.PrimaryType : null, // P17: primaryType, secondaryTypes
                 Compilation = m.Compilation,
                 Date = m.Date.Length > 0 ? m.Date : null,
                 OriginalDate = m.OriginalDate.Length > 0 ? m.OriginalDate : null,

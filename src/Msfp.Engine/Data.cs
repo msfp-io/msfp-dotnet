@@ -128,9 +128,11 @@ public sealed record VideoTitle : Title
 
     /// <summary>
     /// An extra's (kind "extra", keyed under its film, series or season:
-    /// video section 3.9): one of <see cref="Names.ExtraTypes"/>, "clip" for
-    /// another. Theme songs and theme videos are never extras.
+    /// video section 3.9): trailer, featurette, behindthescenes,
+    /// deletedscene, interview, scene, short or clip. Theme songs and theme
+    /// videos are never extras.
     /// </summary>
+    // P17: extraType is an open token now, themesong and themevideo included.
     [JsonPropertyName("extraType"), OmitEmpty]
     public string? ExtraType { get; set; }
 
@@ -235,7 +237,8 @@ public sealed record MusicTitle : Title
     [JsonPropertyName("artistNames"), OmitEmpty]
     public string? ArtistNames { get; set; }
 
-    /// <summary>For albums, the release type, one of <see cref="Music.ReleaseTypes"/>.</summary>
+    /// <summary>For albums, the release type: album, single, ep, compilation, soundtrack, live, remix or other.</summary>
+    // P17: primaryType and secondaryTypes, MusicBrainz's own, replace it.
     [JsonPropertyName("releaseType"), OmitEmpty]
     public string? ReleaseType { get; set; }
 

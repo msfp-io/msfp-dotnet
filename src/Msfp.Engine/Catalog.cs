@@ -1158,7 +1158,7 @@ public sealed partial class MsfpEngine
         var w = new Protocol.MusicTitle
         {
             Key = t.Key, Kind = t.Kind, Library = library, Name = t.Name ?? "", SortName = t.SortName ?? "",
-            Artists = t.Artists ?? [], ArtistNames = t.ArtistNames ?? "", ReleaseType = t.ReleaseType ?? "",
+            Artists = t.Artists ?? [], ArtistNames = t.ArtistNames ?? "", PrimaryType = t.ReleaseType ?? "", // P17: primaryType, secondaryTypes
             Compilation = t.Compilation, Date = t.Date ?? "", OriginalDate = t.OriginalDate ?? "", Genres = t.Genres ?? [],
             Album = t.Album ?? "", Disc = t.Disc, Number = t.Number,
             Copies = (t.Copies ?? []).Select(c => SendMusicCopy(peer, c)).ToList(),

@@ -15,7 +15,7 @@ public sealed record LyricsRequest(string Title, string VersionId)
 /// A set of lyrics, one per language, kind and timing (music section 6).
 /// </summary>
 /// <param name="Lang">A language tag (<see cref="Languages.ValidTag"/>); "" when unknown.</param>
-/// <param name="Kind">One of <see cref="Music.LyricsKinds"/>.</param>
+/// <param name="Kind">OpenSubsonic's main, translation or pronunciation, open: a token, kept as it is, known or not; a viewer's server never shows a set of a kind it doesn't know as the main lyrics.</param>
 /// <param name="Synced">Whether its lines carry their start.</param>
 /// <param name="Offset">The milliseconds to add to every line's start.</param>
 /// <param name="DisplayArtist">The artist to show, cleaned; "" when absent.</param>
@@ -74,7 +74,11 @@ public static partial class Music
     /// <summary>The most code points of a set's displayTitle; displayArtist takes <see cref="MaxArtistNames"/>.</summary>
     public const int MaxDisplayTitle = 256;
 
-    /// <summary>A lyrics set's kind values; anything else is kept as the first, main.</summary>
+    /// <summary>
+    /// A lyrics set's kinds as OpenSubsonic names them; the field is open
+    /// (core section 8.5): another token is kept, a value that isn't one
+    /// (or none) reads as the first, main.
+    /// </summary>
     public static readonly IReadOnlyList<string> LyricsKinds = ["main", "translation", "pronunciation"];
 
     /// <summary>
@@ -113,7 +117,7 @@ public static partial class Music
     /// <summary>
     /// What the viewer's server keeps of a lyrics answer (music section 6):
     /// per set, synced a boolean, else the set is skipped; lang a valid tag,
-    /// else absent; kind one of <see cref="LyricsKinds"/>, else main; offset
+    /// else absent; kind a token, kept as it is, else main; offset
     /// an integer within ±<see cref="MaxLyricsOffset"/>, else 0;
     /// displayArtist and displayTitle cleaned (<see cref="CleanText"/>),
     /// empty counting as absent. Per line, value a string, cleaned and cut
@@ -180,7 +184,7 @@ public static partial class Music
         }
 
         var lang = JsonMembers.AsString(o["lang"]) is { } l && Languages.ValidTag(l) ? l : "";
-        var kind = JsonMembers.AsString(o["kind"]) is { } k && LyricsKinds.Contains(k) ? k : LyricsKinds[0];
+        var kind = Names.Token(o["kind"]) ?? LyricsKinds[0];
         var offset = IntOf(o["offset"], -MaxLyricsOffset, MaxLyricsOffset) ?? 0;
         var artist = CleanText(JsonMembers.AsString(o["displayArtist"]) ?? "", MaxArtistNames);
         var title = CleanText(JsonMembers.AsString(o["displayTitle"]) ?? "", MaxDisplayTitle);
