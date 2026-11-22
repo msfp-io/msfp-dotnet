@@ -10,6 +10,38 @@ and on the revised one don't pair with each other: move every server at
 once. The migration guide at the end of this section says what hosts
 change.
 
+### Proposal 17 (neutrality), in Msfp.Protocol
+
+`Msfp.Protocol` follows proposal 17; the engine follows it in a later
+step, and until then some of its tests fail where the protocol's rules
+changed.
+
+- One rule for unknown values: `Names.IsToken` and `Names.Token`. The
+  names lists (`Names.Containers`, `VideoCodecs`, `AudioCodecs`,
+  `HdrFormats`, `DvProfiles`, `AudioProfiles`, `Editions`, `ExtraTypes`,
+  `SubtitleFormats`, `Other`, `NameOrOther`), `Copies.AudioRoles`,
+  `Copies.SegmentKinds` and `Music.ReleaseTypes` are gone: open values
+  are kept as they are. `CatalogRules.LibraryKind` reads a library's kind.
+- Copies: `VideoStream.Codecs`, `SampleAspect`, `Rotation`; `Fps` is the
+  rational string; `VideoDv.El`, `Bl`, `Rpu`; `CopyAudio.Codecs`;
+  `Copies.MaxCopies` 16, `MaxName` 64, `MaxProfile`, `MaxHdr`,
+  `Copies.HighRange`; `Video.OtherId(VideoKey, …)` with `tmdb`.
+  `Font.MaxFonts`, `MaxFontSet`, `CheckSet`, `ReadUrls`.
+- Music: `MusicTitle.PrimaryType` and `SecondaryTypes` replace
+  `ReleaseType`; tracks keep dates and genres; `MusicCopy.Codecs`.
+- Playback: `PlayCapabilities`, `PlayRequest.Capabilities`,
+  `Playback.CoarsenBitrate`, `DefaultCapKbps`, `SampleRateSteps`,
+  `BitDepthSteps`, `PlayAnswer.Versions`, `PlayVersion` and
+  `MaxVersionName` are gone; `PlayRequest.BitrateCap` is 0 without a
+  cap; `TranscodeTargets.WithBaseline`, `PlayRequest.TargetsServed`,
+  `Names.RemuxContainers` and the baseline's values;
+  `Playback.RefuseDelivery` takes the owning server's encoders;
+  `PlayAnswer.AudioRenditions`; `PlayReport.TitleSaid`. Limits:
+  `MaxStreams` and `MaxDownloads` 1,000, `PlaybackLimits.ScanBytes` and
+  `ScanCap`, `Playback.ScanBytesFloor`, `ScanBytesTop`,
+  `ScanBytesRecommended`; `Media.TryScanSpan` takes the cap,
+  `Media.ScanCap` and `Playback.ScanReadCap` are gone.
+
 ### Changed
 
 - Titles carry their copies: `VideoTitle.Copies` and `MusicTitle.Copies`
