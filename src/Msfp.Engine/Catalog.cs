@@ -1,4 +1,7 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Msfp.Protocol;
 
@@ -136,6 +139,59 @@ public sealed partial class MsfpEngine
 
         await BumpLogAsync(ct).ConfigureAwait(false);
         EndPlaybacks(pb => pb.Peer == peer && !keep.Contains(pb.Library), EndReason.NotOffered);
+    }
+
+    /// <summary>
+    /// Chooses whether the individual relation with a paired peer shares the
+    /// host's local titles too (MSFP catalog section 5), in the libraries
+    /// offered to it: off by default. A change forces the peer's next reading
+    /// to be a whole one.
+    /// </summary>
+    /// <param name="peer">The peer's ID.</param>
+    /// <param name="on">Share them.</param>
+    /// <param name="ct">Cancels.</param>
+    /// <exception cref="MsfpException"><see cref="MsfpError.NotFound"/>, <see cref="MsfpError.NotPaired"/>.</exception>
+    public async Task SetLocalAsync(string peer, bool on, CancellationToken ct = default)
+    {
+        var mark = await SeqMarkAsync(ct).ConfigureAwait(false);
+        var changed = false;
+        await _store.UpdateAsync(async tx =>
+        {
+            var p = await tx.PeerAsync(peer).ConfigureAwait(false) ?? throw new MsfpException(MsfpError.NotFound);
+            if (p.State != PeerState.Paired)
+            {
+                throw new MsfpException(MsfpError.NotPaired);
+            }
+
+            if (!(changed = p.Local != on))
+            {
+                return;
+            }
+
+            p.OffersSeq = await OffersSeqAsync(tx, mark).ConfigureAwait(false);
+            p.Local = on;
+            await tx.PutPeerAsync(p).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
+        if (changed)
+        {
+            await BumpLogAsync(ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// An opaque part of a title key the host may use for one of its titles
+    /// (MSFP catalog section 4.2): the identifier of a local title, or an
+    /// extra's part after x/, made from the host's own identifier of it (its
+    /// media server's item ID, say) as a keyed MAC under this server's IDs
+    /// secret: 22 characters of base64url, stable as long as id is, and never
+    /// computable by a peer from it.
+    /// </summary>
+    /// <param name="id">The host's identifier of the title.</param>
+    public string OpaqueKeyPart(string id)
+    {
+        ArgumentNullException.ThrowIfNull(id);
+        var mac = HMACSHA256.HashData(OurKeys().Ids, Encoding.UTF8.GetBytes("key part\n" + id));
+        return Base64UrlText.Encode(mac.AsSpan(0, 16));
     }
 
     /// <summary>
@@ -484,7 +540,7 @@ public sealed partial class MsfpEngine
     // A page of titles as it is built.
     private sealed class TitlesOut
     {
-        public List<Action<JsonOut>> Titles { get; } = [];
+        public List<byte[]> Titles { get; } = [];
 
         public string? Next { get; set; }
 
@@ -494,9 +550,27 @@ public sealed partial class MsfpEngine
 
         public long Seq { get; set; }
 
-        public byte[] Body() => JsonOut.Object(o => o.Objects("titles", Titles, (w, t) => t(w)).String("next", Next)
+        public byte[] Body() => JsonOut.Object(o => o.Raw("titles", Array()).String("next", Next)
             .Bool("changes", Changes ? true : null).Strings("gone", Gone is { Count: > 0 } ? Gone : null)
             .Integer("seq", Seq > 0 ? Seq : null));
+
+        // The titles as one JSON array, each as it was written.
+        private byte[] Array()
+        {
+            var output = new List<byte>(Titles.Sum(t => t.Length + 1) + 2) { (byte)'[' };
+            for (var i = 0; i < Titles.Count; i++)
+            {
+                if (i > 0)
+                {
+                    output.Add((byte)',');
+                }
+
+                output.AddRange(Titles[i]);
+            }
+
+            output.Add((byte)']');
+            return [.. output];
+        }
     }
 
     // Answers a paired peer with a page of the titles in the libraries it
@@ -519,7 +593,7 @@ public sealed partial class MsfpEngine
         {
         }
 
-        if (p is null || p.State != PeerState.Paired || input is null || input.After.Length > 512)
+        if (p is null || p.State != PeerState.Paired || input is null || input.After.Length > CatalogRules.MaxAfter)
         {
             return Answer.Refuse(ProblemType.NotFound);
         }
@@ -566,11 +640,12 @@ public sealed partial class MsfpEngine
             return Answer.Ok(output.Body());
         }
 
+        var sender = new TitleSender(this, p, libs, LocalOffered(p), byPublic, ct);
         var sent = new List<string>();
         try
         {
             if (input.Since > 0 && input.Since >= floor && input.Since <= seq && input.Since >= p.OffersSeq &&
-                !await ChangesPageAsync(p, libs, byPublic, input, output, sent, ct).ConfigureAwait(false))
+                !await sender.ChangesPageAsync(input, output, sent).ConfigureAwait(false))
             {
                 output = new TitlesOut { Seq = seq };
                 sent.Clear();
@@ -578,7 +653,7 @@ public sealed partial class MsfpEngine
 
             if (!output.Changes)
             {
-                await WholePageAsync(p, libs, byPublic, input.After, output, sent, ct).ConfigureAwait(false);
+                await sender.WholePageAsync(input.After, output, sent).ConfigureAwait(false);
             }
         }
         catch (Exception e) when (e is not OperationCanceledException)
@@ -595,263 +670,494 @@ public sealed partial class MsfpEngine
         return Answer.Ok(output.Body());
     }
 
-    // Fills a whole-list page: up to 5,000 titles after after, with next set
-    // only on a full page (catalog section 3.1). Titles the peer can't be
-    // sent are skipped, and the host asked for more.
-    private async Task WholePageAsync(PeerRecord p, List<string> libs, Dictionary<string, string> pub, string after,
-        TitlesOut output, List<string> sent, CancellationToken ct)
+    // Writes the host's titles for one titles answer to a peer: the host
+    // libraries asked (offered to it), those of them whose local titles it
+    // is shared, their public IDs, and the extras' titles looked at, by key,
+    // with the library each was sent in ("" for not sent).
+    private sealed class TitleSender(MsfpEngine e, PeerRecord p, List<string> libs, List<string> local,
+        Dictionary<string, string> pub, CancellationToken ct)
     {
-        while (output.Titles.Count < TitlesPage)
-        {
-            var page = await _cfg.Catalog!.TitlesAsync(libs, after, TitlesPage - output.Titles.Count, ct).ConfigureAwait(false);
-            foreach (var t in page.Titles)
-            {
-                if (string.CompareOrdinal(t.Key, after) <= 0)
-                {
-                    throw new MsfpException(MsfpError.Internal, "the host's titles aren't in key order");
-                }
+        private readonly Dictionary<string, string> _parents = new(StringComparer.Ordinal);
 
-                after = t.Key;
-                if (TitleOut(p, t, libs, pub) is { } w)
+        // Fills a whole-list page: the titles after after, up to 5,000 and 3
+        // MiB of answer (catalog section 3.1), next set whenever a title
+        // remains after the page. Titles the peer can't be sent are skipped,
+        // and the host asked for more.
+        public async Task WholePageAsync(string after, TitlesOut output, List<string> sent)
+        {
+            var budget = new PageBudget(CatalogRules.PageReserve);
+            var last = "";
+            while (true)
+            {
+                var page = await e._cfg.Catalog!.TitlesAsync(libs, after, TitlesPage, ct).ConfigureAwait(false);
+                foreach (var t in page.Titles)
                 {
-                    output.Titles.Add(w);
+                    if (string.CompareOrdinal(t.Key, after) <= 0)
+                    {
+                        throw new MsfpException(MsfpError.Internal, "the host's titles aren't in key order");
+                    }
+
+                    after = t.Key;
+                    if (await TitleAsync(t).ConfigureAwait(false) is not { } raw)
+                    {
+                        continue;
+                    }
+
+                    if (!budget.TryAdd(raw.Length))
+                    {
+                        if (budget.Keys == 0)
+                        {
+                            e._log.LogWarning("msfp: a title of the host's catalog passes 3 MiB alone; it isn't sent: {Key}", t.Key);
+                            continue;
+                        }
+
+                        output.Next = last;
+                        return;
+                    }
+
+                    output.Titles.Add(raw);
                     sent.Add(t.Key);
+                    last = t.Key;
                 }
-            }
 
-            if (!page.More || page.Titles.Count == 0)
-            {
-                return;
-            }
-        }
-
-        output.Next = after;
-    }
-
-    // Fills a changes page: what changed after since, titles new or changed
-    // and keys gone (of those the peer was ever sent), 5,000 keys looked at
-    // at most; false when the log doesn't reach back that far.
-    private async Task<bool> ChangesPageAsync(PeerRecord p, List<string> libs, Dictionary<string, string> pub, TitlesRequest input,
-        TitlesOut output, List<string> sent, CancellationToken ct)
-    {
-        var present = new List<Title>();
-        var gone = new List<string>();
-        var last = "";
-        bool more;
-        if (ChangeLog() is { } cl)
-        {
-            ChangePage page;
-            try
-            {
-                page = await cl.ChangesAsync(libs, input.Since, input.After, TitlesPage, ct).ConfigureAwait(false);
-            }
-            catch (MsfpException e) when (e.Code == MsfpError.TooOld)
-            {
-                return false;
-            }
-
-            if (page.Present.Count + page.Gone.Count > TitlesPage)
-            {
-                throw new MsfpException(MsfpError.Internal, $"a page of changes of more than {TitlesPage} keys");
-            }
-
-            present.AddRange(page.Present);
-            gone.AddRange(page.Gone);
-            last = page.Last;
-            more = page.More;
-        }
-        else
-        {
-            IReadOnlyList<OwnChange> changes = [];
-            await _store.ReadAsync(async tx =>
-                changes = await ((IOwnLogTx)tx).OwnChangesAsync(input.Since, input.After, TitlesPage).ConfigureAwait(false), ct)
-                .ConfigureAwait(false);
-            foreach (var c in changes)
-            {
-                last = c.Key;
-                if (c.Title is { } t && (t.Libraries ?? []).Any(libs.Contains))
+                if (!page.More || page.Titles.Count == 0)
                 {
-                    present.Add(t);
-                }
-                else
-                {
-                    gone.Add(c.Key);
+                    return;
                 }
             }
-
-            more = changes.Count == TitlesPage;
         }
 
-        output.Changes = true;
-        foreach (var t in present)
+        // Fills a changes page: what changed after since, titles new or
+        // changed and keys gone (of those the peer was ever sent), in one byte
+        // order, 5,000 keys looked at at most, and within 5,000 keys and 3 MiB
+        // of answer; false when the log doesn't reach back that far.
+        public async Task<bool> ChangesPageAsync(TitlesRequest input, TitlesOut output, List<string> sent)
         {
-            if (TitleOut(p, t, libs, pub) is { } w)
+            var present = new List<Title>();
+            var gone = new List<string>();
+            var last = "";
+            bool more;
+            if (e.ChangeLog() is { } cl)
             {
-                output.Titles.Add(w);
-                sent.Add(t.Key);
+                ChangePage page;
+                try
+                {
+                    page = await cl.ChangesAsync(libs, input.Since, input.After, TitlesPage, ct).ConfigureAwait(false);
+                }
+                catch (MsfpException x) when (x.Code == MsfpError.TooOld)
+                {
+                    return false;
+                }
+
+                if (page.Present.Count + page.Gone.Count > TitlesPage)
+                {
+                    throw new MsfpException(MsfpError.Internal, $"a page of changes of more than {TitlesPage} keys");
+                }
+
+                present.AddRange(page.Present);
+                gone.AddRange(page.Gone);
+                last = page.Last;
+                more = page.More;
             }
             else
             {
-                gone.Add(t.Key);
+                IReadOnlyList<OwnChange> changes = [];
+                await e._store.ReadAsync(async tx =>
+                    changes = await ((IOwnLogTx)tx).OwnChangesAsync(input.Since, input.After, TitlesPage).ConfigureAwait(false), ct)
+                    .ConfigureAwait(false);
+                foreach (var c in changes)
+                {
+                    last = c.Key;
+                    if (c.Title is { } t && (t.Libraries ?? []).Any(libs.Contains))
+                    {
+                        present.Add(t);
+                    }
+                    else
+                    {
+                        gone.Add(c.Key);
+                    }
+                }
+
+                more = changes.Count == TitlesPage;
+            }
+
+            output.Changes = true;
+            var entries = new List<(string Key, byte[]? Raw)>(); // Raw null: gone
+            foreach (var t in present)
+            {
+                if (await TitleAsync(t).ConfigureAwait(false) is { } raw)
+                {
+                    entries.Add((t.Key, raw));
+                }
+                else
+                {
+                    gone.Add(t.Key);
+                }
+            }
+
+            // A title's extras go with it (catalog section 3.5), whether the
+            // host still lists them or not.
+            foreach (var k in gone.ToList())
+            {
+                foreach (var x in await ExtrasOfAsync(k).ConfigureAwait(false))
+                {
+                    if (!gone.Contains(x))
+                    {
+                        gone.Add(x);
+                    }
+                }
+            }
+
+            entries.RemoveAll(en => gone.Contains(en.Key));
+
+            // gone names only titles the peer was told of (catalog section
+            // 3.2), else it would learn of titles it never could see.
+            if (gone.Count > 0)
+            {
+                IReadOnlyList<string> told = [];
+                await e._store.ReadAsync(async tx => told = await tx.SentAsync(p.Id, gone).ConfigureAwait(false), ct).ConfigureAwait(false);
+                entries.AddRange(told.Select(k => (k, (byte[]?)null)));
+            }
+
+            entries.Sort((x, y) => string.CompareOrdinal(x.Key, y.Key));
+            var budget = new PageBudget(CatalogRules.PageReserve);
+            var included = "";
+            foreach (var (key, raw) in entries)
+            {
+                var size = raw?.Length ?? key.Length + 2; // its quotes; keys need no escaping
+                if (!budget.TryAdd(size))
+                {
+                    if (budget.Keys == 0)
+                    {
+                        e._log.LogWarning("msfp: a title of the host's catalog passes 3 MiB alone; it isn't sent: {Key}", key);
+                        continue;
+                    }
+
+                    // The page ends before it: the next asks on from the last
+                    // key of this one.
+                    output.Next = included;
+                    return true;
+                }
+
+                included = key;
+                if (raw is null)
+                {
+                    (output.Gone ??= []).Add(key);
+                }
+                else
+                {
+                    output.Titles.Add(raw);
+                    sent.Add(key);
+                }
+            }
+
+            if (more && string.CompareOrdinal(last, input.After) > 0)
+            {
+                output.Next = last;
+            }
+
+            return true;
+        }
+
+        // A title of the host as sent to the peer, as JSON: null when its key
+        // isn't canonical or isn't of its kind (with a warning: the host's
+        // bug), of a content part off with the peer, in none of the libraries
+        // asked, local while its libraries share no local titles with the
+        // peer (catalog section 5), an extra whose title isn't sent in the
+        // same library (catalog section 3.5), or left with nothing a receiver
+        // would keep. Its library is the one asked whose public ID comes first
+        // in byte order (catalog section 3).
+        public async Task<byte[]?> TitleAsync(Title t)
+        {
+            if (!TitleKey.TryParse(t.Key, out var k) || k.Kind != t.Kind)
+            {
+                e._log.LogWarning("msfp: a title of the host's catalog has a key MSFP doesn't take; it isn't sent: {Key}", t.Key);
+                return null;
+            }
+
+            if (!e.On(p, k.Part))
+            {
+                return null;
+            }
+
+            var asked = LocalKey(t.Key) ? libs.Where(local.Contains).ToList() : libs;
+            var library = "";
+            foreach (var l in t.Libraries ?? [])
+            {
+                if (asked.Contains(l) && pub.TryGetValue(l, out var id) && (library.Length == 0 || string.CompareOrdinal(id, library) < 0))
+                {
+                    library = id;
+                }
+            }
+
+            var raw = library.Length == 0 ? null : await OutAsync(t, k, library).ConfigureAwait(false);
+            if (k.Kind != "extra")
+            {
+                _parents[t.Key] = raw is null ? "" : library;
+            }
+
+            return raw;
+        }
+
+        private async Task<byte[]?> OutAsync(Title t, TitleKey k, string library)
+        {
+            byte[]? raw = null;
+            switch (t)
+            {
+                case VideoTitle v when k.Part == Versions.PartVideo && VideoKey.TryParse(t.Key, out var vk):
+                    if (vk.Parent is { } parent && await ParentLibraryAsync(parent.ToString()).ConfigureAwait(false) != library)
+                    {
+                        return null;
+                    }
+
+                    raw = e.VideoOut(p.Id, vk, v, library);
+                    break;
+                case MusicTitle m when k.Part == Versions.PartMusic:
+                    raw = e.MusicOut(p.Id, m, library);
+                    break;
+            }
+
+            if (raw is null)
+            {
+                e._log.LogDebug("msfp: a title of the host's catalog has nothing MSFP takes; it isn't sent: {Key}", t.Key);
+            }
+
+            return raw;
+        }
+
+        // The library an extra's title is sent in to the peer, "" when it
+        // isn't sent: noted when the title came before in this answer, else
+        // looked up in the host's catalog.
+        private async Task<string> ParentLibraryAsync(string key)
+        {
+            if (_parents.TryGetValue(key, out var l))
+            {
+                return l;
+            }
+
+            if (await e.HostTitleAsync(key, libs, ct).ConfigureAwait(false) is not { } t)
+            {
+                _parents[key] = "";
+                return "";
+            }
+
+            await TitleAsync(t).ConfigureAwait(false);
+            return _parents.GetValueOrDefault(key, "");
+        }
+
+        // The keys of the extras the host lists under a film, a series or a
+        // season (video section 4.6); none for another key.
+        private async Task<List<string>> ExtrasOfAsync(string key)
+        {
+            var output = new List<string>();
+            if (!VideoKey.TryParse(key, out var k) || k.Kind is not ("movie" or "series" or "season"))
+            {
+                return output;
+            }
+
+            var prefix = key + "/x/";
+            for (var after = prefix; ;)
+            {
+                var page = await e._cfg.Catalog!.TitlesAsync(libs, after, 64, ct).ConfigureAwait(false);
+                foreach (var t in page.Titles)
+                {
+                    if (!t.Key.StartsWith(prefix, StringComparison.Ordinal) || string.CompareOrdinal(t.Key, after) <= 0)
+                    {
+                        return output;
+                    }
+
+                    output.Add(t.Key);
+                    after = t.Key;
+                }
+
+                if (!page.More || page.Titles.Count == 0)
+                {
+                    return output;
+                }
             }
         }
-
-        // gone names only titles the peer was told of (catalog section 3.2),
-        // else it would learn of titles it never could see.
-        if (gone.Count > 0)
-        {
-            IReadOnlyList<string> told = [];
-            await _store.ReadAsync(async tx => told = await tx.SentAsync(p.Id, gone).ConfigureAwait(false), ct).ConfigureAwait(false);
-            output.Gone = told.Order(StringComparer.Ordinal).ToList();
-        }
-
-        if (more && string.CompareOrdinal(last, input.After) > 0)
-        {
-            output.Next = last;
-        }
-
-        return true;
     }
 
-    // A title of the host as sent to p: null when its key isn't canonical
-    // (with a warning: the host's bug), of a content part off with p, or in
-    // none of the libraries asked. Its library is the one asked whose
-    // public ID comes first in byte order (catalog section 3).
-    private Action<JsonOut>? TitleOut(PeerRecord p, Title t, List<string> libs, Dictionary<string, string> pub)
+    // Whether a title key is of the local scheme, of either content part.
+    internal static bool LocalKey(string key) =>
+        VideoKey.TryParse(key, out var v) ? v.Scheme == Video.SchemeLocal : MusicKey.TryParse(key, out var m) && m.Local;
+
+    // The host's title of that key in one of these libraries; null for none.
+    // The host's catalog gives titles after a key: it is asked for the first
+    // after the greatest string below key that no key can be (keys are of
+    // A–Z a–z 0–9 _ - /, all below ~).
+    internal async Task<Title?> HostTitleAsync(string key, IReadOnlyList<string> libs, CancellationToken ct)
     {
-        if (!TitleKey.TryParse(t.Key, out var k) || k.Kind != t.Kind)
-        {
-            _log.LogWarning("msfp: a title of the host's catalog has a key MSFP doesn't take; it isn't sent: {Key}", t.Key);
-            return null;
-        }
-
-        if (!On(p, k.Part))
+        if (_cfg.Catalog is null || key.Length == 0 || libs.Count == 0)
         {
             return null;
         }
 
-        string? library = null;
-        foreach (var l in t.Libraries ?? [])
-        {
-            if (libs.Contains(l) && pub.TryGetValue(l, out var id) && (library is null || string.CompareOrdinal(id, library) < 0))
-            {
-                library = id;
-            }
-        }
-
-        if (library is null)
-        {
-            return null;
-        }
-
-        switch (t)
-        {
-            case VideoTitle v when k.Part == Versions.PartVideo:
-                if (VideoOut(k, v, library) is { } vw)
-                {
-                    return vw;
-                }
-
-                _log.LogWarning("msfp: an episode of the host's catalog keyed by its TMDB ID has no place in TMDB's numbering; it isn't sent: {Key}", t.Key);
-                break;
-            case MusicTitle m when k.Part == Versions.PartMusic:
-                if (MusicOut(m, library) is { } w)
-                {
-                    return w;
-                }
-
-                _log.LogWarning("msfp: a music title of the host's catalog has no name; it isn't sent: {Key}", t.Key);
-                break;
-        }
-
-        return null;
+        var before = key[..^1] + (char)(key[^1] - 1) + "~";
+        var page = await _cfg.Catalog.TitlesAsync(libs, before, 1, ct).ConfigureAwait(false);
+        return page.Titles.Count > 0 && page.Titles[0].Key == key ? page.Titles[0] : null;
     }
 
-    // The host's video title as sent: its members cleaned as a receiver would
-    // keep them, so nothing leaves that MSFP doesn't take; null for an
-    // episode keyed by its TMDB ID without a valid place, which a receiver
-    // would skip (video section 3.1).
-    private static Action<JsonOut>? VideoOut(TitleKey k, VideoTitle t, string library)
+    // The host's video title as sent: its copies made ready to leave
+    // (SendCopy), then the whole read back as a receiver reads it
+    // (Video.ReadTitle), so that nothing leaves that a receiver would skip or
+    // drop, and nothing MSFP doesn't take. Null when a receiver would skip
+    // it: a film, an episode or an extra with no copy left, an episode keyed
+    // by its TMDB episode ID without a valid place (video sections 3.1 and
+    // 4.1), a local film or series without a name, or an extra of no type
+    // MSFP lists (theme songs and videos are never sent).
+    private byte[]? VideoOut(string peer, VideoKey k, VideoTitle t, string library)
     {
-        IReadOnlyList<string>? audio = null, subtitles = null, with = null;
-        Picture? picture = null;
-        Place? place = null;
-        if (k.Playable)
+        if (k.Kind == "extra" && !Names.ExtraTypes.Contains(t.ExtraType ?? "", StringComparer.Ordinal))
         {
-            audio = Languages.SentTags(t.Audio ?? []);
-            subtitles = Languages.SentTags(t.Subtitles ?? []);
-            picture = Picture.Best(t.Pictures ?? []);
+            return null;
         }
 
-        if (k.Kind == "episode" && VideoKey.TryParse(t.Key, out var vk))
-        {
-            with = Video.CleanWith(vk, t.With ?? []).Order(StringComparer.Ordinal).ToList();
-            if (vk.ByEpisodeId)
-            {
-                if (t.Place is not { } pl || !new Protocol.Place(pl.Season, pl.Episode).Valid)
-                {
-                    return null;
-                }
-
-                place = pl;
-            }
-        }
-
-        SortedDictionary<string, string>? ids = null;
-        if (k.Kind != "season")
-        {
-            foreach (var (scheme, v) in t.Ids ?? [])
-            {
-                if (Video.OtherId(scheme, v))
-                {
-                    ids ??= new SortedDictionary<string, string>(StringComparer.Ordinal);
-                    ids[scheme] = v;
-                }
-            }
-        }
-
-        return w => w.String("key", t.Key).String("kind", t.Kind).String("library", library)
-            .Strings("audio", audio is { Count: > 0 } ? audio : null)
-            .Strings("subtitles", subtitles is { Count: > 0 } ? subtitles : null)
-            .Object("video", picture is null ? null : v => v.Integer("height", picture.Height).Strings("hdr", picture.Hdr is { Count: > 0 } ? picture.Hdr : null))
-            .Object("place", place is null ? null : p => p.Integer("season", place.Season).Integer("episode", place.Episode))
-            .Strings("with", with is { Count: > 0 } ? with : null)
-            .Object("ids", ids is null ? null : o =>
+        var copies = (t.Copies ?? []).Select(c => SendCopy(peer, c)).ToList();
+        var input = JsonOut.Object(o => o.String("key", t.Key).String("kind", t.Kind).String("library", library)
+            .Objects("copies", copies.Count > 0 ? copies : null, Copies.Write)
+            .Object("place", t.Place is { } pl ? w => w.Integer("season", pl.Season).Integer("episode", pl.Episode) : null)
+            .Strings("with", t.With is { Count: > 0 } ? t.With : null)
+            .Object("ids", t.Ids is { Count: > 0 } ids ? w =>
             {
                 foreach (var (scheme, v) in ids)
                 {
-                    o.String(scheme, v);
+                    w.String(scheme, v);
                 }
-            });
-    }
-
-    // The host's music title as sent, read back as a receiver reads it: what
-    // a receiver would skip or drop isn't sent.
-    private static Action<JsonOut>? MusicOut(MusicTitle t, string library)
-    {
-        Action<JsonOut> fill(string key, string kind, string name, IEnumerable<string>? artists, string? artistNames,
-            string? album, int disc, int number, int year, long durationMs, IEnumerable<KeyValuePair<string, string>>? ids) =>
-            w => w.String("key", key).String("kind", kind).String("library", library).String("name", name)
-                .Strings("artists", artists?.Any() == true ? artists : null)
-                .String("artistNames", string.IsNullOrEmpty(artistNames) ? null : artistNames)
-                .String("album", string.IsNullOrEmpty(album) ? null : album)
-                .Integer("disc", disc != 0 ? disc : null).Integer("number", number != 0 ? number : null)
-                .Integer("year", year != 0 ? year : null).Integer("durationMs", durationMs != 0 ? durationMs : null)
-                .Object("ids", ids?.Any() == true ? o =>
-                {
-                    foreach (var (scheme, v) in ids.OrderBy(kv => kv.Key, StringComparer.Ordinal))
-                    {
-                        o.String(scheme, v);
-                    }
-                }
-                : null);
-
-        var raw = JsonOut.Object(fill(t.Key, t.Kind, t.Name, t.Artists, t.ArtistNames, t.Album, t.Disc, t.Number, t.Year, t.DurationMs, t.Ids));
-        if (Music.ReadTitle(raw) is not { } m)
+            }
+            : null)
+            .String("extraType", string.IsNullOrEmpty(t.ExtraType) ? null : t.ExtraType)
+            .String("name", string.IsNullOrEmpty(t.Name) ? null : t.Name)
+            .Integer("year", t.Year != 0 ? t.Year : null)
+            .Bool("image", t.Image ? true : null));
+        if (Video.ReadTitle(input) is not { } v)
         {
             return null;
         }
 
-        return fill(m.Key, m.Kind, m.Name, m.Artists, m.ArtistNames, m.Album, m.Disc, m.Number, m.Year, m.DurationMs, m.Ids);
+        var name = v.Description?.Name ?? v.Name;
+        var year = v.Description?.Year ?? 0;
+        var image = v.Description?.Image ?? false;
+        var with = v.With.Order(StringComparer.Ordinal).ToList();
+        return JsonOut.Object(o => o.String("key", v.Key).String("kind", v.Kind).String("library", library)
+            .Objects("copies", v.Copies.Count > 0 ? Copies.Sorted(v.Copies) : null, Copies.Write)
+            .Object("place", v.Place is { } pl ? w => w.Integer("season", pl.Season).Integer("episode", pl.Episode) : null)
+            .Strings("with", with.Count > 0 ? with : null)
+            .Object("ids", v.Ids.Count > 0 ? w =>
+            {
+                foreach (var (scheme, value) in v.Ids)
+                {
+                    w.String(scheme, value);
+                }
+            }
+            : null)
+            .String("extraType", v.ExtraType.Length > 0 ? v.ExtraType : null)
+            .String("name", name.Length > 0 ? name : null)
+            .Integer("year", year != 0 ? year : null)
+            .Bool("image", image ? true : null));
+    }
+
+    // One of the host's copies as it leaves toward a peer: its ID the version
+    // ID play gives for it, never the host's handle; its language tags as
+    // Languages.TrySentTag gives them; its name only when it is an edition or
+    // quality label, and a track's title only when it describes the track
+    // (video section 3.6). What remains out of MSFP's bounds is dropped when
+    // it is read back.
+    internal Protocol.Copy SendCopy(string peer, Protocol.Copy c) => c with
+    {
+        Id = VersionId(peer, c.Id),
+        Name = CopyLabel(c.Name),
+        AudioTracks = (c.AudioTracks ?? []).Select(a => a with { Language = SentTag(a.Language), Title = TrackTitle(a.Title) }).ToList(),
+        SubtitleTracks = (c.SubtitleTracks ?? []).Select(s => s with { Language = SentTag(s.Language), Title = TrackTitle(s.Title) }).ToList(),
+    };
+
+    // SendCopy for a track's copy (music section 3.3).
+    internal MusicCopy SendMusicCopy(string peer, MusicCopy c) => c with { Id = VersionId(peer, c.Id), Name = CopyLabel(c.Name) };
+
+    private static string? SentTag(string? code) => code is not null && Languages.TrySentTag(code, out var tag) ? tag : null;
+
+    // The signs of a file name or a release's name in a label: a path, an
+    // extension, words joined by dots or underscores, brackets, a release
+    // group after a dash, a release's source or encoder.
+    [GeneratedRegex(@"[/\\_\[\]{}]|\.[A-Za-z0-9]{2,4}\z|[A-Za-z0-9_]\.[A-Za-z0-9_]+\.[A-Za-z0-9_]|\S-[A-Za-z0-9]+\z|(?i)(?<![A-Za-z0-9_])(x26[45]|h\.?26[45]|web-?dl|web-?rip|blu-?ray|bdrip|brrip|hdtv|dvdrip)(?![A-Za-z0-9_])")]
+    private static partial Regex FileLike();
+
+    // A copy's name as sent (video section 3.6): an edition or quality label
+    // of at most 32 characters, plain text; "" for one that looks like a file
+    // name or a release's name, which is never sent.
+    internal static string CopyLabel(string? name)
+    {
+        var s = Music.CleanText(name ?? "", (name ?? "").Length);
+        return FileLike().IsMatch(s) ? "" : Music.CleanText(s, Copies.MaxName);
+    }
+
+    // The words a track's title may hold (video section 3.6: a description
+    // of the track, such as "Commentary", "SDH", "Signs & Songs" or
+    // "Forced"), lowercase. A title with any other word (a language's name, a
+    // release group's) is dropped: the engine can't tell a description from
+    // the rest otherwise.
+    private static readonly HashSet<string> TrackWords = new(
+        """
+        commentary commentaries director director's directors cast crew writer writers producer producers composer
+        actor actors and & + with by of the track tracks
+        sdh cc hi hoh hearing impaired deaf captions closed
+        forced full complete signs songs sign song dialogue dialog dialogues lyrics karaoke
+        audio description descriptive described narration narrated visually
+        original dub dubbed dubbing stereo mono surround atmos lossless
+        music score isolated effects only simplified traditional
+        commentaire commentaires forcé forcés forcée forcées complets sourds malentendants audiodescription
+        kommentar erzwungen comentario comentarios forzados audiodescripción
+        """.Split((char[])[' ', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries), StringComparer.Ordinal);
+
+    [GeneratedRegex(@"^[0-9]{1,2}(\.[0-9])?\z")]
+    private static partial Regex TrackNumber();
+
+    // A track's title as sent (video section 3.6): plain text of at most 32
+    // characters, made only of TrackWords and channel counts ("5.1"); null
+    // for any other.
+    internal static string? TrackTitle(string? title)
+    {
+        var s = Music.CleanText(title ?? "", Copies.MaxName);
+        var words = new List<string>();
+        var word = new System.Text.StringBuilder();
+        foreach (var r in s.ToLowerInvariant().EnumerateRunes())
+        {
+            if (Rune.IsLetter(r) || Rune.IsDigit(r) || r.Value is '\'' or '.' or '&' or '+')
+            {
+                word.Append(r.ToString());
+                continue;
+            }
+
+            if (word.Length > 0)
+            {
+                words.Add(word.ToString());
+                word.Clear();
+            }
+        }
+
+        if (word.Length > 0)
+        {
+            words.Add(word.ToString());
+        }
+
+        return words.Count > 0 && words.TrueForAll(w => TrackWords.Contains(w) || TrackNumber().IsMatch(w)) ? s : null;
+    }
+
+    // The host's music title as sent, its copies made ready to leave, read
+    // back as a receiver reads it: what a receiver would skip or drop isn't
+    // sent.
+    private byte[]? MusicOut(string peer, MusicTitle t, string library)
+    {
+        var w = new Protocol.MusicTitle
+        {
+            Key = t.Key, Kind = t.Kind, Library = library, Name = t.Name ?? "", SortName = t.SortName ?? "",
+            Artists = t.Artists ?? [], ArtistNames = t.ArtistNames ?? "", ReleaseType = t.ReleaseType ?? "",
+            Compilation = t.Compilation, Date = t.Date ?? "", OriginalDate = t.OriginalDate ?? "", Genres = t.Genres ?? [],
+            Album = t.Album ?? "", Disc = t.Disc, Number = t.Number,
+            Copies = (t.Copies ?? []).Select(c => SendMusicCopy(peer, c)).ToList(),
+            Image = t.Image ? true : null,
+            Ids = new SortedDictionary<string, string>(t.Ids ?? [], StringComparer.Ordinal),
+        };
+        return Music.ReadTitle(w.ToJson()) is { } m ? (m with { Library = library }).ToJson() : null;
     }
 }

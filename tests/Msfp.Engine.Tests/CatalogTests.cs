@@ -129,7 +129,7 @@ public sealed class CatalogTests
         h.Film("films", "movie/tmdb/1", "en");
         foreach (var k in new[] { "series/tmdb/1399/e1", "series/tmdb/1399/e2" })
         {
-            h.Titles[k] = new VideoTitle { Key = k, Kind = "episode", Libraries = ["films"], Place = new Place { Season = 1, Episode = 1 } };
+            h.Titles[k] = new VideoTitle { Key = k, Kind = "episode", Libraries = ["films"], Place = new Place { Season = 1, Episode = 1 }, Copies = FakeHost.OneCopy(k) };
         }
 
         using var s = await Sharing.StartAsync(h);
@@ -221,7 +221,7 @@ public sealed class CatalogTests
         // movie/tmdb/77 was never sent: not in gone.
         var last = net.SeenBy(a.Host).Where(x => x.Target.EndsWith("/titles", StringComparison.Ordinal)).Last();
         Assert.Contains("\"changes\":true", last.ResponseBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("77", last.ResponseBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("movie/tmdb/77", last.ResponseBody, StringComparison.Ordinal);
         l.Old = true;
         await b.Engine.ReadNowAsync(onB);
         last = net.SeenBy(a.Host).Where(x => x.Target.EndsWith("/titles", StringComparison.Ordinal)).Last();
@@ -292,21 +292,24 @@ public sealed class CatalogTests
         h.Titles["series/tmdb/1399"] = new VideoTitle { Key = "series/tmdb/1399", Kind = "movie", Libraries = ["films"] };
         h.Titles["series/tmdb/1399/e1"] = new VideoTitle
         {
-            Key = "series/tmdb/1399/e1", Kind = "episode", Libraries = ["films"], Audio = ["en", "EN", "x"],
+            Key = "series/tmdb/1399/e1", Kind = "episode", Libraries = ["films"],
+            Copies = [new Protocol.Copy("ep1", 0, "mkv", 1, "x", [new CopyAudio("a0", "aac") { Language = "eng" }, new CopyAudio("a1", "aac") { Language = "x" }])],
             With = ["series/tmdb/1399/e3", "series/tmdb/2/e1", "series/tmdb/1399/e2"],
             Ids = new() { ["imdb"] = "tt01", ["tvdb"] = "81189", ["other"] = "1" },
             Place = new Place { Season = 1, Episode = 0 },
         };
         // An episode keyed by its TMDB ID without a place, or with one out of
         // range, isn't sent; place on other titles isn't sent.
-        h.Titles["series/tmdb/1399/e7"] = new VideoTitle { Key = "series/tmdb/1399/e7", Kind = "episode", Libraries = ["films"] };
+        h.Titles["series/tmdb/1399/e7"] = new VideoTitle { Key = "series/tmdb/1399/e7", Kind = "episode", Libraries = ["films"], Copies = FakeHost.OneCopy("e7") };
         h.Titles["series/tmdb/1399/e8"] = new VideoTitle
         {
             Key = "series/tmdb/1399/e8", Kind = "episode", Libraries = ["films"], Place = new Place { Season = 10_000, Episode = 1 },
+            Copies = FakeHost.OneCopy("e8"),
         };
         h.Titles["series/tmdb/1399/s2/e1"] = new VideoTitle
         {
             Key = "series/tmdb/1399/s2/e1", Kind = "episode", Libraries = ["films"], Place = new Place { Season = 2, Episode = 1 },
+            Copies = FakeHost.OneCopy("s2e1"),
         };
         ((VideoTitle)h.Titles["movie/tmdb/1"]).Place = new Place { Season = 1, Episode = 1 };
         using var s = await Sharing.StartAsync(h);
@@ -320,7 +323,8 @@ public sealed class CatalogTests
         Assert.Null(((VideoTitle)got["series/tmdb/1399/s2/e1"]).Place);
         var ep = (VideoTitle)got["series/tmdb/1399/e1"];
         Assert.Equal(new Place { Season = 1, Episode = 0 }, ep.Place);
-        Assert.Equal(["en"], ep.Audio!);
+        Assert.Equal(["en"], ep.AudioLanguages());
+        Assert.NotEqual("ep1", ep.Copies![0].Id);
         Assert.Equal(["series/tmdb/1399/e2", "series/tmdb/1399/e3"], ep.With!);
         Assert.Single(ep.Ids!);
         Assert.Equal("81189", ep.Ids!["tvdb"]);
@@ -337,19 +341,21 @@ public sealed class CatalogTests
         using var s = await Sharing.StartAsync(h);
         var lib = s.LibraryPub;
         var page = "{\"titles\":[" +
-            "{\"key\":\"movie/tmdb/2\",\"kind\":\"movie\",\"library\":\"" + lib + "\",\"audio\":[\"fr\",\"fr\",\"toolongtoolongtag\"],\"ids\":{\"imdb\":\"tt0133093\",\"x\":1}}," +
+            "{\"key\":\"movie/tmdb/2\",\"kind\":\"movie\",\"library\":\"" + lib + "\",\"copies\":[{\"id\":\"v1\",\"durationMs\":1000,\"container\":\"matroska\",\"size\":5,\"etag\":\"t1\",\"audioTracks\":[{\"id\":\"a0\",\"codec\":\"aac\",\"language\":\"fre\"},{\"id\":\"a1\",\"codec\":\"aac\",\"language\":\"fr\"}]},{\"id\":\"v1\",\"durationMs\":1,\"container\":\"mkv\",\"size\":1,\"etag\":\"t\",\"audioTracks\":[]}],\"ids\":{\"imdb\":\"tt0133093\",\"x\":1}}," +
+            "{\"key\":\"movie/tmdb/7\",\"kind\":\"movie\",\"library\":\"" + lib + "\"}," +
             "{\"key\":\"movie/tmdb/03\",\"kind\":\"movie\",\"library\":\"" + lib + "\"}," +
             "{\"key\":\"movie/tmdb/4\",\"kind\":\"series\",\"library\":\"" + lib + "\"}," +
             "{\"key\":\"movie/tmdb/5\",\"kind\":\"movie\",\"library\":\"elsewhere\"}," +
-            "{\"key\":\"track/mb/0c000000-0000-4000-8000-000000000003\",\"kind\":\"track\",\"library\":\"" + lib + "\",\"name\":\"<b>x</b>\"}," +
+            "{\"key\":\"track/mb/0c000000-0000-4000-8000-000000000003\",\"kind\":\"track\",\"library\":\"" + lib + "\",\"name\":\"<b>x</b>\",\"album\":\"album/mb/0b000000-0000-4000-8000-000000000002\",\"copies\":[{\"id\":\"t1\",\"durationMs\":1000,\"container\":\"flac\",\"codec\":\"flac\",\"size\":9,\"etag\":\"e\"}]}," +
             "7,{\"key\":6}],\"seq\":3}";
         s.Hostile((path, _, _) => path.EndsWith("/titles", StringComparison.Ordinal) ? HostKit.Bytes(page) : null);
         await s.B.Engine.ReadNowAsync(s.OnB);
         var got = await s.PeerTitlesAsync();
         Assert.Equal(["movie/tmdb/2", "track/mb/0c000000-0000-4000-8000-000000000003"], Keys(got));
         var v = (VideoTitle)got["movie/tmdb/2"];
-        Assert.Equal(["fr"], v.Audio!);
+        Assert.Equal(["fr"], v.AudioLanguages());
         Assert.Single(v.Ids!);
+        Assert.Equal("other", Assert.Single(v.Copies!).Container);
         Assert.Equal("<b>x</b>", ((MusicTitle)got["track/mb/0c000000-0000-4000-8000-000000000003"]).Name);
         // Wrong types at the top: the reading fails, what was kept stays.
         foreach (var bad in new[] { "{\"titles\":{}}", "{\"titles\":[],\"next\":7}", "{\"titles\":[],\"seq\":\"1\"}", "{\"titles\":[],\"changes\":1}", "{\"titles\":[],\"gone\":\"x\"}" })
@@ -389,21 +395,45 @@ public sealed class CatalogTests
         {
             Key = Track, Kind = "track", Libraries = ["music"], Name = "The\tBoxer",
             Artists = ["artist/mb/0a000000-0000-4000-8000-000000000001", "nope"], ArtistNames = "Simon & Garfunkel",
-            Album = "album/mb/0b000000-0000-4000-8000-000000000002", Disc = 1, Number = 2, Year = 1970, DurationMs = 308000,
+            Album = "album/mb/0b000000-0000-4000-8000-000000000002", Disc = 1, Number = 2, Date = "1970", Genres = ["Folk"],
+            Copies = [new MusicCopy { Id = "boxer.flac", Name = "The Boxer.flac", DurationMs = 308000, Container = "flac", Codec = "flac",
+                Size = 36214455, Etag = "7f3a9c21", SampleRate = 44100, BitDepth = 16, Channels = 2 }],
             Ids = new() { ["isrc"] = "USSM17000123", ["imdb"] = "tt0133093" },
+        };
+        const string Album = "album/mb/0b000000-0000-4000-8000-000000000002";
+        h.Titles[Album] = new MusicTitle
+        {
+            Key = Album, Kind = "album", Libraries = ["music"], Name = "Bridge over Troubled Water", ReleaseType = "album",
+            Date = "2011-03-08", OriginalDate = "1970-01-26", Genres = ["Folk rock", "folk ROCK"], Image = true,
+            Ids = new() { ["mbreleasegroup"] = "0d000000-0000-4000-8000-000000000005" },
         };
         const string Nameless = "track/mb/0c000000-0000-4000-8000-000000000004";
         h.Titles[Nameless] = new MusicTitle { Key = Nameless, Kind = "track", Libraries = ["music"] };
         using var s = await Sharing.StartAsync(h);
         var got = await s.PeerTitlesAsync();
-        Assert.Single(got);
+        Assert.Equal(2, got.Count);
         var m = Assert.IsType<MusicTitle>(got[Track]);
         Assert.Equal("The Boxer", m.Name);
         Assert.Equal(["artist/mb/0a000000-0000-4000-8000-000000000001"], m.Artists!);
         Assert.Equal("Simon & Garfunkel", m.ArtistNames);
-        Assert.Equal((1, 2, 1970, 308000L), (m.Disc, m.Number, m.Year, m.DurationMs));
+        Assert.Equal((1, 2), (m.Disc, m.Number));
+        Assert.Null(m.Date);
+        Assert.Null(m.Genres);
+        var copy = Assert.Single(m.Copies!);
+        Assert.Equal(308000, copy.DurationMs);
+        Assert.Equal("", copy.Name);
+        Assert.StartsWith("ver_", copy.Id, StringComparison.Ordinal);
         Assert.Single(m.Ids!);
         Assert.Equal(s.LibraryPub, m.Libraries![0]);
+        // An album's description; an image only for a local one.
+        var a = Assert.IsType<MusicTitle>(got[Album]);
+        Assert.Equal(("album", "1970-01-26"), (a.ReleaseType, a.OriginalDate));
+        Assert.Equal(["Folk rock"], a.Genres!);
+        Assert.False(a.Image);
+        Assert.NotEmpty(a.Ids!["mbreleasegroup"]);
+        var sentBody = s.Exchanges("titles")[^1].ResponseBody;
+        Assert.DoesNotContain("boxer.flac", sentBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"year\"", sentBody, StringComparison.Ordinal);
         // A server without music: none of it is sent.
         var h2 = new FakeHost { Libs = h.Libs };
         h2.Titles[Track] = h.Titles[Track];
@@ -411,74 +441,63 @@ public sealed class CatalogTests
         Assert.Empty(await s2.PeerTitlesAsync());
     }
 
-    // A film's picture (video section 3.2): the host gives each copy's, the
-    // best goes, stepped; a reader keeps it with the title, and another
-    // picture is a change of the title.
+    // A film's copies (video section 3.2): sent best first, under version
+    // IDs, cleaned as a receiver keeps them; the best picture and the
+    // languages are worked out from them; a copy's new etag is a change of
+    // the title.
     [Fact]
-    public async Task TitlePictures()
+    public async Task TitleCopies()
     {
         var h = new FakeHost();
-        h.Film("films", "movie/tmdb/1", "en");
+        h.Film("films", "movie/tmdb/1", "en", "fr");
         h.Film("films", "movie/tmdb/2", "en");
-        h.Film("films", "movie/tmdb/3", "en");
-        ((VideoTitle)h.Titles["movie/tmdb/1"]).Pictures =
-            [new Picture { Height = 1080 }, new Picture { Height = 2200, Hdr = ["dv", "HDR10", "hdr10"] }, new Picture { Height = 2160 }];
-        ((VideoTitle)h.Titles["movie/tmdb/2"]).Pictures = [new Picture { Height = 360 }, new Picture { Height = 0, Hdr = ["hdr10"] }];
+        var m1 = (VideoTitle)h.Titles["movie/tmdb/1"];
+        m1.Copies![0] = m1.Copies[0] with
+        {
+            Video = new VideoStream("h264", 1920, 1080),
+            Chapters = [new CopyChapter(0, "Start"), new CopyChapter(0), new CopyChapter(60_000)],
+        };
+        m1.Copies[1] = m1.Copies[1] with
+        {
+            Video = new VideoStream("hevc", 3840, 1600) { Hdr = ["dv", "hdr10"] },
+            Name = "Film.2160p.WEB-DL-GRP.mkv",
+            AudioTracks = [m1.Copies[1].AudioTracks[0] with { Title = "Commentary" }, new CopyAudio("a1", "dts") { Language = "ger", Title = "German DTS-HD by GRP" }],
+        };
+        var m2 = (VideoTitle)h.Titles["movie/tmdb/2"];
+        m2.Copies![0] = m2.Copies[0] with { Size = 0 }; // a receiver would skip it: so is the title
         using var s = await Sharing.StartAsync(h);
         var got = await s.PeerTitlesAsync();
-        var v1 = ((VideoTitle)got["movie/tmdb/1"]).Video;
-        Assert.NotNull(v1);
-        Assert.Equal(2160, v1.Height);
-        Assert.Equal(["hdr10", "dv"], v1.Hdr!);
-        var v2 = ((VideoTitle)got["movie/tmdb/2"]).Video;
-        Assert.NotNull(v2);
-        Assert.Equal(480, v2.Height);
-        Assert.Null(v2.Hdr);
-        Assert.Null(((VideoTitle)got["movie/tmdb/3"]).Video);
+        Assert.False(got.ContainsKey("movie/tmdb/2"));
+        var v = (VideoTitle)got["movie/tmdb/1"];
+        var best = v.BestCopy();
+        Assert.NotNull(best);
+        Assert.Equal(2, v.Copies!.Count);
+        Assert.Equal(1600, best.Video?.Height);
+        Assert.Equal(["hdr10", "dv"], best.Video!.Hdr);
+        Assert.Null(best.Name);
+        Assert.Equal("Commentary", best.AudioTracks[0].Title);
+        Assert.Null(best.AudioTracks[1].Title);
+        Assert.Equal("de", best.AudioTracks[1].Language);
+        Assert.Equal(["fr", "de", "en"], v.AudioLanguages());
+        Assert.Equal(["fr"], v.SubtitleLanguages());
+        var c = v.Copies[1];
+        Assert.Equal((2, 1000L, "e0", "Copy en"), (c.Chapters.Count, c.Size, c.ETag, c.Name));
+        Assert.All(v.Copies, x => Assert.StartsWith("ver_", x.Id, StringComparison.Ordinal));
         var body = s.Exchanges("titles")[^1].ResponseBody;
-        Assert.Contains("\"video\":{\"height\":2160,\"hdr\":[\"hdr10\",\"dv\"]}", body, StringComparison.Ordinal);
-        Assert.DoesNotContain("pictures", body, StringComparison.Ordinal);
-        // Another picture: the title is sent again in a changes reading.
+        Assert.DoesNotContain("movie/tmdb/1#", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("GRP", body, StringComparison.Ordinal);
+        // A copy replaced (its etag): the title is sent again in a changes
+        // reading.
         lock (h.Lock)
         {
-            ((VideoTitle)h.Titles["movie/tmdb/3"]).Pictures = [new Picture { Height = 720 }];
+            m1.Copies[0] = m1.Copies[0] with { ETag = "e9" };
         }
 
         s.A.Engine.CatalogChanged();
         await s.B.Engine.ReadNowAsync(s.OnB);
         var x = s.Exchanges("titles")[^1].ResponseBody;
         Assert.Contains("\"changes\":true", x, StringComparison.Ordinal);
-        Assert.Contains("\"key\":\"movie/tmdb/3\"", x, StringComparison.Ordinal);
-        Assert.DoesNotContain("\"key\":\"movie/tmdb/1\"", x, StringComparison.Ordinal);
-        Assert.Equal(720, ((VideoTitle)(await s.PeerTitlesAsync())["movie/tmdb/3"]).Video?.Height);
-    }
-
-    public static TheoryData<int[], string[][], int, string[]?> BestPictures => new()
-    {
-        { [], [], 0, null },
-        { [0], [[]], 0, null },
-        { [1600], [[]], 1440, null },
-        { [9000], [[]], 4320, null },
-        { [2160, 2160], [[], ["hlg"]], 2160, ["hlg"] },
-        { [2160, 2160], [["hlg"], ["dv", "hdr10"]], 2160, ["hdr10", "dv"] },
-        { [1080, 2160], [["hdr10"], []], 2160, null },
-        { [1080], [["hdr10+", "sdr"]], 1080, null },
-    };
-
-    [Theory]
-    [MemberData(nameof(BestPictures))]
-    public void BestPicture(int[] heights, string[][] hdr, int height, string[]? wantHdr)
-    {
-        var pictures = heights.Select((x, i) => new Picture { Height = x, Hdr = hdr[i].Length > 0 ? [.. hdr[i]] : null });
-        var best = Picture.Best(pictures);
-        if (height == 0)
-        {
-            Assert.Null(best);
-            return;
-        }
-
-        Assert.NotNull(best);
-        Assert.Equal(height, best.Height);
-        Assert.Equal(wantHdr, best.Hdr?.ToArray());
+        Assert.Contains("\"key\":\"movie/tmdb/1\"", x, StringComparison.Ordinal);
+        Assert.Equal("e9", ((VideoTitle)(await s.PeerTitlesAsync())["movie/tmdb/1"]).Copies![1].ETag);
     }
 }

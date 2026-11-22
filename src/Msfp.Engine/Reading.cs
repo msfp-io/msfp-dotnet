@@ -632,12 +632,14 @@ public sealed partial class MsfpEngine
             return new VideoTitle
             {
                 Key = v.Key, Kind = v.Kind, Libraries = [v.Library],
-                Audio = v.Audio.Count > 0 ? [.. v.Audio] : null,
-                Subtitles = v.Subtitles.Count > 0 ? [.. v.Subtitles] : null,
+                Copies = v.Copies.Count > 0 ? [.. v.Copies] : null,
                 With = v.With.Count > 0 ? [.. v.With] : null,
                 Ids = v.Ids.Count > 0 ? new Dictionary<string, string>(v.Ids) : null,
-                Video = v.Video is { } pic ? new Picture { Height = pic.Height, Hdr = pic.Hdr.Count > 0 ? [.. pic.Hdr] : null } : null,
                 Place = v.Place is { } pl ? new Place { Season = pl.Season, Episode = pl.Episode } : null,
+                ExtraType = v.ExtraType.Length > 0 ? v.ExtraType : null,
+                Name = (v.Description?.Name ?? v.Name) is { Length: > 0 } name ? name : null,
+                Year = v.Description?.Year ?? 0,
+                Image = v.Description?.Image ?? false,
             };
         }
 
@@ -651,10 +653,18 @@ public sealed partial class MsfpEngine
             return new MusicTitle
             {
                 Key = m.Key, Kind = m.Kind, Libraries = [m.Library], Name = m.Name,
+                SortName = m.SortName.Length > 0 ? m.SortName : null,
                 Artists = m.Artists.Count > 0 ? [.. m.Artists] : null,
                 ArtistNames = m.ArtistNames.Length > 0 ? m.ArtistNames : null,
+                ReleaseType = m.ReleaseType.Length > 0 ? m.ReleaseType : null,
+                Compilation = m.Compilation,
+                Date = m.Date.Length > 0 ? m.Date : null,
+                OriginalDate = m.OriginalDate.Length > 0 ? m.OriginalDate : null,
+                Genres = m.Genres.Count > 0 ? [.. m.Genres] : null,
                 Album = m.Album.Length > 0 ? m.Album : null,
-                Disc = m.Disc, Number = m.Number, Year = m.Year, DurationMs = m.DurationMs,
+                Disc = m.Disc, Number = m.Number,
+                Copies = m.Copies.Count > 0 ? [.. m.Copies] : null,
+                Image = m.Image == true,
                 Ids = m.Ids.Count > 0 ? new Dictionary<string, string>(m.Ids) : null,
             };
         }

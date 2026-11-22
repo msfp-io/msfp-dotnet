@@ -11,7 +11,7 @@ public sealed class MemoryStoreTests
     private static byte[] B(string s) => Encoding.UTF8.GetBytes(s);
 
     internal static Title Video(string key) =>
-        new VideoTitle { Key = key, Kind = "movie", Libraries = ["L"], Audio = ["fr"] };
+        new VideoTitle { Key = key, Kind = "movie", Libraries = ["L"], Name = "fr" };
 
     // A transaction that fails keeps nothing; one that succeeds keeps all;
     // what a getter returns is a copy; a read can't write.
@@ -77,7 +77,7 @@ public sealed class MemoryStoreTests
             var page = await tx.PeerTitlesAsync("p1", "movie/tmdb/1", 1);
             var only = Assert.IsType<VideoTitle>(Assert.Single(page));
             Assert.Equal("movie/tmdb/2", only.Key);
-            Assert.Equal("fr", only.Audio![0]);
+            Assert.Equal("fr", only.Name);
             Assert.Single(await tx.SentAsync("p1", ["movie/tmdb/9", "movie/tmdb/8"]));
         }, Ct);
         await st.UpdateAsync(async tx => await tx.EndReadingAsync("p1", 2), Ct);

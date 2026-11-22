@@ -1,3 +1,5 @@
+using Msfp.Protocol;
+
 namespace Msfp.Tests;
 
 // What MSFP says for media servers other than Jellyfin (the spec's
@@ -37,11 +39,15 @@ public sealed class PlatformTests
     {
         var h = HostKit.FilmHost();
         var v = (VideoTitle)h.Titles[Film];
-        v.Audio = ["eng", "fre", "fra", "und"];
-        v.Subtitles = ["ger", "fre-ca"];
         string[] codes = ["eng", "fre"];
         for (var i = 0; i < codes.Length; i++)
         {
+            var c = v.Copies![i];
+            v.Copies[i] = c with
+            {
+                AudioTracks = [c.AudioTracks[0] with { Language = codes[i] }, new CopyAudio("a1", "aac") { Language = new[] { "fra", "und" }[i] }],
+                SubtitleTracks = [new CopySubtitle("s0", "subrip") { Language = "ger" }, new CopySubtitle("s1", "subrip") { Language = "fre-ca" }],
+            };
             var copy = h.Copies[Film][i];
             copy.Audio = [codes[i]];
             var info = h.Info[copy.Handle];
@@ -51,8 +57,8 @@ public sealed class PlatformTests
 
         using var s = await Sharing.StartAsync(h);
         var kept = (VideoTitle)(await s.PeerTitlesAsync())[Film];
-        Assert.Equal(["en", "fr"], kept.Audio!);
-        Assert.Equal(["de", "fr-CA"], kept.Subtitles!);
+        Assert.Equal(["en", "fr"], kept.AudioLanguages());
+        Assert.Equal(["de", "fr-CA"], kept.SubtitleLanguages());
         var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film, AudioLanguage = "fr", SubtitleLanguage = "de" });
         Assert.Equal(Film + "#1", h.Starts()[0].Copy);
         Assert.Equal("fr", pb.AudioTracks[0].Language);

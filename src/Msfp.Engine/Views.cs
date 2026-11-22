@@ -77,6 +77,9 @@ public sealed record PeerView
     /// <summary>How many of the host's libraries are offered to it.</summary>
     public int Offers { get; init; }
 
+    /// <summary>The individual relation shares the host's local titles too (SetLocalAsync).</summary>
+    public bool Local { get; init; }
+
     /// <summary>How many of its libraries this server reads.</summary>
     public int Wants { get; init; }
 
@@ -193,7 +196,7 @@ public sealed partial class MsfpEngine
             Refused = p.Refused is { } rk ? new KeyNotice(Keys.Fingerprint(rk.Key), rk.At) : null, Limits = p.Limits with { }, TheirLimits = p.TheirLimits is null ? null : p.TheirLimits with { },
             RotationAnswer = p.RotationAnswer ?? "", NotMoved = notMoved, MoveLate = notMoved && a.MovedAt is { } at && Now() - at >= MoveLate,
             Moving = p.Move is { } m ? new MoveView(m.Address, m.Since, m.FailingSince, new AddressMove(m.Address, null, m.FailingSince).Warn(Now())) : null,
-            Offers = p.Offers?.Count ?? 0, Wants = p.Wants?.Count(w => w.Wanted) ?? 0, WantsGone = p.Wants?.Count(w => w.Wanted && w.Gone) ?? 0,
+            Offers = p.Offers?.Count ?? 0, Local = p.Local, Wants = p.Wants?.Count(w => w.Wanted) ?? 0, WantsGone = p.Wants?.Count(w => w.Wanted && w.Gone) ?? 0,
             Groups = [.. p.Groups ?? []], Individual = Individual(p), ByHand = Individual(p),
             IndividualAsked = Asked(p), IndividualAsks = Asks(p) && !p.KeepChoice, KeepChoice = p.KeepChoice,
             JoiningGroup = p.JoiningGroup ?? "",

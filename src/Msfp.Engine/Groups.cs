@@ -51,6 +51,9 @@ public sealed record GroupView
     /// <summary>The host libraries this server offers the group.</summary>
     public IReadOnlyList<string> Offers { get; init; } = [];
 
+    /// <summary>Its local titles are shared with the group (SetGroupLocalAsync).</summary>
+    public bool Local { get; init; }
+
     /// <summary>The pool this server lends the group.</summary>
     public Limits Pool { get; init; } = new();
 
@@ -204,7 +207,7 @@ public sealed partial class MsfpEngine
         return new GroupView
         {
             Id = g.Id, Name = s.Name, Settings = s.Settings, Me = g.Me, Owner = s.Owner, Heir = s.Heir, Role = Role(s, g.Me),
-            Accept = g.Accept, Offers = [.. g.Offers ?? []], Pool = g.Pool with { }, Dissolved = s.Dissolved,
+            Accept = g.Accept, Offers = [.. g.Offers ?? []], Local = g.Local, Pool = g.Pool with { }, Dissolved = s.Dissolved,
             Joining = !s.Members.ContainsKey(g.Me) && g.Events.Count == 0,
             Members = members, Banned = banned, Joins = joins, Requests = requests,
             NoWayIn = CutOff(g, s, peers, ""),
@@ -485,6 +488,37 @@ public sealed partial class MsfpEngine
         await EndPlaybacksNotOfferedAsync(ct).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Chooses whether this server shares its local titles (MSFP catalog
+    /// section 4.3) with a group, in the libraries it offers it: off by
+    /// default. A change forces a whole reading on every link through it.
+    /// </summary>
+    /// <param name="id">The group's ID.</param>
+    /// <param name="on">Share them.</param>
+    /// <param name="ct">Cancels.</param>
+    /// <exception cref="MsfpException"><see cref="MsfpError.NotFound"/>, <see cref="MsfpError.NoGroups"/>.</exception>
+    public async Task SetGroupLocalAsync(string id, bool on, CancellationToken ct = default)
+    {
+        var mark = await SeqMarkAsync(ct).ConfigureAwait(false);
+        var changed = false;
+        await _store.UpdateAsync(async tx =>
+        {
+            var g = await GroupOfAsync(tx, id).ConfigureAwait(false);
+            if (!(changed = g.Local != on))
+            {
+                return;
+            }
+
+            g.Local = on;
+            await GroupsOf(tx).PutGroupAsync(g).ConfigureAwait(false);
+            await RefreshLinksAsync(tx, mark).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
+        if (changed)
+        {
+            await BumpLogAsync(ct).ConfigureAwait(false);
+        }
+    }
+
     // Ends the playbacks from libraries their link is no longer offered
     // (playback section 6.3).
     private async Task EndPlaybacksNotOfferedAsync(CancellationToken ct)
@@ -669,6 +703,7 @@ public sealed partial class MsfpEngine
                     if (g is not null)
                     {
                         p.Offers = [.. g.Offers ?? []];
+                        p.Local = g.Local;
                         p.Limits = g.Pool with { };
                     }
                 }
@@ -967,6 +1002,7 @@ public sealed partial class MsfpEngine
         foreach (var p in await tx.PeersAsync().ConfigureAwait(false))
         {
             var offers = new List<string>();
+            var local = new List<string>();
             var pools = new List<GroupPool>();
             foreach (var id in p.Groups ?? [])
             {
@@ -976,17 +1012,26 @@ public sealed partial class MsfpEngine
                 }
 
                 offers.AddRange((g.Offers ?? []).Where(l => !offers.Contains(l)));
+                if (g.Local)
+                {
+                    local.AddRange((g.Offers ?? []).Where(l => !local.Contains(l)));
+                }
+
                 pools.Add(new GroupPool { Group = id, Limits = g.Pool });
             }
 
             offers.Sort(StringComparer.Ordinal);
-            var offersChanged = !offers.SequenceEqual(p.GroupOffers ?? []);
+            local.Sort(StringComparer.Ordinal);
+            // What it is offered, local titles included: a whole reading
+            // follows (MSFP catalog section 5).
+            var offersChanged = !offers.SequenceEqual(p.GroupOffers ?? []) || !local.SequenceEqual(p.GroupLocal ?? []);
             if (!offersChanged && pools.SequenceEqual(p.Pools ?? []))
             {
                 continue;
             }
 
             p.GroupOffers = offers.Count > 0 ? offers : null;
+            p.GroupLocal = local.Count > 0 ? local : null;
             p.Pools = pools.Count > 0 ? pools : null;
             if (offersChanged)
             {
@@ -1005,6 +1050,21 @@ public sealed partial class MsfpEngine
     {
         var output = new List<string>(p.GroupOffers ?? []);
         if (Individual(p))
+        {
+            output.AddRange((p.Offers ?? []).Where(l => !output.Contains(l)));
+        }
+
+        return output;
+    }
+
+    // The host libraries whose local titles a link is shared: those its
+    // individual relation offers when it shares local titles, and those of
+    // its groups that do (catalog section 5, groups section 9: a relation
+    // that allows it, and offers the library).
+    internal static List<string> LocalOffered(PeerRecord p)
+    {
+        var output = new List<string>(p.GroupLocal ?? []);
+        if (Individual(p) && p.Local)
         {
             output.AddRange((p.Offers ?? []).Where(l => !output.Contains(l)));
         }

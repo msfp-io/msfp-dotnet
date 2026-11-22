@@ -46,6 +46,27 @@ internal sealed partial class Folder(string dir) : ICatalog, IPlayback, IMedia
         return films;
     }
 
+    // Describes the film's one copy, its file, as the catalog lists it (MSFP
+    // video section 3.2): its size, an etag from its size and its time, its
+    // container from its extension; its length and streams are left unknown
+    // (the example reads no file), its subtitles from the .vtt files beside
+    // it. Its ID is the handle CopiesAsync gives.
+    private static Protocol.Copy? CopyOf(Film film, string handle)
+    {
+        var info = new FileInfo(film.File);
+        if (!info.Exists || info.Length < 1)
+        {
+            return null;
+        }
+
+        var etag = Convert.ToString(info.Length, 16) + "-" + Convert.ToString(info.LastWriteTimeUtc.Ticks, 16);
+        return new Protocol.Copy(handle, 0, Names.NameOrOther(Names.Containers, Path.GetExtension(film.File).TrimStart('.')),
+            info.Length, etag, [new CopyAudio("a0", Names.Other) { Default = true }])
+        {
+            SubtitleTracks = film.Subs.Select((s, i) => new CopySubtitle("s" + i, "webvtt") { Language = Language(s), External = true }).ToList(),
+        };
+    }
+
     // A subtitles file's language, from its name.
     private static string Language(string path) => Path.GetExtension(Path.GetFileNameWithoutExtension(path)).TrimStart('.');
 
@@ -70,14 +91,12 @@ internal sealed partial class Folder(string dir) : ICatalog, IPlayback, IMedia
                 break;
             }
 
-            var subs = films[key].Subs;
-            titles.Add(new VideoTitle
+            if (CopyOf(films[key], key) is not { } copy)
             {
-                Key = key,
-                Kind = "movie",
-                Libraries = ["films"],
-                Subtitles = subs.Count > 0 ? subs.Select(Language).ToList() : null,
-            });
+                continue;
+            }
+
+            titles.Add(new VideoTitle { Key = key, Kind = "movie", Libraries = ["films"], Copies = [copy] });
         }
 
         return ValueTask.FromResult(new TitlePage(titles, more));

@@ -116,6 +116,34 @@ public sealed class HostTypesTests
         Assert.Throws<JsonException>(() => TitleJson.Unmarshal("{}"u8));
     }
 
+    // Titles with their copies, as the Go engine writes them (msfp-go's
+    // MarshalTitle at the revision of version 0): read as they are, written
+    // back the same, member for member.
+    [Theory]
+    [InlineData("""{"video":{"key":"movie/tmdb/1","kind":"movie","libraries":["L1"],"copies":[{"id":"ver_x","name":"4K","durationMs":1000,"startMs":5,"container":"mkv","size":9,"etag":"e1","video":{"codec":"hevc","width":3840,"height":2160,"hdr":["dv"]},"audioTracks":[{"id":"a0","language":"fr","channels":6,"default":true,"codec":"eac3"}],"subtitleTracks":[{"id":"s0","language":"en","forced":true,"format":"subrip"}],"chapters":[{"startMs":0,"name":"One"}]}]}}""")]
+    [InlineData("""{"music":{"key":"track/mb/x","kind":"track","libraries":null,"name":"Song","copies":[{"id":"ver_y","durationMs":1000,"container":"flac","codec":"flac","size":9,"etag":"e2","sampleRate":44100}]}}""")]
+    public void TitlesWithCopies(string go)
+    {
+        var t = TitleJson.Unmarshal(System.Text.Encoding.UTF8.GetBytes(go));
+        if (t is VideoTitle v)
+        {
+            var c = Assert.Single(v.Copies!);
+            Assert.Equal(("ver_x", "4K", 5L, "e1", 2160), (c.Id, c.Name, c.StartMs, c.ETag, c.Video!.Height));
+            Assert.Equal(6, c.AudioTracks[0].Channels);
+            Assert.True(c.SubtitleTracks[0].Forced);
+            Assert.Equal("One", c.Chapters[0].Name);
+            Assert.Equal(["fr"], v.AudioLanguages());
+        }
+        else
+        {
+            var c = Assert.Single(Assert.IsType<MusicTitle>(t).Copies!);
+            Assert.Equal(("ver_y", "e2", 44100), (c.Id, c.Etag, c.SampleRate));
+        }
+
+        var back = System.Text.Json.Nodes.JsonNode.Parse(TitleJson.Marshal(t));
+        Assert.True(System.Text.Json.Nodes.JsonNode.DeepEquals(System.Text.Json.Nodes.JsonNode.Parse(go), back), back!.ToJsonString());
+    }
+
     // A host's store implements the two plain calls; the forms that give a
     // value back come with the interface.
     private sealed class HostStore(IStore inner) : IStore

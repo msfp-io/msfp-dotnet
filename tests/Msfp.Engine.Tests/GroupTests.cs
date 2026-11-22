@@ -259,6 +259,42 @@ public sealed class GroupTests
             await ErrorAsync(() => n.Engine.PlayAsync(onN.Id, new PlayRequest { Title = "movie/tmdb/949" })));
     }
 
+    // A group's local titles (groups section 9): shared with the links
+    // through the group once the member allows it for that group.
+    [Fact]
+    public async Task GroupLocalTitles()
+    {
+        var net = new Network();
+        var (h, local, _) = TitlesTests.LocalHost();
+        h.Libs = [new Library { Id = "films", Name = "Films", Kind = "movies" }];
+        var (a, b, n, g) = await TrioAsync(net, c => c with { Catalog = h, Playback = h, Media = h, SheetEncoder = new TestSheets() });
+        using var _a = a;
+        using var _b = b;
+        using var _n = n;
+        var gb = await b.Engine.GroupAsync(g.Id);
+        await b.Engine.AcceptRequestAsync(g.Id, Assert.Single(gb.Requests).Mail);
+        await SettleAsync(a, b, n);
+        await b.Engine.SetGroupOffersAsync(g.Id, ["films"]);
+        var onN = (await PeerNamedAsync(n, "B"))!.Id;
+        await n.Engine.CheckAsync(onN);
+        var libs = await n.Engine.TheirLibrariesAsync(onN);
+        await n.Engine.SetWantsAsync(onN, [Assert.Single(libs).Id]);
+        async Task<List<string>> KeptAsync()
+        {
+            await n.Engine.ReadNowAsync(onN);
+            IReadOnlyList<Title> titles = [];
+            await n.Store.ReadAsync(async tx => titles = await tx.PeerTitlesAsync(onN, "", 100), CancellationToken.None);
+            return titles.Select(t => t.Key).ToList();
+        }
+
+        Assert.DoesNotContain(local, await KeptAsync());
+        await b.Engine.SetGroupLocalAsync(g.Id, true);
+        Assert.True((await b.Engine.GroupAsync(g.Id)).Local);
+        var kept = await KeptAsync();
+        Assert.Contains(local, kept);
+        Assert.Contains(local + "/x/Ex1", kept);
+    }
+
     // Automatically accepting new members (groups section 4.1): B accepts a
     // newcomer's request at once; C, which doesn't, keeps it waiting.
     [Fact]

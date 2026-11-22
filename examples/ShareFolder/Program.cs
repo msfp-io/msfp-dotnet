@@ -231,7 +231,7 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
                 break;
             case "play":
                 var peerAndKey = arg.Split(' ', 2);
-                var pb = await engine.PlayAsync(peerAndKey[0], new PlayRequest
+                var pb = await engine.PlayAsync(peerAndKey[0], new Msfp.PlayRequest
                 {
                     Title = peerAndKey.Length > 1 ? peerAndKey[1] : "",
                     Capabilities = new Capabilities

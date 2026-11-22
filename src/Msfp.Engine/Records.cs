@@ -322,6 +322,13 @@ public sealed record PeerRecord
     [JsonPropertyName("offers"), OmitEmpty]
     public List<string>? Offers { get; set; }
 
+    /// <summary>
+    /// The individual relation shares the host's local titles too, in the
+    /// libraries it offers (MSFP catalog section 5: off by default).
+    /// </summary>
+    [JsonPropertyName("local"), OmitEmpty]
+    public bool Local { get; set; }
+
     /// <summary>The change number the offers were set at.</summary>
     [JsonPropertyName("offersSeq"), OmitEmpty]
     public long OffersSeq { get; set; }
@@ -367,6 +374,14 @@ public sealed record PeerRecord
     /// <summary>The host libraries its groups offer it, copied from them whenever they change.</summary>
     [JsonPropertyName("groupOffers"), OmitEmpty]
     public List<string>? GroupOffers { get; set; }
+
+    /// <summary>
+    /// The host libraries whose local titles its groups share: those of the
+    /// groups that share local titles, among the libraries each offers;
+    /// copied from them whenever they change.
+    /// </summary>
+    [JsonPropertyName("groupLocal"), OmitEmpty]
+    public List<string>? GroupLocal { get; set; }
 
     /// <summary>Each of its groups' pools, copied from them whenever they change.</summary>
     [JsonPropertyName("pools"), OmitEmpty]
@@ -442,6 +457,10 @@ public sealed record GroupRecord
     /// <summary>The host libraries this server offers the group.</summary>
     [JsonPropertyName("offers"), OmitEmpty]
     public List<string>? Offers { get; set; }
+
+    /// <summary>This server shares its local titles with the group, in the libraries it offers it (MSFP groups section 9: off by default).</summary>
+    [JsonPropertyName("local"), OmitEmpty]
+    public bool Local { get; set; }
 
     /// <summary>The pool this server lends the group's members.</summary>
     [JsonPropertyName("pool")]

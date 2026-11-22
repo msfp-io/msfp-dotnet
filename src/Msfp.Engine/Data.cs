@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Msfp.Protocol;
 
 namespace Msfp;
 
@@ -73,37 +74,38 @@ public abstract record Title
     public List<string>? Libraries { get; set; }
 }
 
-/// <summary>A film, a series, a season or an episode (MSFP video section 3).</summary>
+/// <summary>
+/// A film, a series, a season, an episode or an extra (MSFP video section
+/// 3): the host's own, as its Catalog gives them, or a peer's, as the
+/// engine kept it (video section 3.1). The engine cleans the host's before
+/// they leave as a receiver would keep them, so that nothing leaves that
+/// MSFP doesn't take.
+/// </summary>
 public sealed record VideoTitle : Title
 {
     /// <summary>
-    /// Audio languages, as tags (the host's may be its media server's codes:
-    /// the engine sends them as the toolkit's SentTags gives them).
+    /// A film's, an episode's or an extra's copies, best first (MSFP video
+    /// sections 3.2 to 3.8): what a viewer's server needs to list each as a
+    /// file of its own before anyone plays it (its length, size, etag,
+    /// container, streams and tracks, chapters, skip markers…). Required for
+    /// those kinds: one without a copy left once cleaned isn't sent; series
+    /// and seasons carry none.
     /// </summary>
-    [JsonPropertyName("audio"), OmitEmpty]
-    public List<string>? Audio { get; set; }
-
-    /// <summary>
-    /// Subtitle languages: those of the tracks play would list, the ones the
-    /// host can serve (<see cref="Track"/>).
-    /// </summary>
-    [JsonPropertyName("subtitles"), OmitEmpty]
-    public List<string>? Subtitles { get; set; }
-
-    /// <summary>
-    /// The host's, for its own films and episodes: each copy's picture, as its
-    /// files say; a copy whose size isn't known is left out. The engine sends
-    /// the best, stepped (MSFP video section 3.2).
-    /// </summary>
-    [JsonPropertyName("pictures"), OmitEmpty]
-    public List<Picture>? Pictures { get; set; }
-
-    /// <summary>
-    /// A peer's: the picture it sent of its best copy, cleaned (MSFP video
-    /// section 3.1); null when it sent none.
-    /// </summary>
-    [JsonPropertyName("video"), OmitEmpty]
-    public Picture? Video { get; set; }
+    /// <remarks>
+    /// Of the host's own titles, each copy's ID is the host's handle of it,
+    /// the one CopiesAsync gives (<see cref="Copy.Handle"/>): it never
+    /// leaves; the engine sends instead the version ID play gives for it. The
+    /// engine sends the copies in the order of video section 3.7
+    /// (<see cref="Protocol.Copies.Sorted"/>, keeping the host's order between
+    /// equal ones), language tags as <see cref="Languages.TrySentTag"/> gives
+    /// them, names and track titles only when they are labels (never a file
+    /// name or a release group: video section 3.6). Its ETag changes whenever
+    /// the copy's bytes change, and only then: a change of a copy is a change
+    /// of the title (a changes reading sends it again). Of a peer's titles,
+    /// the ID is the peer's version ID.
+    /// </remarks>
+    [JsonPropertyName("copies"), OmitEmpty]
+    public List<Protocol.Copy>? Copies { get; set; }
 
     /// <summary>
     /// For an episode keyed by its TMDB episode ID
@@ -123,6 +125,60 @@ public sealed record VideoTitle : Title
     /// <summary>Other identifiers, by scheme.</summary>
     [JsonPropertyName("ids"), OmitEmpty]
     public Dictionary<string, string>? Ids { get; set; }
+
+    /// <summary>
+    /// An extra's (kind "extra", keyed under its film, series or season:
+    /// video section 3.9): one of <see cref="Names.ExtraTypes"/>, "clip" for
+    /// another. Theme songs and theme videos are never extras.
+    /// </summary>
+    [JsonPropertyName("extraType"), OmitEmpty]
+    public string? ExtraType { get; set; }
+
+    /// <summary>
+    /// An extra's own short name (optional, at most 64 characters), or a
+    /// local film's or series' name (required, at most 128: catalog section
+    /// 4.3, video section 3.10). It is the owner's words, never a file name,
+    /// text never markup; on other titles it isn't sent.
+    /// </summary>
+    [JsonPropertyName("name"), OmitEmpty]
+    public string? Name { get; set; }
+
+    /// <summary>A local film's or series' year (1800 to 9,999; 0 for none); ignored on other titles.</summary>
+    [JsonPropertyName("year"), OmitEmpty]
+    public int Year { get; set; }
+
+    /// <summary>
+    /// A local film or series whose one image the owner shares (the host's
+    /// <see cref="IImages"/> gives it; a peer's is fetched with
+    /// TitleImageAsync); ignored on other titles.
+    /// </summary>
+    [JsonPropertyName("image"), OmitEmpty]
+    public bool Image { get; set; }
+
+    /// <summary>
+    /// The title's best copy: the first of its copies, which are best first
+    /// (MSFP video section 3.7); null for a title without one (a series, a
+    /// season). A viewer's server shows its picture as the title's.
+    /// </summary>
+    public Protocol.Copy? BestCopy() => Copies is { Count: > 0 } c ? c[0] : null;
+
+    /// <summary>
+    /// The languages of the title's audio tracks, over all its copies, each
+    /// once, in the order of its copies and their tracks: what a viewer's
+    /// server shows as the title's audio languages (MSFP video section 3.2: a
+    /// title carries no summary of them).
+    /// </summary>
+    public IReadOnlyList<string> AudioLanguages() =>
+        (Copies ?? []).SelectMany(c => c.AudioTracks ?? []).Select(a => a.Language)
+            .Where(l => !string.IsNullOrEmpty(l)).Distinct(StringComparer.Ordinal).ToList()!;
+
+    /// <summary>
+    /// The languages of the title's subtitle tracks, over all its copies,
+    /// each once, in the order of its copies and their tracks.
+    /// </summary>
+    public IReadOnlyList<string> SubtitleLanguages() =>
+        (Copies ?? []).SelectMany(c => c.SubtitleTracks ?? []).Select(t => t.Language)
+            .Where(l => !string.IsNullOrEmpty(l)).Distinct(StringComparer.Ordinal).ToList()!;
 }
 
 /// <summary>
@@ -143,60 +199,6 @@ public sealed record Place
 }
 
 /// <summary>
-/// What a copy of a film or an episode offers for playing (MSFP video
-/// section 3.2): its height in pixels, and its high dynamic range formats,
-/// "hdr10", "hlg" or "dv" (none: standard range).
-/// </summary>
-public sealed record Picture
-{
-    /// <summary>The height in pixels (for a picture wider than 16:9, a 16:9 picture's as wide).</summary>
-    [JsonPropertyName("height")]
-    public int Height { get; set; }
-
-    /// <summary>The HDR formats.</summary>
-    [JsonPropertyName("hdr"), OmitEmpty]
-    public List<string>? Hdr { get; set; }
-
-    /// <summary>
-    /// Whether a copy of this picture is better than one of
-    /// <paramref name="other"/>, as <see cref="Best"/> ranks them (both
-    /// stepped): of a greater height, then with HDR when the other has none,
-    /// then with more formats.
-    /// </summary>
-    /// <param name="other">The other picture.</param>
-    public bool Better(Picture other)
-    {
-        ArgumentNullException.ThrowIfNull(other);
-        return Height != other.Height ? Height > other.Height : (Hdr?.Count ?? 0) > (other.Hdr?.Count ?? 0);
-    }
-
-    /// <summary>
-    /// The picture of the best of a title's copies, as MSFP video section 3.2
-    /// says, stepped: the greatest height, then HDR before none, then more
-    /// formats; null when no copy's size is known. A host lists its copies to
-    /// Copies in that order, best first, so that play without a version
-    /// plays it. Go's BestPicture.
-    /// </summary>
-    /// <param name="pictures">Each copy's picture.</param>
-    public static Picture? Best(IEnumerable<Picture> pictures)
-    {
-        ArgumentNullException.ThrowIfNull(pictures);
-        Picture? best = null;
-        foreach (var p in pictures)
-        {
-            var hdr = Protocol.Video.CleanHdr(p.Hdr ?? []);
-            var w = new Picture { Height = Protocol.Video.StepHeight(p.Height), Hdr = hdr.Count > 0 ? [.. hdr] : null };
-            if (w.Height > 0 && (best is null || w.Better(best)))
-            {
-                best = w;
-            }
-        }
-
-        return best;
-    }
-}
-
-/// <summary>
 /// One of a title's copies as a peer sees it: an opaque ID and a name (MSFP
 /// playback section 2.3).
 /// </summary>
@@ -206,13 +208,24 @@ public sealed record Version(string Id, string Name);
 
 /// <summary>
 /// An artist, an album or a track, with its description (MSFP music
-/// section 3).
+/// section 3): its name; for albums and tracks, the artist keys credited and
+/// their names as written; for albums, the name to sort by, the release
+/// type, whether it is a compilation, the dates of this edition and of the
+/// first, and genres; for tracks, the album key, the disc and number on it,
+/// and its copies; for local artists and albums, whether the owner shares an
+/// image; other identifiers by scheme (mbreleasegroup, mbrecording, isrc,
+/// acoustid). A peer's are cleaned as music section 3.2 says; the host's own
+/// are cleaned the same way before they leave.
 /// </summary>
 public sealed record MusicTitle : Title
 {
     /// <summary>Its name.</summary>
     [JsonPropertyName("name")]
     public string Name { get; set; } = "";
+
+    /// <summary>For albums, the name to sort by.</summary>
+    [JsonPropertyName("sortName"), OmitEmpty]
+    public string? SortName { get; set; }
 
     /// <summary>For albums and tracks, the artist keys credited.</summary>
     [JsonPropertyName("artists"), OmitEmpty]
@@ -221,6 +234,26 @@ public sealed record MusicTitle : Title
     /// <summary>The artists' names as written.</summary>
     [JsonPropertyName("artistNames"), OmitEmpty]
     public string? ArtistNames { get; set; }
+
+    /// <summary>For albums, the release type, one of <see cref="Music.ReleaseTypes"/>.</summary>
+    [JsonPropertyName("releaseType"), OmitEmpty]
+    public string? ReleaseType { get; set; }
+
+    /// <summary>For albums, whether it is a compilation of several artists; null when not said.</summary>
+    [JsonPropertyName("compilation"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Compilation { get; set; }
+
+    /// <summary>For albums, this edition's date: YYYY, YYYY-MM or YYYY-MM-DD.</summary>
+    [JsonPropertyName("date"), OmitEmpty]
+    public string? Date { get; set; }
+
+    /// <summary>For albums, the date of the first release.</summary>
+    [JsonPropertyName("originalDate"), OmitEmpty]
+    public string? OriginalDate { get; set; }
+
+    /// <summary>For albums, genres.</summary>
+    [JsonPropertyName("genres"), OmitEmpty]
+    public List<string>? Genres { get; set; }
 
     /// <summary>For tracks, the album key.</summary>
     [JsonPropertyName("album"), OmitEmpty]
@@ -234,15 +267,20 @@ public sealed record MusicTitle : Title
     [JsonPropertyName("number"), OmitEmpty]
     public int Number { get; set; }
 
-    /// <summary>The year.</summary>
-    [JsonPropertyName("year"), OmitEmpty]
-    public int Year { get; set; }
+    /// <summary>
+    /// A track's copies, best first, at least one (music section 3.3). Of the
+    /// host's own, each ID is its handle, as for
+    /// <see cref="VideoTitle.Copies"/>: the engine sends the version ID made
+    /// of it.
+    /// </summary>
+    [JsonPropertyName("copies"), OmitEmpty]
+    public List<MusicCopy>? Copies { get; set; }
 
-    /// <summary>For tracks, the length (0: unknown).</summary>
-    [JsonPropertyName("durationMs"), OmitEmpty]
-    public long DurationMs { get; set; }
+    /// <summary>A local artist or album whose image the owner shares (the host's <see cref="IImages"/> gives it); ignored on any other title.</summary>
+    [JsonPropertyName("image"), OmitEmpty]
+    public bool Image { get; set; }
 
-    /// <summary>Other identifiers by scheme (mbrelease, mbtrack, isrc).</summary>
+    /// <summary>Other identifiers by scheme (mbreleasegroup, mbrecording, isrc, acoustid).</summary>
     [JsonPropertyName("ids"), OmitEmpty]
     public Dictionary<string, string>? Ids { get; set; }
 }

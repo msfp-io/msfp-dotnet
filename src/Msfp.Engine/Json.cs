@@ -35,7 +35,7 @@ public static class MsfpJson
     {
         var options = new JsonSerializerOptions
         {
-            TypeInfoResolver = new DefaultJsonTypeInfoResolver { Modifiers = { OmitEmpty } },
+            TypeInfoResolver = new DefaultJsonTypeInfoResolver { Modifiers = { OmitEmpty, CopyNames } },
             Converters = { new UtcTimeConverter() },
         };
         options.MakeReadOnly();
@@ -57,6 +57,50 @@ public static class MsfpJson
             }
         }
     }
+
+    // CopyNames gives the toolkit's copy records (a title's copies, video
+    // section 3.2 and music section 3.3) the names of the specification's
+    // table, as the Go engine writes them, absent members left out.
+    private static void CopyNames(JsonTypeInfo info)
+    {
+        if (info.Kind != JsonTypeInfoKind.Object || info.Type.Namespace != "Msfp.Protocol" || !CopyTypes.Contains(info.Type))
+        {
+            return;
+        }
+
+        foreach (var property in info.Properties)
+        {
+            property.Name = property.Name switch
+            {
+                "ETag" or "Etag" => "etag",
+                var n => JsonNamingPolicy.CamelCase.ConvertName(n),
+            };
+            // audioTracks is always written (a copy's is required); a track
+            // copy's optional numbers are 0 when absent.
+            if (property.Name == "audioTracks")
+            {
+                continue;
+            }
+
+            var music = info.Type == typeof(Protocol.MusicCopy);
+            property.ShouldSerialize = (_, value) => value switch
+            {
+                null => false,
+                string s => s.Length > 0,
+                bool b => b,
+                int i when music => i != 0,
+                ICollection c => c.Count > 0,
+                _ => true,
+            };
+        }
+    }
+
+    private static readonly HashSet<Type> CopyTypes =
+    [
+        typeof(Protocol.Copy), typeof(Protocol.CopyPart), typeof(Protocol.VideoStream), typeof(Protocol.VideoDv),
+        typeof(Protocol.VideoColour), typeof(Protocol.CopyAudio), typeof(Protocol.CopySubtitle), typeof(Protocol.CopyChapter),
+        typeof(Protocol.CopySegment), typeof(Protocol.MusicCopy), typeof(Protocol.ReplayGain),
+    ];
 
     private static bool IsEmpty(object? value) => value switch
     {

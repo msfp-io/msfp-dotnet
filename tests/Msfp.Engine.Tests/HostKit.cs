@@ -59,7 +59,7 @@ internal sealed class MemorySink : IResponseSink
 /// admits the method set (direct by default) and serves media from files
 /// set by name.
 /// </summary>
-internal sealed class FakeHost : ICatalog, IPlayback, IMedia
+internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages
 {
     private readonly object _lock = new();
 
@@ -89,6 +89,20 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia
 
     public Dictionary<string, byte[]> Files { get; set; } = new(StringComparer.Ordinal);
 
+    /// <summary>What ImageAsync gives, by title key.</summary>
+    public Dictionary<string, byte[]> Images { get; } = new(StringComparer.Ordinal);
+
+    public ValueTask<byte[]> ImageAsync(string key, CancellationToken ct)
+    {
+        lock (_lock)
+        {
+            return Images.TryGetValue(key, out var img) ? ValueTask.FromResult(img) : throw new MsfpException(MsfpError.NotFound);
+        }
+    }
+
+    /// <summary>A title's one copy, of the least a copy carries (msfp-go's oneCopy).</summary>
+    public static List<Msfp.Protocol.Copy> OneCopy(string handle) => [new Msfp.Protocol.Copy(handle, 60_000, "mp4", 100, "e1", [])];
+
     /// <summary>Answers in place of the files, when set.</summary>
     public Func<MediaPath, ByteRange?, IResponseSink, CancellationToken, ValueTask>? Serve { get; set; }
 
@@ -110,12 +124,19 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia
     {
         lock (_lock)
         {
-            Titles[key] = new VideoTitle { Key = key, Kind = "movie", Libraries = [lib], Audio = [.. audio], Subtitles = ["fr"] };
+            var t = new VideoTitle { Key = key, Kind = "movie", Libraries = [lib], Copies = [] };
+            Titles[key] = t;
             Copies[key] = [];
             for (var i = 0; i < audio.Length; i++)
             {
                 var a = audio[i];
                 var handle = key + "#" + i.ToString(CultureInfo.InvariantCulture);
+                t.Copies.Add(new Msfp.Protocol.Copy(handle, 5_400_000, "mkv", 1000 + i, "e" + i.ToString(CultureInfo.InvariantCulture),
+                    [new CopyAudio("a0", "aac") { Language = a, Channels = 2, Default = true }])
+                {
+                    Name = "Copy " + a,
+                    SubtitleTracks = [new CopySubtitle("s0", "subrip") { Language = "fr" }, new CopySubtitle("s1", "pgs") { Language = "fr" }],
+                });
                 Copies[key].Add(new Copy { Handle = handle, Name = "Copy " + a, Audio = [a], Library = lib });
                 Info[handle] = new CopyInfo
                 {

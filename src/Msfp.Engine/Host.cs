@@ -1,4 +1,5 @@
 using System.Net;
+using Msfp.Protocol;
 
 namespace Msfp;
 
@@ -286,9 +287,23 @@ public interface IOwnLogTx
 
 /// <summary>
 /// The host's own libraries and titles, by the host's library IDs. The
-/// engine maps them to public IDs, filters them by offers, pages them, and
-/// checks every key before it leaves.
+/// engine maps them to public IDs, filters them by offers (and local titles
+/// by the local sharing switches: SetLocalAsync, SetGroupLocalAsync), pages
+/// them, and checks every key and member before it leaves.
 /// </summary>
+/// <remarks>
+/// A title is a <see cref="VideoTitle"/> or a <see cref="MusicTitle"/>.
+/// Films, episodes, extras and tracks carry their copies, described as their
+/// files are (MSFP video section 3.2, music section 3.3), so that a viewer's
+/// server lists them as files of its own before anyone plays; each copy's ID
+/// is the host's handle of it, the one CopiesAsync gives. Extras are titles
+/// of their own, keyed under their film, series or season
+/// ("movie/tmdb/348/x/&lt;opaque&gt;", kind "extra"), listed in its
+/// libraries. Titles no public database names are keyed under the local
+/// scheme ("movie/local/&lt;opaque&gt;"), with a name (and a year, an image)
+/// of the host's; their opaque parts, and extras', are made with
+/// <see cref="MsfpEngine.OpaqueKeyPart"/> or as catalog section 4.2 says.
+/// </remarks>
 public interface ICatalog
 {
     /// <summary>The host's libraries; the operator offers some.</summary>
@@ -297,7 +312,10 @@ public interface ICatalog
 
     /// <summary>
     /// The titles held in any of these libraries, keys strictly greater than
-    /// after, in ascending byte order, at most limit, each once.
+    /// after, in ascending byte order, at most limit, each once. A change of
+    /// anything a title carries, its copies included (a copy added, gone, or
+    /// its ETag changed), is a change of the title: an
+    /// <see cref="IChangeLog"/> lists it again.
     /// </summary>
     /// <param name="libraries">The host's library IDs.</param>
     /// <param name="after">The key after which to list.</param>
@@ -306,14 +324,35 @@ public interface ICatalog
     ValueTask<TitlePage> TitlesAsync(IReadOnlyList<string> libraries, string after, int limit, CancellationToken ct);
 
     /// <summary>
-    /// The copies of exactly this film, episode or track in these libraries
-    /// (for an episode inside a copy holding several, the copy that holds
-    /// it); none: the engine answers 404.
+    /// The copies of exactly this film, episode, extra or track in these
+    /// libraries (for an episode inside a copy holding several, the copy that
+    /// holds it), in the order of the title's Copies; none: the engine
+    /// answers 404.
     /// </summary>
+    /// <remarks>B2: play may take its copies from the title's Copies instead.</remarks>
     /// <param name="key">The title's key.</param>
     /// <param name="libraries">The host's library IDs.</param>
     /// <param name="ct">Cancels.</param>
     ValueTask<IReadOnlyList<Copy>> CopiesAsync(string key, IReadOnlyList<string> libraries, CancellationToken ct);
+}
+
+/// <summary>
+/// What an <see cref="ICatalog"/> implements, besides ICatalog, when it
+/// shares the images of its local titles (MSFP catalog section 4.4): the
+/// local films, series, artists and albums whose Image it sets. Without it,
+/// no image is given, whatever Image says.
+/// </summary>
+public interface IImages
+{
+    /// <summary>
+    /// The one image of a local title: a JPEG or a PNG of at most 1 MiB, 1 to
+    /// 4,096 pixels wide and tall. The engine checks it
+    /// (<see cref="CatalogRules.TryCheckImage(ReadOnlySpan{byte}, out string, out string)"/>)
+    /// and sends nothing else. <see cref="MsfpError.NotFound"/> for none.
+    /// </summary>
+    /// <param name="key">The title's key.</param>
+    /// <param name="ct">Cancels.</param>
+    ValueTask<byte[]> ImageAsync(string key, CancellationToken ct);
 }
 
 /// <summary>

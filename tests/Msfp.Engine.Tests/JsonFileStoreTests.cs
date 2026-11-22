@@ -281,10 +281,9 @@ public sealed class JsonFileStoreTests : IDisposable
             var titles = await tx.PeerTitlesAsync("p1", "", 10);
             var film = Assert.IsType<VideoTitle>(titles[0]);
             Assert.Equal(["L1"], film.Libraries);
-            Assert.Equal(2160, film.Video?.Height);
-            Assert.Equal(["dv"], film.Video?.Hdr);
+            Assert.Null(film.Copies); // v0.2.0's summary (audio, video) is gone with the revision
             var song = Assert.IsType<MusicTitle>(titles[1]);
-            Assert.Equal(("Song", 1, 2, 1000L), (song.Name, song.Disc, song.Number, song.DurationMs));
+            Assert.Equal(("Song", 1, 2), (song.Name, song.Disc, song.Number));
             Assert.Single(await tx.SentAsync("p1", ["movie/tmdb/9"]));
 
             var own = (IOwnLogTx)tx;
