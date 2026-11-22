@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 
 namespace Msfp.Protocol.Tests;
 
-/// <summary>wire/music_test.go: the cases of music.json.</summary>
+/// <summary>wire/music_test.go: the cases of music.json, and the music part's own checks.</summary>
 public class MusicTests
 {
     [Fact]
@@ -28,11 +28,13 @@ public class MusicTests
         TestVectors.NoFailures(failures, cases.Count, "music.json keys");
     }
 
-    [Fact]
-    public void MusicTitleVectors()
+    [Theory]
+    [InlineData("titles")]
+    [InlineData("localTitles")]
+    public void MusicTitleVectors(string section)
     {
         var libraries = TestVectors.Load("music.json")["libraries"]!.AsArray().Select(n => n!.GetValue<string>()).ToList();
-        var cases = TestVectors.Cases("music.json", "titles");
+        var cases = TestVectors.Cases("music.json", section);
         var failures = new List<string>();
         foreach (var c in cases)
         {
@@ -48,32 +50,161 @@ public class MusicTests
                 continue;
             }
 
-            if (got is null)
+            if (got is not null && Differs(JsonNode.Parse(got.ToJson()), c.Str("output")) is { } diff)
             {
-                continue;
-            }
-
-            var have = JsonNode.Parse(Write(got));
-            if (!JsonNode.DeepEquals(have, JsonNode.Parse(c.Str("output"))))
-            {
-                failures.Add($"{c.Str("name")}:\n    got  {have!.ToJsonString()}\n    want {c.Str("output")}");
+                failures.Add($"{c.Str("name")}:{diff}");
             }
         }
 
-        TestVectors.NoFailures(failures, cases.Count, "music.json titles");
+        TestVectors.NoFailures(failures, cases.Count, "music.json " + section);
     }
 
-    // A kept title as the vectors write it.
-    private static byte[] Write(MusicTitle m) => JsonOut.Object(o => o
-        .String("key", m.Key).String("kind", m.Kind).String("library", m.Library).String("name", m.Name)
-        .Strings("artists", m.Artists.Count > 0 ? m.Artists : null)
-        .String("artistNames", m.ArtistNames.Length > 0 ? m.ArtistNames : null)
-        .String("album", m.Album.Length > 0 ? m.Album : null)
-        .Integer("disc", m.Disc != 0 ? m.Disc : null)
-        .Integer("number", m.Number != 0 ? m.Number : null)
-        .Integer("year", m.Year != 0 ? m.Year : null)
-        .Integer("durationMs", m.DurationMs != 0 ? m.DurationMs : null)
-        .Object("ids", m.Ids.Count > 0 ? i => { foreach (var (k, v) in m.Ids) { i.String(k, v); } } : null));
+    [Fact]
+    public void MusicQueueVectors()
+    {
+        var v = TestVectors.Load("music.json");
+        var root = v["streamRoot"]!.GetValue<string>();
+        var cases = TestVectors.Cases("music.json", "queue");
+        var failures = new List<string>();
+        foreach (var c in cases)
+        {
+            var answer = c.Str("kind") == "answer";
+            var request = answer ? c.Str("request") : c.Str("text");
+            IReadOnlyList<string> asked = [];
+            var delivery = "";
+            bool ok;
+            try
+            {
+                var req = StrictJson.ReadRequest(Encoding.UTF8.GetBytes(request), ["title", "delivery", "queue"]);
+                delivery = req.GetString("delivery") ?? "";
+                ok = Music.TryCheckQueue(req.GetString("title") ?? "", req["queue"], out asked);
+            }
+            catch (ProtocolException)
+            {
+                ok = false;
+            }
+
+            if (!answer)
+            {
+                if (ok != c.Valid())
+                {
+                    failures.Add($"{c.Str("name")}: accepted {ok}, want {c.Valid()}");
+                }
+
+                continue;
+            }
+
+            if (!ok)
+            {
+                failures.Add($"{c.Str("name")}: the request refused");
+                continue;
+            }
+
+            var a = StrictJson.ReadAnswer(Encoding.UTF8.GetBytes(c.Str("text")));
+            var url = a.GetObject("stream")?.GetString("url") ?? "";
+            var kept = Music.ReadQueue(a["queue"], asked, delivery, root, url);
+            var have = JsonNode.Parse(JsonOut.Object(o => o.Objects("q", kept, (w, e) => e.Write(w))))!["q"];
+            if (Differs(have, c.Str("output")) is { } diff)
+            {
+                failures.Add($"{c.Str("name")}:{diff}");
+            }
+        }
+
+        TestVectors.NoFailures(failures, cases.Count, "music.json queue");
+    }
+
+    [Fact]
+    public void MusicLyricsVectors()
+    {
+        var cases = TestVectors.Cases("music.json", "lyrics");
+        var failures = new List<string>();
+        foreach (var c in cases)
+        {
+            var body = Encoding.UTF8.GetBytes(c.Str("text"));
+            if (c.Str("kind") == "request")
+            {
+                var ok = Music.TryReadLyricsRequest(body, out var r);
+                if (ok != c.Valid() || (ok && (r!.Title.Length == 0 || r.VersionId.Length == 0)))
+                {
+                    failures.Add($"{c.Str("name")}: read {ok} {r}, want {c.Valid()}");
+                }
+
+                continue;
+            }
+
+            var sets = Music.ReadLyrics(body);
+            if ((sets is not null) != c.Valid())
+            {
+                failures.Add($"{c.Str("name")}: kept {sets is not null}, want {c.Valid()}");
+            }
+            else if (sets is not null && Differs(JsonNode.Parse(Music.WriteLyrics(sets)), c.Str("output")) is { } diff)
+            {
+                failures.Add($"{c.Str("name")}:{diff}");
+            }
+        }
+
+        TestVectors.NoFailures(failures, cases.Count, "music.json lyrics");
+    }
+
+    // Null when have is the same JSON value as want; else both, to show.
+    private static string? Differs(JsonNode? have, string want) =>
+        JsonNode.DeepEquals(have, JsonNode.Parse(want)) ? null : $"\n    got  {have?.ToJsonString()}\n    want {want}";
+
+    [Fact]
+    public void MusicDates()
+    {
+        var cases = new Dictionary<string, int>
+        {
+            ["1970"] = 1970, ["1970-01"] = 1970, ["2024-02-29"] = 2024, ["0999"] = 0,
+            ["2023-02-29"] = 0, ["1970-13"] = 0, ["1970-1-1"] = 0, ["1970-00"] = 0, ["19700"] = 0, [""] = 0,
+        };
+        foreach (var (s, want) in cases)
+        {
+            var ok = Music.TryMusicDate(s, out var y);
+            Assert.True(y == want && ok == (want > 0), $"TryMusicDate({s}) = {y} {ok}, want {want}");
+        }
+
+        Assert.Equal(0, Music.R128Gain(-1280));
+    }
+
+    // An owning server's own title, written with ToJson, reads back as it was.
+    [Fact]
+    public void MusicTitleRoundTrip()
+    {
+        var sent = new MusicTitle
+        {
+            Key = "track/local/T1", Kind = "track", Library = "m1", Name = "x",
+            Artists = ["artist/local/A1"], Album = "album/mb/0b000000-0000-4000-8000-000000000002", Disc = 1, Number = 2,
+            Copies =
+            [
+                new MusicCopy
+                {
+                    Id = "c1", DurationMs = 1000, Container = "flac", Codec = "flac", Size = 10, Etag = "e1",
+                    BitrateKbps = 936, ReplayGain = new ReplayGain(-4.12, null, null, null), Lyrics = "plain",
+                },
+            ],
+            Ids = new Dictionary<string, string> { ["isrc"] = "USSM17000123" },
+        };
+        var got = Music.ReadTitle(sent.ToJson());
+        Assert.NotNull(got);
+        Assert.Equal(Encoding.UTF8.GetString(sent.ToJson()), Encoding.UTF8.GetString(got.ToJson()));
+
+        var album = new MusicTitle { Key = "album/local/A2", Kind = "album", Library = "m1", Name = "y", Compilation = true, Image = true };
+        var back = Music.ReadTitle(album.ToJson());
+        Assert.NotNull(back);
+        Assert.Equal(Encoding.UTF8.GetString(album.ToJson()), Encoding.UTF8.GetString(back.ToJson()));
+    }
+
+    [Fact]
+    public void QueueUrls()
+    {
+        const string root = "https://a.example.org/api/v1/stream/";
+        Assert.Equal(root + "Tk1/queue/3/master.m3u8", Music.QueueUrl(root, "Tk1", 3, "hls"));
+        Assert.Equal(root + "Tk1/queue/0/file", Music.QueueUrl(root, "Tk1", 0, "file"));
+        Assert.True(Music.TryCheckQueue("track/local/T1", null, out var q));
+        Assert.Empty(q);
+        Assert.False(Music.TryCheckQueue("album/local/A1", null, out _));
+    }
 
     [Fact]
     public void CleanText()
