@@ -203,9 +203,9 @@ public static partial class Media
     /// sent <paramref name="sent"/> bytes so far, a byte sent twice counted
     /// twice, of a copy of <paramref name="size"/> bytes (media section 4.2):
     /// a 206 of start to end, the range cut short at <paramref name="cap"/>
-    /// when it would pass it. The cap is the scanBytes the owning server sends
-    /// in limits (<see cref="PlaybackLimits.ScanCap"/>: the floor,
-    /// <see cref="Playback.ScanBytesFloor"/>, when it sends none). False is a
+    /// when it would pass it. The cap is the scanBytes the scan's answer
+    /// states (<see cref="Playback.ScanCapOf"/>: the floor,
+    /// <see cref="Playback.ScanBytesFloor"/>, when it states none). False is a
     /// 416, with <see cref="UnsatisfiedRange"/>: a fetch without Range or
     /// with a malformed one, one that can't be satisfied, or one once the cap
     /// is spent.

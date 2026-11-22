@@ -31,51 +31,35 @@ public class PlaybackTests
         Assert.False(Playback.Id("a\n"));
     }
 
-    // A play answer's stream URL is its stream root's, under one ticket,
-    // with the name its protocol gives (media section 1).
+    // Every media URL is built from the stream root, a ticket and a fixed
+    // name (media section 1).
     [Fact]
-    public void StreamBase()
+    public void Urls()
     {
         var root = Playback.StreamRoot("https://b.example.org");
         Assert.Equal("https://b.example.org/api/v1/stream/", root);
         Assert.Equal(root, Playback.StreamRoot("https://b.example.org/"));
-        Assert.True(Playback.TryStreamBase(root + "T1/master.m3u8", root, "hls", out var b));
-        Assert.Equal(root + "T1/", b);
-        Assert.True(Playback.TryStreamBase(root + "T1/file", root, "file", out _));
-        (string Url, string Protocol)[] bad =
-        [
-            (root + "T1/file", "hls"), (root + "T1/master.m3u8", "file"), (root + "T1/v0.m3u8", "hls"),
-            (root + "T1/master.m3u8", "dash"), (root + "T1/master.m3u8?x", "hls"), (root + "T1/master.m3u8#x", "hls"),
-            (root + "T%31/file", "file"), (root + "/file", "file"), (root + "T1//file", "file"), (root + "../T1/file", "file"),
-            (root + "T1/x/file", "file"), ("https://c.example.org/api/v1/stream/T1/file", "file"),
-            ("https://b.example.org/api/v1/stream//T1/file", "file"), (root + "T1", "file"),
-        ];
-        foreach (var (url, protocol) in bad)
-        {
-            Assert.False(Playback.TryStreamBase(url, root, protocol, out _), $"{url} ({protocol}) accepted");
-        }
-
-        Assert.Equal(b + "subtitles/s1", Playback.SubtitleUrl(b, "s1", false));
-        Assert.Equal(b + "pictures/s2", Playback.SubtitleUrl(b, "s2", true));
-        Assert.Equal(b + "trickplay/7", Playback.SheetUrl(b, 7));
+        Assert.Equal(root + "T1/master.m3u8", MediaUrls.Stream(root, "T1", "hls"));
+        Assert.Equal(root + "T1/file", MediaUrls.Stream(root, "T1", "file"));
+        Assert.Equal(root + "T1/subtitles/s1", MediaUrls.Subtitle(root, "T1", new ServedSubtitle("s1", "text", true)));
+        Assert.Equal(root + "T1/ass/s1", MediaUrls.Subtitle(root, "T1", new ServedSubtitle("s1", "text", true), ass: true));
+        Assert.Equal(root + "T1/pictures/s2", MediaUrls.Subtitle(root, "T1", new ServedSubtitle("s2", "picture")));
+        Assert.Equal(root + "T1/fonts/3", MediaUrls.Font(root, "T1", 3));
+        Assert.Equal(root + "T1/trickplay/7", MediaUrls.Sheet(root, "T1", 7));
+        Assert.Equal(root + "T1/queue/2/file", MediaUrls.Queue(root, "T1", 2, "file"));
+        Assert.Equal(root + "T1/queue/0/master.m3u8", MediaUrls.Queue(root, "T1", 0, "hls"));
+        Assert.Equal(root + "T1/image", MediaUrls.Image(root, "T1"));
     }
 
+    // Video section 5.4's table: the forms known before play.
     [Fact]
-    public void TrickplayBounds()
+    public void ServedForms()
     {
-        var ok = new Trickplay(320, 180, 10, 10, 10_000, 250, 3);
-        Assert.True(ok.InBounds);
-        Assert.Equal(3, ok.SheetCount);
-        Trickplay[] bad =
-        [
-            ok with { Sheets = 2 }, ok with { TileWidth = 0 }, ok with { TileWidth = 410 }, ok with { Rows = 101 },
-            ok with { IntervalMs = 99 }, ok with { IntervalMs = 3_600_001 }, ok with { TileCount = 0, Sheets = 0 },
-            ok with { Columns = 1, Rows = 1, TileCount = 1001, Sheets = 1001 },
-        ];
-        foreach (var t in bad)
-        {
-            Assert.False(t.InBounds, $"{t} accepted");
-        }
+        Assert.Equal(new ServedSubtitle("s1", "text"), Video.FormOf("s1", "subrip"));
+        Assert.Equal(new ServedSubtitle("s1", "text", true), Video.FormOf("s1", "ssa"));
+        Assert.Equal(new ServedSubtitle("s1", "picture"), Video.FormOf("s1", "dvb_subtitle"));
+        Assert.Null(Video.FormOf("s1", "dvb_teletext"));
+        Assert.Null(Video.FormOf("s1", ""));
     }
 
     [Theory]

@@ -1,9 +1,10 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Json.Nodes;
 
 namespace Msfp.Protocol.Tests;
 
-/// <summary>wire/media_test.go: playlists, and the hls cases of media.json.</summary>
+/// <summary>wire/media_test.go: playlists, and the hls, names and relayTypes cases of media.json.</summary>
 public class MediaTests
 {
     // The playback of the hls vectors: audio tracks a1 to a40.
@@ -40,6 +41,55 @@ public class MediaTests
         }
 
         return error is not null && error.Contains(want + ":", StringComparison.Ordinal);
+    }
+
+    // The names an owning server serves under a ticket (media section 1).
+    [Fact]
+    public void NameVectors()
+    {
+        var cases = TestVectors.Cases("media.json", "names");
+        var failures = new List<string>();
+        foreach (var c in cases)
+        {
+            var t = c["ticket"]!.AsObject();
+            List<string> L(string name) => t[name]?.AsArray().Select(e => e!.GetValue<string>()).ToList() ?? [];
+            var scope = new TicketScope
+            {
+                Kind = t.Str("kind"),
+                Protocol = t.Str("protocol"),
+                Subtitles = t["subtitles"]?.AsArray().Select(e => e!.AsObject())
+                    .Select(e => new ServedSubtitle(e.Str("id"), e.Str("form"), e["ass"]?.GetValue<bool>() ?? false)).ToList() ?? [],
+                FontCount = (int)(JsonMembers.AsInteger(t["fontCount"]) ?? 0),
+                SheetCount = (int)(JsonMembers.AsInteger(t["sheetCount"]) ?? 0),
+                Queue = L("queue"),
+                Names = L("names"),
+            };
+            var ok = Media.Serves(scope, c.Str("text"), out var why);
+            if (ok != c.Valid() || (!ok && why != c.Str("reason")))
+            {
+                failures.Add($"{c.Str("name")}: {ok} ({why}), want {c.Valid()} ({c.Str("reason")})");
+            }
+        }
+
+        TestVectors.NoFailures(failures, cases.Count, "media.json names");
+    }
+
+    // The media type a viewer's server relays (media section 3).
+    [Fact]
+    public void RelayTypeVectors()
+    {
+        var cases = TestVectors.Cases("media.json", "relayTypes");
+        var failures = new List<string>();
+        foreach (var c in cases)
+        {
+            var got = c.Str("what") == "file" ? Media.RelayFileType(c.Str("value")) : Playback.RelayedMediaType(c.Str("value"));
+            if (got != c.Str("output"))
+            {
+                failures.Add($"{c.Str("name")}: {got}, want {c.Str("output")}");
+            }
+        }
+
+        TestVectors.NoFailures(failures, cases.Count, "media.json relayTypes");
     }
 
     [Fact]

@@ -58,7 +58,7 @@ public class MediaFileTests
         foreach (var c in cases)
         {
             long sent = Long(c, "sent"), size = Long(c, "size");
-            var cap = new PlaybackLimits { ScanBytes = (int)Long(c, "scanBytes") }.ScanCap;
+            var cap = Playback.ScanCapOf(Long(c, "scanBytes"));
             var (status, cr) = (416, Media.UnsatisfiedRange(size));
             if (Media.TryScanSpan(sent, Header(c, "range"), size, cap, out var start, out var end))
             {

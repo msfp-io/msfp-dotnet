@@ -17,24 +17,23 @@ public static partial class Playback
     /// <summary>How long after the owning server's clock a report's at may be.</summary>
     public static readonly TimeSpan AtAfter = TimeSpan.FromMinutes(5);
 
-    private static readonly string[] ProgressMembers = ["id", "positionMs", "paused", "at", "title"];
-    private static readonly string[] StopMembers = ["id", "positionMs", "at", "title"];
+    private static readonly string[] ReportMembers = ["id", "positionMs", "at", "title"];
 
     /// <summary>
     /// Reads a progress or a stop (<paramref name="call"/>) at
     /// <paramref name="now"/>, refusing what sections 3 and 4 refuse: a body
     /// that isn't an I-JSON object or holds null in a member it knows, an id
     /// that isn't a playback ID, positionMs out of 0 to
-    /// <see cref="MaxPositionMs"/>, paused not a boolean, at not an integer
+    /// <see cref="MaxPositionMs"/>, at not an integer
     /// from now − <see cref="AtBefore"/> to now + <see cref="AtAfter"/> (Unix
     /// seconds), a title that isn't a string. Whether title is the
-    /// playback's is <see cref="PlaybackState.Apply"/>'s.
+    /// playback's is <see cref="PlaybackState.Apply"/>'s. Unknown members
+    /// (paused, which proposal 17 dropped, among them) are ignored.
     /// </summary>
     /// <exception cref="PlayRefusal">The report is refused (400 invalid-request).</exception>
     public static PlayReport ReadReport(string call, ReadOnlySpan<byte> body, DateTimeOffset now)
     {
-        var progress = call == CallProgress;
-        var o = RequestObject(body, progress ? ProgressMembers : StopMembers);
+        var o = RequestObject(body, ReportMembers);
         string? id;
         try
         {
@@ -52,7 +51,6 @@ public static partial class Playback
 
         var hasPosition = o.ContainsKey("positionMs");
         var position = Integer(o, "positionMs", MaxPositionMs);
-        var paused = progress && (Boolean(o, "paused") ?? false);
         var at = now;
         var atSaid = false;
         if (o.TryGetPropertyValue("at", out var v))
@@ -72,7 +70,6 @@ public static partial class Playback
             Id = id,
             PositionMs = position,
             HasPosition = hasPosition,
-            Paused = paused,
             At = at,
             AtSaid = atSaid,
             Title = Text(o, "title") ?? "",
@@ -116,9 +113,6 @@ public sealed record PlayReport
 
     /// <summary>Whether the report says a position.</summary>
     public bool HasPosition { get; init; }
-
-    /// <summary>Paused (progress only).</summary>
-    public bool Paused { get; init; }
 
     /// <summary>When the viewer was there: the request's at, when <see cref="AtSaid"/>, else now.</summary>
     public DateTimeOffset At { get; init; }

@@ -22,7 +22,7 @@ public static partial class Playback
     /// <summary>The copy's file as it is (playback section 2.7).</summary>
     public const string DeliveryFile = "file";
 
-    /// <summary>The copy's streams in another container (playback section 2.7).</summary>
+    /// <summary>The copy's streams unchanged, as HLS segments of the media type the request names (playback section 2.7).</summary>
     public const string DeliveryRemux = "remux";
 
     /// <summary>The copy converted (playback section 2.7).</summary>
@@ -71,8 +71,8 @@ public static partial class Playback
     // of them, anywhere, refuses the request (core section 2.3).
     private static readonly string[] PlayMembers =
     [
-        "title", "purpose", "delivery", "container", "transcode", "audioRenditions",
-        "startPositionMs", "maxBitrateKbps", "audioLanguage", "audioTrack", "versionId", "subtitleLanguage", "subtitleTrack",
+        "title", "purpose", "delivery", "mediaType", "transcode", "audioRenditions", "startPositionMs", "maxBitrateKbps",
+        "versionId", "audioTrack",
     ];
 
     /// <summary>
@@ -122,14 +122,15 @@ public static partial class Playback
     /// Reads play's request as step 1 of playback section 2.2 checks it: an
     /// I-JSON object; title a key <paramref name="playable"/> says play takes
     /// (null: <see cref="TitleKey.TryParse"/>'s); purpose of its list;
-    /// delivery and container tokens (core section 8.5: an unknown token is
-    /// kept, and refused at step 7 by <see cref="RefuseDelivery"/>), container
-    /// with delivery remux only, and then required; a transcode object with
-    /// delivery transcode only, its codecs tokens, its numbers of their
-    /// steps; numbers in range; languages valid tags
-    /// (<see cref="Languages.ValidTag"/>); purpose and a delivery of the list
-    /// together as <see cref="PurposeAllows"/> says. Unknown members
-    /// (capabilities among them, since proposal 17) are ignored. Track IDs
+    /// delivery a token and mediaType a media type (core section 8.5: an
+    /// unknown value is kept, and refused at step 7 by
+    /// <see cref="RefuseDelivery"/>), mediaType with delivery remux only, and
+    /// then required; a transcode object with delivery transcode only, its
+    /// codecs and range tokens (copy among them), its numbers of their steps;
+    /// numbers in range; purpose and a delivery of the list together as
+    /// <see cref="PurposeAllows"/> says. Unknown members (capabilities,
+    /// container, the languages and subtitleTrack of earlier drafts among
+    /// them) are ignored, whatever they hold. Track IDs
     /// are checked later, at step 4 (<see cref="PlayRequest.TrackIdsOk"/>).
     /// </summary>
     /// <exception cref="PlayRefusal">The request is refused (400 invalid-request).</exception>
@@ -138,7 +139,7 @@ public static partial class Playback
     /// <summary>
     /// Reads play's request as <see cref="ReadPlay(ReadOnlySpan{byte}, Func{string, bool}?)"/>
     /// does, and gives the request's object as read: the members of a content
-    /// part (music's queue: <see cref="Music.TryCheckQueue"/>) are read from
+    /// part (music's queue: <see cref="Music.CheckQueue"/>) are read from
     /// it, the body parsed once.
     /// </summary>
     /// <param name="body">The request's body.</param>
@@ -167,20 +168,20 @@ public static partial class Playback
             throw BadPlay("delivery isn't a token");
         }
 
-        var container = Text(o, "container");
-        if (container is not null && delivery != DeliveryRemux)
+        var mediaType = Text(o, "mediaType");
+        if (mediaType is not null && delivery != DeliveryRemux)
         {
-            throw BadPlay("container without delivery remux");
+            throw BadPlay("mediaType without delivery remux");
         }
 
-        if (container is not null && !Names.IsToken(container))
+        if (mediaType is not null && !Names.IsMediaType(mediaType))
         {
-            throw BadPlay("container isn't a token");
+            throw BadPlay("mediaType isn't a media type");
         }
 
-        if (container is null && delivery == DeliveryRemux)
+        if (mediaType is null && delivery == DeliveryRemux)
         {
-            throw BadPlay("delivery remux without container");
+            throw BadPlay("delivery remux without mediaType");
         }
 
         TranscodeTargets? targets = null;
@@ -199,24 +200,11 @@ public static partial class Playback
 
         var start = Integer(o, "startPositionMs", MaxPositionMs);
         var kbps = (int)Integer(o, "maxBitrateKbps", MaxKbps);
-        var audioLanguage = Text(o, "audioLanguage");
-        if (audioLanguage is not null && !Languages.ValidTag(audioLanguage))
-        {
-            throw BadPlay("audioLanguage isn't a valid tag");
-        }
-
-        var subtitleLanguage = Text(o, "subtitleLanguage");
-        if (subtitleLanguage is not null && !Languages.ValidTag(subtitleLanguage))
-        {
-            throw BadPlay("subtitleLanguage isn't a valid tag");
-        }
-
         var versionId = Text(o, "versionId") ?? "";
         var audioTrack = Text(o, "audioTrack");
-        var subtitleTrack = Text(o, "subtitleTrack");
-        emptyTrack |= audioTrack == "" || subtitleTrack == "";
+        emptyTrack |= audioTrack == "";
         var known = delivery is "" or DeliveryFile or DeliveryRemux or DeliveryTranscode;
-        if (known && !PurposeAllows(purpose, delivery, targets))
+        if (known && !PurposeAllows(purpose, delivery, targets ?? (delivery == DeliveryTranscode ? new TranscodeTargets() : null)))
         {
             throw BadPlay("purpose " + purpose + " doesn't take that delivery");
         }
@@ -226,22 +214,76 @@ public static partial class Playback
             Title = title,
             Purpose = purpose,
             Delivery = delivery,
-            Container = container ?? "",
+            MediaType = mediaType ?? "",
             Transcode = targets,
             AudioRenditions = renditions,
             StartPositionMs = start,
             MaxBitrateKbps = kbps,
-            AudioLanguage = audioLanguage ?? "",
             AudioTrack = audioTrack ?? "",
             VersionId = versionId,
-            SubtitleLanguage = subtitleLanguage ?? "",
-            SubtitleTrack = subtitleTrack ?? "",
             EmptyTrack = emptyTrack,
         };
     }
 
+    // The members a queue entry may carry of a request (music section 5.2).
+    private static readonly string[] EntryMembers = ["title", "versionId", "delivery", "mediaType", "transcode"];
+
+    /// <summary>
+    /// What the owning server starts for one entry of a request's queue
+    /// (playback section 2.1, music section 5.2), read as a play is
+    /// (<see cref="ReadPlay(ReadOnlySpan{byte}, Func{string, bool}?)"/>): the
+    /// entry's title and versionId (without one, its first copy), its own
+    /// delivery with its own mediaType or transcode, or without one the
+    /// request's; purpose, the caps and audioRenditions are the request's.
+    /// The entry counts once, under the request. A refusal is the entry's
+    /// alone: the owning server leaves it out of the answer.
+    /// </summary>
+    /// <param name="request">The play request's object, as read.</param>
+    /// <param name="entry">One entry of its queue.</param>
+    /// <param name="playable">Whether play takes a key; null: <see cref="TitleKey.TryParse"/>'s.</param>
+    /// <exception cref="PlayRefusal">The entry is refused (400 invalid-request): not an object, without title, or as a play is.</exception>
+    public static PlayRequest ReadQueueEntry(JsonObject request, JsonNode? entry, Func<string, bool>? playable = null)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (entry is not JsonObject e || !e.ContainsKey("title"))
+        {
+            throw BadPlay("an entry that isn't an object with a title");
+        }
+
+        var o = new JsonObject();
+        foreach (var k in (string[])["purpose", "audioRenditions", "maxBitrateKbps"])
+        {
+            if (request.TryGetPropertyValue(k, out var v))
+            {
+                o[k] = v?.DeepClone();
+            }
+        }
+
+        if (!e.ContainsKey("delivery"))
+        {
+            foreach (var k in (string[])["delivery", "mediaType", "transcode"])
+            {
+                if (request.TryGetPropertyValue(k, out var v))
+                {
+                    o[k] = v?.DeepClone();
+                }
+            }
+        }
+
+        foreach (var k in EntryMembers)
+        {
+            if (e.TryGetPropertyValue(k, out var v))
+            {
+                o[k] = v?.DeepClone();
+            }
+        }
+
+        return ReadPlay(System.Text.Encoding.UTF8.GetBytes(o.ToJsonString()), playable);
+    }
+
     // Reads a transcode object (playback section 2.7, video section 5.1):
-    // its codecs tokens (an unknown one is refused at step 7, 409), its
+    // its codecs and range tokens (an unknown one is refused at step 7,
+    // 409; copy is a token), its
     // numbers of their steps, else refused; Empty says burnSubtitle was "" or not a string
     // (malformed, refused at step 4 with the track IDs).
     private static (TranscodeTargets Targets, bool Empty) ReadTargets(JsonNode? v)
@@ -279,10 +321,12 @@ public static partial class Playback
 
         var videoCodec = Codec("videoCodec");
         var audioCodec = Codec("audioCodec");
+        var range = Codec("range");
         var targets = new TranscodeTargets
         {
             VideoCodec = videoCodec,
             AudioCodec = audioCodec,
+            Range = range,
             MaxHeight = Target("maxHeight", n => Video.Heights.Contains((int)n)),
             MaxBitrateKbps = Target("maxBitrateKbps", n => n is >= 1000 and <= MaxKbps && n % 1000 == 0),
             AudioChannels = Target("audioChannels", n => ChannelSteps.Contains((int)n)),
@@ -383,7 +427,7 @@ public sealed class PlayRefusal : Exception
 /// </summary>
 public sealed record TranscodeTargets
 {
-    /// <summary>The video codec to convert to, a token: the encoder's codec as ffmpeg names it (h264, hevc, av1, vp9).</summary>
+    /// <summary>The video codec to convert to, a registry token (h264, hevc, av1, vp9), or <see cref="Names.Copy"/> to serve the video unchanged.</summary>
     public string VideoCodec { get; init; } = "";
 
     /// <summary>The tallest picture, one of <see cref="Video.Heights"/>.</summary>
@@ -392,14 +436,17 @@ public sealed record TranscodeTargets
     /// <summary>The highest bitrate, a whole 1,000 kbit/s.</summary>
     public int MaxBitrateKbps { get; init; }
 
-    /// <summary>The audio codec to convert to, a token as ffmpeg names it (aac, ac3, eac3, opus, flac).</summary>
+    /// <summary>The audio codec to convert to, a registry token (aac, ac3, eac3, opus, flac), or <see cref="Names.Copy"/> to serve the audio unchanged.</summary>
     public string AudioCodec { get; init; } = "";
 
     /// <summary>The audio channels, one of <see cref="Playback.ChannelSteps"/>.</summary>
     public int AudioChannels { get; init; }
 
-    /// <summary>The subtitle track to burn into the picture (s&lt;n&gt;).</summary>
+    /// <summary>The subtitle track to burn into the picture (s&lt;n&gt;); refused with video copy.</summary>
     public string BurnSubtitle { get; init; } = "";
+
+    /// <summary>The picture's range, a token: sdr (tone-mapped to SDR, 8-bit, BT.709, the default) or keep (the copy's transfer and primaries kept, 10-bit); ignored with video copy.</summary>
+    public string Range { get; init; } = "";
 
     /// <summary>Whether it names a download's size (playback section 7): maxHeight, maxBitrateKbps or both.</summary>
     public bool Sized => MaxHeight != 0 || MaxBitrateKbps != 0;
@@ -407,21 +454,29 @@ public sealed record TranscodeTargets
     /// <summary>
     /// The targets the owning server converts to (playback section 2.7):
     /// these, those left out taking the baseline's values (videoCodec
-    /// <see cref="Names.BaselineVideoCodec"/>, audioCodec
+    /// <see cref="Names.BaselineVideoCodec"/>, range sdr, audioCodec
     /// <see cref="Names.BaselineAudioCodec"/>, audioChannels
     /// <see cref="Names.BaselineChannels"/>; maxHeight left out is the copy's
-    /// own height, and no cap but step 6's). For a title without a picture
-    /// (<paramref name="picture"/> false, a track), the video targets are
-    /// ignored: dropped.
+    /// own height, and no cap but step 6's), without those a copied stream
+    /// doesn't take (maxHeight and range with video copy, audioChannels with
+    /// audio copy). For a copy with no video (<paramref name="hasVideo"/>
+    /// false, a track or a theme song), the video targets are ignored:
+    /// dropped.
     /// </summary>
-    public TranscodeTargets WithBaseline(bool picture) => this with
+    public TranscodeTargets WithBaseline(bool hasVideo)
     {
-        VideoCodec = !picture ? "" : VideoCodec.Length > 0 ? VideoCodec : Names.BaselineVideoCodec,
-        MaxHeight = picture ? MaxHeight : 0,
-        BurnSubtitle = picture ? BurnSubtitle : "",
-        AudioCodec = AudioCodec.Length > 0 ? AudioCodec : Names.BaselineAudioCodec,
-        AudioChannels = AudioChannels != 0 ? AudioChannels : Names.BaselineChannels,
-    };
+        var videoCopy = hasVideo && VideoCodec == Names.Copy;
+        var audioCopy = AudioCodec == Names.Copy;
+        return this with
+        {
+            VideoCodec = !hasVideo ? "" : VideoCodec.Length > 0 ? VideoCodec : Names.BaselineVideoCodec,
+            MaxHeight = hasVideo && !videoCopy ? MaxHeight : 0,
+            Range = !hasVideo || videoCopy ? "" : Range.Length > 0 ? Range : Names.RangeSdr,
+            BurnSubtitle = hasVideo ? BurnSubtitle : "",
+            AudioCodec = AudioCodec.Length > 0 ? AudioCodec : Names.BaselineAudioCodec,
+            AudioChannels = audioCopy ? 0 : AudioChannels != 0 ? AudioChannels : Names.BaselineChannels,
+        };
+    }
 
     /// <summary>Writes its members, those empty left out.</summary>
     public void Write(JsonOut w)
@@ -429,7 +484,8 @@ public sealed record TranscodeTargets
         ArgumentNullException.ThrowIfNull(w);
         w.String("videoCodec", NonEmpty(VideoCodec)).Integer("maxHeight", NonZero(MaxHeight))
             .Integer("maxBitrateKbps", NonZero(MaxBitrateKbps)).String("audioCodec", NonEmpty(AudioCodec))
-            .Integer("audioChannels", NonZero(AudioChannels)).String("burnSubtitle", NonEmpty(BurnSubtitle));
+            .Integer("audioChannels", NonZero(AudioChannels)).String("range", NonEmpty(Range))
+            .String("burnSubtitle", NonEmpty(BurnSubtitle));
     }
 
     internal static string? NonEmpty(string s) => s.Length > 0 ? s : null;
@@ -454,8 +510,8 @@ public sealed record PlayRequest
     /// <summary>The delivery asked, a token (file, remux or transcode; another is refused at step 7); "" for the baseline.</summary>
     public string Delivery { get; init; } = "";
 
-    /// <summary>The container of a remux, a token: mpegts or mp4 (another is refused at step 7).</summary>
-    public string Container { get; init; } = "";
+    /// <summary>The media type of a remux (video/mp2t, video/mp4, audio/mp2t, audio/mp4; another is refused at step 7).</summary>
+    public string MediaType { get; init; } = "";
 
     /// <summary>The targets of a transcode; null when not said.</summary>
     public TranscodeTargets? Transcode { get; init; }
@@ -472,15 +528,12 @@ public sealed record PlayRequest
     /// out taking the baseline's values (<see cref="TranscodeTargets.WithBaseline"/>);
     /// null for any other delivery.
     /// </summary>
-    /// <param name="picture">Whether the title has a picture (video's; false for a track).</param>
-    public TranscodeTargets? TargetsServed(bool picture) =>
-        Delivery == Playback.DeliveryTranscode ? (Transcode ?? new TranscodeTargets()).WithBaseline(picture) : null;
+    /// <param name="hasVideo">Whether the copy has video (false for a track, or a theme song).</param>
+    public TranscodeTargets? TargetsServed(bool hasVideo) =>
+        Delivery == Playback.DeliveryTranscode ? (Transcode ?? new TranscodeTargets()).WithBaseline(hasVideo) : null;
 
     /// <summary>The bitrate cap asked, in kbit/s; 0 for none.</summary>
     public int MaxBitrateKbps { get; init; }
-
-    /// <summary>The audio language wanted, a valid tag.</summary>
-    public string AudioLanguage { get; init; } = "";
 
     /// <summary>The audio track wanted (a&lt;n&gt;).</summary>
     public string AudioTrack { get; init; } = "";
@@ -488,26 +541,19 @@ public sealed record PlayRequest
     /// <summary>The copy wanted.</summary>
     public string VersionId { get; init; } = "";
 
-    /// <summary>The subtitle language wanted (video's).</summary>
-    public string SubtitleLanguage { get; init; } = "";
-
-    /// <summary>The subtitle track wanted, s&lt;n&gt; or off (video's).</summary>
-    public string SubtitleTrack { get; init; } = "";
-
-    // The request had an audioTrack, a subtitleTrack or a burnSubtitle that
+    // The request had an audioTrack or a burnSubtitle that
     // was "", which reads as absent but is malformed.
     internal bool EmptyTrack { get; init; }
 
     /// <summary>
     /// Whether the request's track IDs have their forms, as step 4 of
     /// playback section 2.2 checks them once the copy is chosen: audioTrack
-    /// a&lt;n&gt;, subtitleTrack s&lt;n&gt; or off, transcode.burnSubtitle
-    /// s&lt;n&gt; (never off); n from 0 to 999 without leading zeros.
+    /// a&lt;n&gt;, transcode.burnSubtitle s&lt;n&gt;; n from 0 to 999 without
+    /// leading zeros.
     /// </summary>
     public bool TrackIdsOk =>
         !EmptyTrack &&
         (AudioTrack.Length == 0 || Playback.TryTrackId(AudioTrack, 'a', out _)) &&
-        (SubtitleTrack.Length == 0 || SubtitleTrack == "off" || Playback.TryTrackId(SubtitleTrack, 's', out _)) &&
         (Transcode is not { BurnSubtitle.Length: > 0 } t || Playback.TryTrackId(t.BurnSubtitle, 's', out _));
 
     /// <summary>
@@ -536,14 +582,11 @@ public sealed record PlayRequest
         .String("title", Title)
         .String("purpose", TranscodeTargets.NonEmpty(Purpose))
         .String("delivery", TranscodeTargets.NonEmpty(Delivery))
-        .String("container", TranscodeTargets.NonEmpty(Container))
+        .String("mediaType", TranscodeTargets.NonEmpty(MediaType))
         .Object("transcode", Transcode is { } t ? t.Write : null)
         .Bool("audioRenditions", AudioRenditions ? true : null)
         .Integer("startPositionMs", TranscodeTargets.NonZero(StartPositionMs))
         .Integer("maxBitrateKbps", TranscodeTargets.NonZero(MaxBitrateKbps))
-        .String("audioLanguage", TranscodeTargets.NonEmpty(AudioLanguage))
         .String("audioTrack", TranscodeTargets.NonEmpty(AudioTrack))
-        .String("versionId", TranscodeTargets.NonEmpty(VersionId))
-        .String("subtitleLanguage", TranscodeTargets.NonEmpty(SubtitleLanguage))
-        .String("subtitleTrack", TranscodeTargets.NonEmpty(SubtitleTrack)));
+        .String("versionId", TranscodeTargets.NonEmpty(VersionId)));
 }

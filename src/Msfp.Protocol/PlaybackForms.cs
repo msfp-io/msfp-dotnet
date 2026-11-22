@@ -74,59 +74,6 @@ public static partial class Playback
     }
 
     /// <summary>
-    /// Checks a play answer's stream URL against the owning server's stream
-    /// root (media section 1): &lt;root&gt;&lt;ticket&gt;/master.m3u8 for hls,
-    /// &lt;root&gt;&lt;ticket&gt;/file for file, compared exactly as sent (no %,
-    /// no query or fragment, no empty, "." or ".." part). It gives the
-    /// stream's base, &lt;root&gt;&lt;ticket&gt;/, under which every other URL of
-    /// the answer must be.
-    /// </summary>
-    /// <param name="url">The stream URL the answer gives.</param>
-    /// <param name="root">The owning server's stream root.</param>
-    /// <param name="protocol">The answer's protocol: hls or file.</param>
-    /// <param name="streamBase">The stream's base; empty when false.</param>
-    public static bool TryStreamBase(string url, string root, string protocol, out string streamBase)
-    {
-        ArgumentNullException.ThrowIfNull(url);
-        ArgumentNullException.ThrowIfNull(root);
-        streamBase = "";
-        if (!url.StartsWith(root, StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        var rest = url[root.Length..];
-        var slash = rest.IndexOf('/', StringComparison.Ordinal);
-        var want = protocol switch
-        {
-            "hls" => "master.m3u8",
-            "file" => "file",
-            _ => "",
-        };
-        if (slash < 0 || want.Length == 0)
-        {
-            return false;
-        }
-
-        var ticket = rest[..slash];
-        if (!Id(ticket) || rest[(slash + 1)..] != want)
-        {
-            return false;
-        }
-
-        streamBase = root + ticket + "/";
-        return true;
-    }
-
-    /// <summary>A subtitle track's URL under a stream's base (video section 6.1): subtitles/&lt;track&gt; for text, pictures/&lt;track&gt; for PGS.</summary>
-    public static string SubtitleUrl(string streamBase, string track, bool pictures) =>
-        streamBase + (pictures ? "pictures/" : "subtitles/") + track;
-
-    /// <summary>The URL of sheet <paramref name="n"/> of a playback's previews (video section 6.1).</summary>
-    public static string SheetUrl(string streamBase, int n) =>
-        streamBase + "trickplay/" + n.ToString(CultureInfo.InvariantCulture);
-
-    /// <summary>
     /// The Content-Type a viewer's server gives the file or a segment it
     /// relays (media section 3): the owning server's when it is a video/ or
     /// audio/ type made of letters, digits and .+- only (never a
@@ -160,64 +107,51 @@ public static partial class Playback
 }
 
 /// <summary>
-/// A playback's seek-bar previews, as play's answer gives them (video
-/// section 5.5).
+/// The media URLs a viewer's server builds (media section 1, video section
+/// 6.1, music section 5.2): answers carry no URLs, so every one is the
+/// owning server's stream root, a ticket an answer gave and a fixed name,
+/// and a viewer's server never fetches an address a peer wrote. The ticket
+/// must have been checked against its form (<see cref="Playback.Id"/>); the
+/// numbers are in decimal without leading zeros.
 /// </summary>
-/// <param name="TileWidth">A tile's width, in pixels.</param>
-/// <param name="TileHeight">A tile's height, in pixels.</param>
-/// <param name="Columns">Tiles across a sheet.</param>
-/// <param name="Rows">Tiles down a sheet.</param>
-/// <param name="IntervalMs">The time between two tiles, in milliseconds.</param>
-/// <param name="TileCount">How many tiles there are.</param>
-/// <param name="Sheets">How many sheet URLs the answer lists.</param>
-public readonly record struct Trickplay(int TileWidth, int TileHeight, int Columns, int Rows, int IntervalMs, int TileCount, int Sheets)
+public static class MediaUrls
 {
-    /// <summary>The most sheets a playback's previews may have.</summary>
-    public const int MaxSheets = 1000;
-
-    /// <summary>The most a sheet may be, as read (media section 2.4): 8 MiB.</summary>
-    public const int MaxSheetBytes = 8 << 20;
-
-    private const int MaxTile = 2048;
-    private const int MaxGrid = 100;
-    private const int MaxSheetSide = 4096;
-    private const int MinInterval = 100;
-    private const int MaxInterval = 3_600_000;
-
-    /// <summary>How many sheets the tiles fill: ⌈tileCount / (columns × rows)⌉, 0 when either is 0.</summary>
-    public int SheetCount
+    /// <summary>&lt;root&gt;&lt;ticket&gt;/: the base of every URL under a ticket.</summary>
+    public static string Base(string root, string ticket)
     {
-        get
-        {
-            var per = (long)Columns * Rows;
-            if (per <= 0 || TileCount <= 0)
-            {
-                return 0;
-            }
-
-            return (int)((TileCount + per - 1) / per);
-        }
+        ArgumentNullException.ThrowIfNull(root);
+        ArgumentNullException.ThrowIfNull(ticket);
+        return root + ticket + "/";
     }
+
+    /// <summary>A playback's stream: master.m3u8 for protocol hls, file for file.</summary>
+    public static string Stream(string root, string ticket, string protocol) =>
+        Base(root, ticket) + (protocol == "file" ? "file" : "master.m3u8");
 
     /// <summary>
-    /// Whether the previews are within video section 5.5's bounds, one sheet
-    /// listed for each the tiles fill: else the viewer's server plays on
-    /// without them.
+    /// The base of a subtitle track served apart (video section 6.1), to
+    /// which /&lt;part&gt; or /whole is added: subtitles/&lt;id&gt; for text
+    /// (WebVTT), pictures/&lt;id&gt; for picture (PGS), ass/&lt;id&gt; for its ASS
+    /// form (<paramref name="ass"/>).
     /// </summary>
-    public bool InBounds
+    public static string Subtitle(string root, string ticket, ServedSubtitle track, bool ass = false)
     {
-        get
-        {
-            static bool In(int v, int lo, int hi) => v >= lo && v <= hi;
-            if (!In(TileWidth, 1, MaxTile) || !In(TileHeight, 1, MaxTile) || !In(Columns, 1, MaxGrid) ||
-                !In(Rows, 1, MaxGrid) || Columns * TileWidth > MaxSheetSide || Rows * TileHeight > MaxSheetSide ||
-                !In(IntervalMs, MinInterval, MaxInterval) || TileCount < 1)
-            {
-                return false;
-            }
-
-            var n = SheetCount;
-            return n <= MaxSheets && Sheets == n;
-        }
+        ArgumentNullException.ThrowIfNull(track);
+        return Base(root, ticket) + (ass ? "ass/" : track.Form == Video.FormPicture ? "pictures/" : "subtitles/") + track.Id;
     }
+
+    /// <summary>Font <paramref name="n"/> of a playback, 0 to its answer's fontCount − 1.</summary>
+    public static string Font(string root, string ticket, int n) =>
+        Base(root, ticket) + "fonts/" + n.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>Preview sheet <paramref name="n"/> of a copy, below the sheet count of its previewLayout, under a playback's ticket or previews' answer's.</summary>
+    public static string Sheet(string root, string ticket, int n) =>
+        Base(root, ticket) + "trickplay/" + n.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>Queue entry <paramref name="n"/>'s stream (music section 5.2): queue/&lt;n&gt;/file or queue/&lt;n&gt;/master.m3u8, n its place in the request's queue.</summary>
+    public static string Queue(string root, string ticket, int n, string protocol) =>
+        Base(root, ticket) + "queue/" + n.ToString(CultureInfo.InvariantCulture) + "/" + (protocol == "file" ? "file" : "master.m3u8");
+
+    /// <summary>A local title's image (catalog section 4.4), under the ticket of image's answer.</summary>
+    public static string Image(string root, string ticket) => Base(root, ticket) + "image";
 }

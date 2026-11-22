@@ -1,37 +1,21 @@
+using System.Globalization;
+
 namespace Msfp.Protocol;
 
-// What an owning server chooses for a play (MSFP playback sections 2.2,
-// 2.6 and 2.7): the copy, the audio, and whether it refuses the delivery
-// asked of that copy. A copy or a track the request names wins; otherwise
-// the choice is the owning server's own, and these are the recommended
-// defaults: one that chooses otherwise still conforms.
+// What an owning server plays and serves for a play (MSFP playback sections
+// 2.2, 2.6 and 2.7): the copy and the audio the request names, else the
+// first copy and the file's default audio; whether it refuses the delivery
+// asked of that copy (step 7); what the baseline serves without delivery;
+// and whether the playback takes a transcode. The viewer's server chooses:
+// the owning server only plays what it is asked.
 public static partial class Playback
 {
-    // Section 2.6's two matches, in order: the same tag (compared without
-    // case), then the same base language.
-    private static readonly Func<string, string, bool>[] LanguageMatches =
-    [
-        (tag, want) => string.Equals(tag, want, StringComparison.OrdinalIgnoreCase),
-        (tag, want) => BaseLanguage(tag) == BaseLanguage(want),
-    ];
-
-    // A tag's base language, lowercase: what comes before its first -.
-    private static string BaseLanguage(string tag)
-    {
-        var dash = tag.IndexOf('-', StringComparison.Ordinal);
-        return (dash < 0 ? tag : tag[..dash]).ToLowerInvariant();
-    }
-
     /// <summary>
-    /// Playback section 2.6's choice of the copy: the copy
-    /// <paramref name="versionId"/> names (required); else, as the
-    /// recommended default, the first whose audio (its own sound,
-    /// <see cref="PlayCopyAudio.OwnSound"/>) has <paramref name="language"/>,
-    /// the same tag looked for in every copy before the same base language;
-    /// else the first, the owner's preferred. -1 when there are no copies
-    /// (404).
+    /// Playback section 2.6's copy: the one <paramref name="versionId"/>
+    /// names, when it names one of them; else the first, the owner's
+    /// preferred. -1 when there are no copies (404).
     /// </summary>
-    public static int ChooseCopy(IReadOnlyList<PlayCopy> copies, string versionId, string language)
+    public static int ChooseCopy(IReadOnlyList<Copy> copies, string versionId)
     {
         ArgumentNullException.ThrowIfNull(copies);
         if (copies.Count == 0)
@@ -39,28 +23,11 @@ public static partial class Playback
             return -1;
         }
 
-        if (!string.IsNullOrEmpty(versionId))
+        for (var i = 0; i < copies.Count; i++)
         {
-            for (var i = 0; i < copies.Count; i++)
+            if (copies[i].Id == versionId)
             {
-                if (copies[i].Id == versionId)
-                {
-                    return i;
-                }
-            }
-        }
-
-        if (!string.IsNullOrEmpty(language))
-        {
-            foreach (var same in LanguageMatches)
-            {
-                for (var i = 0; i < copies.Count; i++)
-                {
-                    if (copies[i].Audio.Any(a => a.OwnSound && a.Language.Length > 0 && same(a.Language, language)))
-                    {
-                        return i;
-                    }
-                }
+                return i;
             }
         }
 
@@ -68,134 +35,248 @@ public static partial class Playback
     }
 
     /// <summary>
-    /// Playback section 2.6's choice of the audio: the track
-    /// <paramref name="track"/> names, when the copy has it (required); else,
-    /// as the recommended default, the first of its own sound matching
-    /// <paramref name="language"/> (the same tag, then the same base
-    /// language); else the default audio: the track the file marks default,
-    /// else the first. "" for a copy without audio.
+    /// Playback section 2.6's audio: the track <paramref name="track"/>
+    /// names, when the copy has it; else the file's default audio: the track
+    /// the file marks default, else its first. "" for a copy without audio.
     /// </summary>
-    public static string ChooseAudio(IReadOnlyList<PlayCopyAudio> audio, string track, string language)
+    public static string ChooseAudio(Copy copy, string track)
     {
-        ArgumentNullException.ThrowIfNull(audio);
+        ArgumentNullException.ThrowIfNull(copy);
+        var audio = copy.AudioTracks;
         if (!string.IsNullOrEmpty(track) && audio.Any(a => a.Id == track))
         {
             return track;
-        }
-
-        if (!string.IsNullOrEmpty(language))
-        {
-            foreach (var same in LanguageMatches)
-            {
-                if (audio.FirstOrDefault(a => a.OwnSound && a.Language.Length > 0 && same(a.Language, language)) is { } a)
-                {
-                    return a.Id;
-                }
-            }
         }
 
         return (audio.FirstOrDefault(a => a.Default) ?? audio.FirstOrDefault())?.Id ?? "";
     }
 
     /// <summary>
-    /// Step 7 of playback section 2.2, the refusals MSFP itself names: a 409
-    /// delivery-refused for a delivery that isn't file, remux or transcode
-    /// (a token read at step 1, core section 8.5); for a remux into another
-    /// container than mpegts or mp4 (<see cref="Names.RemuxContainers"/>);
-    /// for a transcode codec the owning server doesn't encode
-    /// (<paramref name="videoEncoders"/>, <paramref name="audioEncoders"/>,
-    /// null: not checked here; the video codec only for a title with a
-    /// picture, <paramref name="picture"/>); for file of a copy of several
-    /// parts (whatever the purpose); for file or remux of a play whose
-    /// copy's bitrate is above <paramref name="capKbps"/>
-    /// (<see cref="PlayRequest.BitrateCap"/>, 0: no cap); and for a
-    /// burnSubtitle the copy doesn't have. Null when none applies; an owning
-    /// server may still refuse for reasons of its own (its policy, what it
-    /// can make of the copy).
+    /// Step 7 of playback section 2.2, the refusals MSFP itself names, each a
+    /// 409 delivery-refused: a delivery that isn't file, remux or transcode
+    /// (a token read at step 1, core section 8.5); a remux to a media type of
+    /// another subtype than mp2t or mp4 (<see cref="Names.RemuxSubtypes"/>),
+    /// or of the wrong top-level type (video/… for a copy with video, audio/…
+    /// for one without), or whose segment format can't carry the copy's
+    /// streams; a transcode codec the owning server doesn't encode (the video
+    /// codec only for a copy with video); a copied stream (<see cref="Names.Copy"/>)
+    /// that neither segment format carries; burnSubtitle with video copy; a
+    /// range other than sdr or keep, or one the owning server can't make
+    /// (for a copy with video whose video isn't copied); file of a copy of
+    /// several parts (whatever the purpose); file or remux of a play whose
+    /// copy's overall rate (size × 8 / durationMs) is above
+    /// <paramref name="capKbps"/> (<see cref="PlayRequest.BitrateCap"/>, 0:
+    /// no cap); and a burnSubtitle the copy doesn't have. What the owning
+    /// server makes is <paramref name="makes"/> (null, or a null member: not
+    /// checked here). Null when none applies; an owning server may still
+    /// refuse for reasons of its own (its policy, what it can make of the
+    /// copy).
     /// </summary>
-    public static PlayRefusal? RefuseDelivery(PlayRequest request, PlayCopy copy, int capKbps,
-        IReadOnlyCollection<string>? videoEncoders = null, IReadOnlyCollection<string>? audioEncoders = null, bool picture = true)
+    /// <param name="request">The request, as <see cref="ReadPlay(ReadOnlySpan{byte}, Func{string, bool}?)"/> read it.</param>
+    /// <param name="copy">The copy chosen (<see cref="ChooseCopy"/>).</param>
+    /// <param name="audioTrack">The audio track chosen (<see cref="ChooseAudio"/>); "" for none.</param>
+    /// <param name="capKbps">The bitrate cap of step 6.</param>
+    /// <param name="makes">What the owning server makes.</param>
+    public static PlayRefusal? RefuseDelivery(PlayRequest request, Copy copy, string audioTrack, int capKbps, OwnerMakes? makes = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(copy);
         static PlayRefusal Refuse(string why) => new(409, ProblemDeliveryRefused, why);
+        var hasVideo = copy.Video is not null;
+        var audio = copy.AudioTracks.FirstOrDefault(a => a.Id == audioTrack);
         if (request.Delivery.Length > 0 && request.Delivery is not (DeliveryFile or DeliveryRemux or DeliveryTranscode))
         {
             return Refuse("a delivery the owning server doesn't make");
         }
 
-        if (request.Delivery == DeliveryRemux && !Names.RemuxContainers.Contains(request.Container, StringComparer.Ordinal))
+        if (request.Delivery == DeliveryRemux)
         {
-            return Refuse("a remux container other than mpegts or mp4");
+            var slash = request.MediaType.IndexOf('/', StringComparison.Ordinal);
+            var top = slash < 0 ? request.MediaType : request.MediaType[..slash];
+            var sub = slash < 0 ? "" : request.MediaType[(slash + 1)..];
+            if (!Names.RemuxSubtypes.Contains(sub, StringComparer.Ordinal))
+            {
+                return Refuse("a remux to a media type of another subtype than mp2t or mp4");
+            }
+
+            if (top != (hasVideo ? "video" : "audio"))
+            {
+                return Refuse("a remux to " + request.MediaType + " of a copy that calls for " + (hasVideo ? "video/" : "audio/"));
+            }
+
+            if (makes?.Carries(sub, audio?.Codec, copy.Video?.Codec) == false)
+            {
+                return Refuse("a remux to a segment format that can't carry the copy's streams");
+            }
         }
 
-        if (request.Transcode is { } targets)
+        if (request.Transcode is { } t)
         {
-            if (picture && targets.VideoCodec.Length > 0 && videoEncoders is not null &&
-                !videoEncoders.Contains(targets.VideoCodec, StringComparer.Ordinal))
+            var videoCopy = hasVideo && t.VideoCodec == Names.Copy;
+            var audioCopy = t.AudioCodec == Names.Copy;
+            if (hasVideo && !videoCopy && t.VideoCodec.Length > 0 && makes?.VideoEncoders is { } ve &&
+                !ve.Contains(t.VideoCodec, StringComparer.Ordinal))
             {
                 return Refuse("a video codec the owning server doesn't encode");
             }
 
-            if (targets.AudioCodec.Length > 0 && audioEncoders is not null && !audioEncoders.Contains(targets.AudioCodec, StringComparer.Ordinal))
+            if (!audioCopy && t.AudioCodec.Length > 0 && makes?.AudioEncoders is { } ae && !ae.Contains(t.AudioCodec, StringComparer.Ordinal))
             {
                 return Refuse("an audio codec the owning server doesn't encode");
             }
+
+            if ((videoCopy || audioCopy) && makes?.SegmentCodecs is not null)
+            {
+                var v = videoCopy ? copy.Video!.Codec : null;
+                var a = audioCopy ? audio?.Codec : null;
+                if (!makes.Carries("mp2t", a, v) && !makes.Carries("mp4", a, v))
+                {
+                    return Refuse("a copied stream no segment format can carry");
+                }
+            }
+
+            if (videoCopy && t.BurnSubtitle.Length > 0)
+            {
+                return Refuse("burnSubtitle with video copy");
+            }
+
+            if (hasVideo && !videoCopy && t.Range.Length > 0)
+            {
+                if (t.Range is not (Names.RangeSdr or Names.RangeKeep))
+                {
+                    return Refuse("a range other than sdr or keep");
+                }
+
+                if (makes?.Ranges is { } ranges && !ranges.Contains(t.Range, StringComparer.Ordinal))
+                {
+                    return Refuse("a range the owning server can't make");
+                }
+            }
         }
 
-        if (request.Delivery == DeliveryFile && copy.Parts > 1)
+        if (request.Delivery == DeliveryFile && copy.Several)
         {
             return Refuse("a copy of several parts is never delivered as file");
         }
 
-        if (request.Delivery is DeliveryFile or DeliveryRemux && request.Purpose is PurposePlay or "" && capKbps > 0 && copy.BitrateKbps > capKbps)
+        if (request.Delivery is DeliveryFile or DeliveryRemux && request.Purpose is PurposePlay or "" && capKbps > 0 &&
+            copy.Size * 8 > (long)capKbps * copy.DurationMs)
         {
-            return Refuse("the copy's bitrate is above the cap");
+            return Refuse("the copy's overall rate is above the cap");
         }
 
-        if (request.Transcode is { BurnSubtitle.Length: > 0 } t && !copy.Subtitles.Contains(t.BurnSubtitle, StringComparer.Ordinal))
+        if (request.Transcode is { BurnSubtitle.Length: > 0 } b && !copy.SubtitleTracks.Any(s => s.Id == b.BurnSubtitle))
         {
             return Refuse("burnSubtitle isn't a subtitle track of the copy");
         }
 
         return null;
     }
-}
 
-/// <summary>
-/// What the choices of playback section 2.6 need of a copy of a title.
-/// </summary>
-public sealed record PlayCopy
-{
-    /// <summary>Its version ID.</summary>
-    public string Id { get; init; } = "";
-
-    /// <summary>Its files (parts); 1 for one file.</summary>
-    public int Parts { get; init; } = 1;
-
-    /// <summary>Its bitrate, in kbit/s.</summary>
-    public int BitrateKbps { get; init; }
-
-    /// <summary>Its audio tracks.</summary>
-    public IReadOnlyList<PlayCopyAudio> Audio { get; init; } = [];
-
-    /// <summary>The IDs of its subtitle tracks (s&lt;n&gt;).</summary>
-    public IReadOnlyList<string> Subtitles { get; init; } = [];
-}
-
-/// <summary>
-/// What choosing a copy's audio track needs of it (playback section 2.6).
-/// </summary>
-/// <param name="Id">Its ID (a&lt;n&gt;).</param>
-/// <param name="Language">Its language tag; "" when none.</param>
-/// <param name="Role">Its role, a token of the DASH role scheme (main, dub, commentary, description…); "" when none.</param>
-/// <param name="Default">Whether the copy's file marks it default.</param>
-public sealed record PlayCopyAudio(string Id, string Language = "", string Role = "", bool Default = false)
-{
     /// <summary>
-    /// Whether the track is the title's own sound (playback section 2.6): no
-    /// role, or main or dub; never a commentary, a description or a role the
-    /// owning server doesn't know, none of which is chosen by language.
+    /// What the owning server serves of a copy without delivery (playback
+    /// section 2.7): the baseline, every stream already within it left
+    /// unchanged (<see cref="Names.Copy"/>), else converted to the baseline's
+    /// codec; a remux when both are left unchanged, else a transcode. The
+    /// video for a copy with video only: H.264 at most High profile and level
+    /// 4.1 (by its codecs), 8-bit, progressive, with H.273 primaries,
+    /// transfer and matrix 1; the audio AAC-LC (mp4a.40.2), 1 or 2 channels,
+    /// at most 48 kHz. A fact the copy doesn't state isn't within.
     /// </summary>
-    public bool OwnSound => Role is "" or null or "main" or "dub";
+    /// <param name="copy">The copy chosen.</param>
+    /// <param name="audioTrack">The audio track chosen; "" for none.</param>
+    public static BaselinePlan Baseline(Copy copy, string audioTrack)
+    {
+        ArgumentNullException.ThrowIfNull(copy);
+        var audio = copy.AudioTracks.FirstOrDefault(a => a.Id == audioTrack);
+        var a = audio is not null && AudioWithin(audio) ? Names.Copy : Names.BaselineAudioCodec;
+        string? v = copy.Video is { } video ? VideoWithin(video) ? Names.Copy : Names.BaselineVideoCodec : null;
+        var method = a == Names.Copy && (v is null || v == Names.Copy) ? MethodRemux : MethodTranscode;
+        return new BaselinePlan(v, a, method);
+    }
+
+    /// <summary>
+    /// Whether a play of <paramref name="copy"/> takes a transcode (playback
+    /// sections 2.6 and 6): a delivery transcode, unless both its video and
+    /// its audio are copy; the baseline when it converts a stream
+    /// (<see cref="Baseline"/>). A file or a remux never does.
+    /// </summary>
+    public static bool TakesTranscode(PlayRequest request, Copy copy, string audioTrack)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(copy);
+        return request.Delivery switch
+        {
+            DeliveryTranscode => !(copy.Video is not null && request.Transcode?.VideoCodec == Names.Copy && request.Transcode.AudioCodec == Names.Copy),
+            "" => Baseline(copy, audioTrack).Method == MethodTranscode,
+            _ => false,
+        };
+    }
+
+    // H.264 up to High and level 4.1, 8-bit 4:2:0, progressive, SDR in
+    // BT.709.
+    private static bool VideoWithin(VideoStream v) =>
+        v.Codec == "h264" && AvcWithin(v.Codecs) && v.BitDepth == 8 && !v.Interlaced &&
+        v.Colour is { Primaries: 1, Transfer: 1, Matrix: 1 };
+
+    // An avc1 or avc3 string of Baseline (66), Main (77) or High (100), at a
+    // level from 1 to 4.1.
+    private static bool AvcWithin(string? codecs)
+    {
+        if (codecs is null || codecs.Length != 11 || codecs[4] != '.' || codecs[..4] is not ("avc1" or "avc3") ||
+            !int.TryParse(codecs.AsSpan(5), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out var b))
+        {
+            return false;
+        }
+
+        var profile = b >> 16;
+        var level = b & 0xff;
+        return profile is 66 or 77 or 100 && level is >= 10 and <= 41;
+    }
+
+    // AAC-LC, 1 or 2 channels, at most 48 kHz.
+    private static bool AudioWithin(CopyAudio a) =>
+        a.Codec == "aac" && a.Codecs == "mp4a.40.2" && a.Channels is >= 1 and <= 2 && a.SampleRate is >= 1 and <= 48_000;
 }
+
+/// <summary>
+/// What an owning server makes, for step 7 of playback section 2.2
+/// (<see cref="Playback.RefuseDelivery"/>): a null member is not checked.
+/// </summary>
+public sealed record OwnerMakes
+{
+    /// <summary>The video codecs it encodes (registry tokens).</summary>
+    public IReadOnlyCollection<string>? VideoEncoders { get; init; }
+
+    /// <summary>The audio codecs it encodes.</summary>
+    public IReadOnlyCollection<string>? AudioEncoders { get; init; }
+
+    /// <summary>The ranges it makes (sdr, keep).</summary>
+    public IReadOnlyCollection<string>? Ranges { get; init; }
+
+    /// <summary>The codecs each segment format (mp2t, mp4) carries, for a remux or a copied stream.</summary>
+    public IReadOnlyDictionary<string, IReadOnlyCollection<string>>? SegmentCodecs { get; init; }
+
+    /// <summary>Whether segment format <paramref name="subtype"/> carries these codecs (null ones skipped); true when <see cref="SegmentCodecs"/> isn't said.</summary>
+    public bool Carries(string subtype, params string?[] codecs)
+    {
+        ArgumentNullException.ThrowIfNull(codecs);
+        if (SegmentCodecs is null)
+        {
+            return true;
+        }
+
+        var carried = SegmentCodecs.GetValueOrDefault(subtype) ?? [];
+        return codecs.All(c => c is null || carried.Contains(c, StringComparer.Ordinal));
+    }
+}
+
+/// <summary>
+/// What the baseline serves of a copy (playback section 2.7): each stream
+/// <see cref="Names.Copy"/>, left unchanged, or the baseline's codec; the
+/// method, remux or transcode.
+/// </summary>
+/// <param name="Video">The video: copy or h264; null for a copy with no video.</param>
+/// <param name="Audio">The audio: copy or aac.</param>
+/// <param name="Method">remux or transcode.</param>
+public sealed record BaselinePlan(string? Video, string Audio, string Method);

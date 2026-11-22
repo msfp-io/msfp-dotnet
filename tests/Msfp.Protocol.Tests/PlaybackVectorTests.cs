@@ -33,8 +33,7 @@ public partial class PlaybackVectorTests
     {
         Streams = Int(l["streams"]), Transcodes = Int(l["transcodes"]), BitrateKbps = Int(l["bitrateKbps"]),
         Downloads = Int(l["downloads"]), DownloadsPerDay = Int(l["downloadsPerDay"]), DownloadKbps = Int(l["downloadKbps"]),
-        ScansPerDay = Int(l["scansPerDay"]), ScanBytes = Int(l["scanBytes"]), AudioStreams = Int(l["audioStreams"]),
-        AudioTranscodes = Int(l["audioTranscodes"]),
+        ScansPerDay = Int(l["scansPerDay"]), AudioStreams = Int(l["audioStreams"]), AudioTranscodes = Int(l["audioTranscodes"]),
     };
 
     private static LimitUse UseOf(JsonObject u) => new()
@@ -43,15 +42,48 @@ public partial class PlaybackVectorTests
         DownloadsToday = Int(u["downloadsToday"]), ScansToday = Int(u["scansToday"]), ServerTranscodesFree = Int(u["serverTranscodesFree"]),
     };
 
-    private static PlayCopy CopyOf(JsonObject c) => new()
+    private static List<string> Strings(JsonNode? n) => n?.AsArray().Select(e => e!.GetValue<string>()).ToList() ?? [];
+
+    // A copy of the context, as the catalog's Copy (the facts the baseline
+    // and step 7 go by).
+    private static Copy CopyOf(JsonObject c)
     {
-        Id = c.Str("id"),
-        Parts = Int(c["parts"]),
-        BitrateKbps = Int(c["bitrateKbps"]),
-        Audio = c["audio"]?.AsArray().Select(a => a!.AsObject())
-            .Select(a => new PlayCopyAudio(a.Str("id"), a.Str("language"), a.Str("role"), a["default"]?.GetValue<bool>() ?? false))
-            .ToList() ?? [],
-        Subtitles = c["subtitles"]?.AsArray().Select(s => s!.GetValue<string>()).ToList() ?? [],
+        int? Opt(JsonNode? n) => n is null ? null : Int(n);
+        VideoStream? video = null;
+        if (c["video"] is JsonObject v)
+        {
+            var col = v["colour"] as JsonObject;
+            video = new VideoStream(v.Str("codec"), 1, Int(v["height"]))
+            {
+                Codecs = v["codecs"] is null ? null : v.Str("codecs"),
+                BitDepth = Opt(v["bitDepth"]),
+                Interlaced = v["interlaced"]?.GetValue<bool>() ?? false,
+                Colour = col is null ? null : new VideoColour(Opt(col["primaries"]), Opt(col["transfer"]), Opt(col["matrix"])),
+            };
+        }
+
+        var audio = c["audio"]!.AsArray().Select(e => e!.AsObject()).Select(a => new CopyAudio(a.Str("id"), a.Str("codec"))
+        {
+            Codecs = a["codecs"] is null ? null : a.Str("codecs"),
+            Channels = Opt(a["channels"]),
+            SampleRate = Opt(a["sampleRate"]),
+            Default = a["default"]?.GetValue<bool>() ?? false,
+        }).ToList();
+        return new Copy(c.Str("id"), c["durationMs"]!.GetValue<long>(), video is null ? "audio/mp4" : "video/mp4", c["size"]!.GetValue<long>(),
+            c.Str("etag"), audio)
+        {
+            Parts = Int(c["parts"]) > 1 ? Int(c["parts"]) : null,
+            Video = video,
+            SubtitleTracks = Strings(c["subtitles"]).Select(id => new CopySubtitle(id, "")).ToList(),
+        };
+    }
+
+    private static OwnerMakes MakesOf(JsonObject ctx, JsonObject c) => new()
+    {
+        VideoEncoders = Strings(ctx["videoEncoders"]),
+        AudioEncoders = Strings(ctx["audioEncoders"]),
+        Ranges = Strings(c["ranges"] ?? ctx["ranges"]),
+        SegmentCodecs = ctx["segmentCodecs"]!.AsObject().ToDictionary(p => p.Key, p => (IReadOnlyCollection<string>)Strings(p.Value)),
     };
 
     // Two JSON texts compared, members whose value is a zero (false, 0, "")
@@ -87,16 +119,19 @@ public partial class PlaybackVectorTests
     private static JsonNode? Node(Action<JsonOut> fill) => JsonNode.Parse(JsonOut.Object(fill));
 
     // An owning server's play, section 2.2's steps, of the context's copies,
-    // encoders and limits.
+    // encoders and limits; for a queue entry, the request read as the
+    // entry's (no counts, no idle rule: the playback counts once, under the
+    // request).
     private static JsonObject Play(JsonObject ctx, JsonObject c)
     {
         var lim = LimitsOf((c["limits"] ?? ctx["limits"])!.AsObject());
         var use = UseOf((c["inUse"] ?? ctx["inUse"])!.AsObject());
-        List<string> Encoders(string name) => ctx[name]!.AsArray().Select(e => e!.GetValue<string>()).ToList();
+        var entry = c["entry"] is not null;
 
         // 1.
-        var r = Playback.ReadPlay(Encoding.UTF8.GetBytes(c.Str("text")), Playable);
-        var picture = TitleKey.TryParse(r.Title, out var key) && key.Part == "video";
+        var r = entry
+            ? Playback.ReadQueueEntry(JsonNode.Parse(c.Str("request"))!.AsObject(), JsonNode.Parse(c.Str("entry")), Playable)
+            : Playback.ReadPlay(Encoding.UTF8.GetBytes(c.Str("text")), Playable);
 
         // 2.
         if (lim.Open(r.Purpose) is { } open)
@@ -106,7 +141,7 @@ public partial class PlaybackVectorTests
 
         // 3, 4.
         var copies = ctx["copies"]![r.Title]?.AsArray().Select(e => CopyOf(e!.AsObject())).ToList() ?? [];
-        var i = Playback.ChooseCopy(copies, r.VersionId, r.AudioLanguage);
+        var i = Playback.ChooseCopy(copies, r.VersionId);
         if (i < 0)
         {
             throw new PlayRefusal(404, Playback.ProblemNotFound, "no copy");
@@ -118,8 +153,7 @@ public partial class PlaybackVectorTests
         }
 
         var cp = copies[i];
-        var audio = Playback.ChooseAudio(cp.Audio, r.AudioTrack, r.AudioLanguage);
-        var named = copies.Exists(x => x.Id == r.VersionId) && cp.Audio.Any(a => a.Id == r.AudioTrack);
+        var audio = Playback.ChooseAudio(cp, r.AudioTrack);
 
         // 5.
         if (lim.Room(r.Purpose, use) is { } room)
@@ -131,14 +165,14 @@ public partial class PlaybackVectorTests
         var cap = r.Purpose == Playback.PurposePlay ? r.BitrateCap(Int(ctx["ownCapKbps"]), lim.BitrateKbps) : 0;
 
         // 7.
-        if (Playback.RefuseDelivery(r, cp, cap, Encoders("videoEncoders"), Encoders("audioEncoders"), picture) is { } refused)
+        if (Playback.RefuseDelivery(r, cp, audio, cap, MakesOf(ctx, c)) is { } refused)
         {
             throw refused;
         }
 
         // 8.
         var transcodes = "";
-        if (r.Delivery == Playback.DeliveryTranscode)
+        if (Playback.TakesTranscode(r, cp, audio))
         {
             if (lim.TranscodeRoom(r.Purpose, use) is { } busy)
             {
@@ -153,19 +187,23 @@ public partial class PlaybackVectorTests
             ["title"] = r.Title,
             ["purpose"] = r.Purpose,
             ["delivery"] = r.Delivery,
-            ["baseline"] = r.Delivery.Length > 0 ? "" : picture ? "h264 aac hls" : "aac hls",
-            ["container"] = r.Container,
+            ["mediaType"] = r.MediaType,
             ["audioRenditions"] = r.AudioRenditions,
             ["versionId"] = cp.Id,
             ["audioTrack"] = audio,
-            ["defaults"] = !named,
             ["startPositionMs"] = r.Purpose == Playback.PurposeDownload ? 0 : r.StartPositionMs,
             ["bitrateCapKbps"] = cap,
             ["transcodes"] = transcodes,
             ["ticketSeconds"] = (long)Playback.Life(r.Purpose).TotalSeconds,
-            ["idleSeconds"] = Playback.Idles(r.Purpose) ? (long)Playback.IdleEnd.TotalSeconds : 0,
+            ["idleSeconds"] = !entry && Playback.Idles(r.Purpose) ? (long)Playback.IdleEnd.TotalSeconds : 0,
         };
-        if (r.TargetsServed(picture) is { } t)
+        if (r.Delivery.Length == 0)
+        {
+            var b = Playback.Baseline(cp, audio);
+            o["baseline"] = Node(w => w.String("video", b.Video).String("audio", b.Audio).String("method", b.Method));
+        }
+
+        if (r.TargetsServed(cp.Video is not null) is { } t)
         {
             o["transcode"] = Node(t.Write);
         }
@@ -173,15 +211,15 @@ public partial class PlaybackVectorTests
         switch (r.Purpose)
         {
             case Playback.PurposePlay:
-                o["counts"] = "streams";
+                o["counts"] = entry ? "" : "streams";
                 break;
             case Playback.PurposeDownload:
-                o["counts"] = "downloads";
+                o["counts"] = entry ? "" : "downloads";
                 o["speedCapKbps"] = lim.DownloadKbps;
                 break;
             case Playback.PurposeScan:
-                o["counts"] = "scansPerDay";
-                o["readCapBytes"] = lim.ScanCap;
+                o["counts"] = entry ? "" : "scansPerDay";
+                o["scanBytes"] = Int(c["scanBytes"] ?? ctx["scanBytes"]);
                 break;
         }
 
@@ -224,16 +262,18 @@ public partial class PlaybackVectorTests
     {
         var v = TestVectors.Load(File);
         int N(string s) => v[s]!.AsArray().Count;
-        Assert.Equal(114 + 74 + 36 + 20, N("requests") + N("deliveries") + N("downloads") + N("scans"));
-        Assert.Equal(56, N("reports"));
-        Assert.Equal(70, N("answers"));
-        Assert.Equal(16, N("restarts"));
-        Assert.Equal(23, N("limits"));
+        Assert.Equal(95 + 107 + 21 + 21 + 36 + 19, N("requests") + N("deliveries") + N("baseline") + N("queueEntries") + N("downloads") + N("scans"));
+        Assert.Equal(57, N("reports"));
+        Assert.Equal(79, N("answers"));
+        Assert.Equal(17, N("restarts"));
+        Assert.Equal(21, N("limits"));
     }
 
     [Theory]
     [InlineData("requests")]
     [InlineData("deliveries")]
+    [InlineData("baseline")]
+    [InlineData("queueEntries")]
     [InlineData("downloads")]
     [InlineData("scans")]
     [InlineData("reports")]
@@ -251,7 +291,7 @@ public partial class PlaybackVectorTests
             string problem;
             try
             {
-                output = c.Str("call") == "play" ? Play(ctx, c) : Report(c, now);
+                output = c.Str("call") is "progress" or "stop" ? Report(c, now) : Play(ctx, c);
                 (status, problem) = (200, "");
             }
             catch (PlayRefusal e)
@@ -281,12 +321,19 @@ public partial class PlaybackVectorTests
         var failures = new List<string>();
         foreach (var c in cases)
         {
-            var a = Playback.ReadPlayAnswer(Encoding.UTF8.GetBytes(c.Str("text")), c.Str("delivery"), root, c.Str("catalogEtag"));
+            var ask = c["asked"]!.AsObject();
+            var asked = new PlayAsked
+            {
+                Purpose = ask.Str("purpose"), Delivery = ask.Str("delivery"), Video = ask.Str("part") == "video",
+                CatalogEtag = ask.Str("catalogEtag"),
+                Subtitles = Strings(ask["catalogSubtitles"]).Select(id => new CopySubtitle(id, "")).ToList(),
+            };
+            var a = Playback.ReadPlayAnswer(Encoding.UTF8.GetBytes(c.Str("text")), asked);
             if (a is null != !c.Valid())
             {
                 failures.Add($"{c.Str("name")}: kept {a is not null}");
             }
-            else if (a is not null && Canon(AnswerJson(a)) is var got && got != Canon(c.Str("output")))
+            else if (a is not null && Canon(AnswerJson(a, root)) is var got && got != Canon(c.Str("output")))
             {
                 failures.Add($"{c.Str("name")}: got {got}");
             }
@@ -295,21 +342,17 @@ public partial class PlaybackVectorTests
         TestVectors.NoFailures(failures, cases.Count, "answers");
     }
 
-    private static JsonNode? AnswerJson(PlayAnswer a) => Node(w => w
-        .String("id", a.Id).String("method", a.Method)
-        .Object("stream", s => s.String("url", a.Stream.Url).String("protocol", a.Stream.Protocol).String("mimeType", a.Stream.MimeType))
-        .String("etag", a.Etag).Integer("positionMs", a.PositionMs).Integer("durationMs", a.DurationMs)
-        .String("versionId", a.VersionId)
-        .Objects("audioTracks", a.AudioTracks.Count > 0 ? a.AudioTracks : null, (o, t) => o.String("id", t.Id)
-            .String("language", t.Language).Integer("channels", t.Channels).String("role", t.Role)
-            .Bool("default", t.Default).Bool("forced", t.Forced).Bool("hearingImpaired", t.HearingImpaired))
+    private static JsonNode? AnswerJson(PlayAnswer a, string root) => Node(w => w
+        .String("id", a.Id).String("ticket", a.Ticket).String("protocol", a.Protocol).String("method", a.Method)
+        .String("etag", a.Etag).Integer("positionMs", a.PositionMs).String("versionId", a.VersionId)
         .String("audioTrack", a.AudioTrack).Bool("audioRenditions", a.AudioRenditions)
-        .Integer("maxBitrateKbps", a.MaxBitrateKbps).Bool("readTitleAgain", a.ReadTitleAgain));
+        .Integer("maxBitrateKbps", a.MaxBitrateKbps).Integer("scanBytes", a.ScanBytes)
+        .Objects("subtitles", a.Subtitles.Count > 0 ? a.Subtitles : null, (o, s) => o.String("id", s.Id).String("form", s.Form).Bool("ass", s.Ass))
+        .Integer("fontCount", a.FontCount).Strings("urls", a.Urls(root)).Bool("readTitleAgain", a.ReadTitleAgain));
 
     [Fact]
     public void Restarts()
     {
-        var root = Context.Str("streamRoot");
         var cases = TestVectors.Cases(File, "restarts");
         var failures = new List<string>();
         foreach (var c in cases)
@@ -318,7 +361,7 @@ public partial class PlaybackVectorTests
             var reading = new FileReading(rd.Str("versionId"), rd.Str("etag"), rd.Str("purpose"), rd.Str("delivery"),
                 rd["offset"]?.GetValue<long>() ?? 0);
             var req = Playback.ReadPlay(Encoding.UTF8.GetBytes(c.Str("request")), _ => true);
-            var o = Playback.Restart(reading, req, c["status"]!.GetValue<int>(), Encoding.UTF8.GetBytes(c.Str("answer")), root);
+            var o = Playback.Restart(reading, req, c["status"]!.GetValue<int>(), Encoding.UTF8.GetBytes(c.Str("answer")));
             var got = Canon(Node(w => w.Bool("join", o.Join).Integer("offset", o.Offset).Bool("stopNew", o.StopNew)
                 .Bool("failRead", o.FailRead).Bool("readTitles", o.ReadTitles)));
             if (o.Join != c.Valid() || got != Canon(c.Str("output")))
@@ -353,7 +396,7 @@ public partial class PlaybackVectorTests
             var o = new JsonObject
             {
                 ["downloads"] = l.Downloads, ["downloadsPerDay"] = l.DownloadsPerDay, ["downloadKbps"] = l.DownloadKbps,
-                ["scansPerDay"] = l.ScansPerDay, ["scanBytes"] = l.ScanBytes, ["offersDownloads"] = k.OffersDownloads,
+                ["scansPerDay"] = l.ScansPerDay, ["offersDownloads"] = k.OffersDownloads,
                 ["offersScans"] = k.OffersScans,
             };
             foreach (var (name, has, value) in new[]
@@ -389,7 +432,7 @@ public partial class PlaybackVectorTests
         var input = new PlayRequest
         {
             Title = "movie/tmdb/949", Delivery = Playback.DeliveryTranscode,
-            Transcode = new TranscodeTargets { VideoCodec = "av1", MaxHeight = Video.StepHeight(1600), BurnSubtitle = "s4" },
+            Transcode = new TranscodeTargets { VideoCodec = "av1", MaxHeight = Video.StepHeight(1600), BurnSubtitle = "s4", Range = "keep" },
             MaxBitrateKbps = 25999, AudioTrack = "a2", AudioRenditions = true,
         };
         var body = input.ToJson();
@@ -399,17 +442,24 @@ public partial class PlaybackVectorTests
         Assert.True(got.TrackIdsOk);
         Assert.Equal(25999, got.BitrateCap(0, 0));
         Assert.Equal(0, new PlayRequest { Title = "movie/tmdb/949" }.BitrateCap(0, 0));
-        Assert.Equal(new TranscodeTargets { VideoCodec = "av1", MaxHeight = 1440, BurnSubtitle = "s4", AudioCodec = "aac", AudioChannels = 2 },
+        Assert.Equal(new TranscodeTargets { VideoCodec = "av1", MaxHeight = 1440, BurnSubtitle = "s4", Range = "keep", AudioCodec = "aac", AudioChannels = 2 },
             got.TargetsServed(true));
         Assert.Equal(new TranscodeTargets { AudioCodec = "aac", AudioChannels = 2 }, got.TargetsServed(false));
 
-        // An unknown delivery or container is read (refused at step 7);
-        // one that isn't a token is refused at once.
+        // copy takes none of the targets that would change the stream.
+        var copied = new TranscodeTargets { VideoCodec = Names.Copy, MaxHeight = 720, Range = "keep", AudioCodec = Names.Copy, AudioChannels = 6 };
+        Assert.Equal(new TranscodeTargets { VideoCodec = Names.Copy, AudioCodec = Names.Copy }, copied.WithBaseline(true));
+
+        // An unknown delivery or media type is read (refused at step 7);
+        // one that isn't well formed is refused at once.
+        var copy = new Copy("v", 1000, "video/matroska", 1, "t", []) { Video = new VideoStream("h264", 1920, 1080) };
         var dash = Playback.ReadPlay("""{"title":"movie/tmdb/949","delivery":"dash"}"""u8);
-        Assert.Equal(409, Playback.RefuseDelivery(dash, new PlayCopy { Id = "v" }, 0)?.Status);
-        var mkv = Playback.ReadPlay("""{"title":"movie/tmdb/949","delivery":"remux","container":"matroska"}"""u8);
-        Assert.Equal(Playback.ProblemDeliveryRefused, Playback.RefuseDelivery(mkv, new PlayCopy { Id = "v" }, 0)?.Problem);
+        Assert.Equal(409, Playback.RefuseDelivery(dash, copy, "", 0)?.Status);
+        var mkv = Playback.ReadPlay("""{"title":"movie/tmdb/949","delivery":"remux","mediaType":"video/matroska"}"""u8);
+        Assert.Equal(Playback.ProblemDeliveryRefused, Playback.RefuseDelivery(mkv, copy, "", 0)?.Problem);
         Assert.Equal(400, Assert.Throws<PlayRefusal>(() => Playback.ReadPlay("""{"title":"movie/tmdb/949","delivery":"File"}"""u8)).Status);
+        Assert.Equal(400, Assert.Throws<PlayRefusal>(() =>
+            Playback.ReadPlay("""{"title":"movie/tmdb/949","delivery":"remux","mediaType":"video/MP4"}"""u8)).Status);
     }
 
     [Fact]
@@ -417,13 +467,14 @@ public partial class PlaybackVectorTests
     {
         var ok = new PlaybackLimits { Streams = 2, Transcodes = 1, Downloads = 1, DownloadsPerDay = 10, DownloadKbps = 20_000, ScansPerDay = 1000 };
         Assert.True(ok.InRange);
-        Assert.True((ok with { Streams = 1000, Downloads = 1000, ScanBytes = Playback.ScanBytesTop }).InRange);
-        Assert.Equal(Playback.ScanBytesFloor, ok.ScanCap);
+        Assert.True((ok with { Streams = 1000, Downloads = 1000 }).InRange);
+        Assert.Equal(Playback.ScanBytesFloor, Playback.ScanCapOf(0));
+        Assert.Equal(Playback.ScanBytesTop, Playback.ScanCapOf(Playback.ScanBytesTop));
+        Assert.Equal(Playback.ScanBytesFloor, Playback.ScanCapOf(Playback.ScanBytesTop + 1L));
         PlaybackLimits[] bad =
         [
             ok with { Transcodes = 3 }, ok with { Streams = 1001, Transcodes = 0 }, ok with { ScansPerDay = 1_000_001 },
-            ok with { DownloadKbps = -1 }, ok with { AudioTranscodes = 1 }, ok with { ScanBytes = Playback.ScanBytesFloor - 1 },
-            ok with { Downloads = 1001 },
+            ok with { DownloadKbps = -1 }, ok with { AudioTranscodes = 1 }, ok with { Downloads = 1001 },
         ];
         foreach (var l in bad)
         {

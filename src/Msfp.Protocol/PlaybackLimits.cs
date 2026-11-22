@@ -35,16 +35,16 @@ public static partial class Playback
     public static readonly TimeSpan LateReports = TimeSpan.FromDays(30);
 
     /// <summary>
-    /// The floor of scanBytes, 4 MiB (playback section 5): what a scan's
-    /// ticket serves in all when the owning server sends no scanBytes, or
-    /// one out of range, and what its callers then count on.
+    /// The floor of a scan answer's scanBytes, 4 MiB (playback section 8):
+    /// what a scan's caller counts on when its answer states none, or one
+    /// out of range (<see cref="ScanCapOf"/>).
     /// </summary>
     public const int ScanBytesFloor = 4 << 20;
 
-    /// <summary>The top of scanBytes, 1 GiB (playback section 5).</summary>
+    /// <summary>The top of a scan answer's scanBytes, 1 GiB (playback section 8).</summary>
     public const int ScanBytesTop = 1 << 30;
 
-    /// <summary>The scanBytes recommended to owning servers, 32 MiB (playback section 8).</summary>
+    /// <summary>The scan cap the implementers' notes suggest to owning servers, 32 MiB.</summary>
     public const int ScanBytesRecommended = 32 << 20;
 
     /// <summary>How many reads of one scan are served at once.</summary>
@@ -74,7 +74,7 @@ public static partial class Playback
     [
         ("streams", 0, MaxStreams), ("transcodes", 0, MaxStreams), ("bitrateKbps", 0, MaxLimitKbps), ("downloads", 0, MaxDownloads),
         ("downloadsPerDay", 0, MaxDownloadsPerDay), ("downloadKbps", 0, MaxLimitKbps), ("scansPerDay", 0, MaxScansPerDay),
-        ("scanBytes", ScanBytesFloor, ScanBytesTop), ("audioStreams", 0, MaxStreams), ("audioTranscodes", 0, MaxStreams),
+        ("audioStreams", 0, MaxStreams), ("audioTranscodes", 0, MaxStreams),
     ];
 
     /// <summary>
@@ -82,9 +82,9 @@ public static partial class Playback
     /// (playback section 5): null, ignored whole, for one that isn't an
     /// object or one of whose members isn't an integer (null included); a
     /// member out of its range is ignored alone; transcodes above streams is
-    /// ignored only when streams is kept, audioTranscodes likewise; scanBytes
-    /// absent or out of range is its floor, <see cref="ScanBytesFloor"/>;
-    /// unknown members are ignored.
+    /// ignored only when streams is kept, audioTranscodes likewise; unknown
+    /// members are ignored, scanBytes among them since proposal 17 (a scan's
+    /// answer states its cap).
     /// </summary>
     public static KeptLimits? ReadLimits(ReadOnlySpan<byte> raw)
     {
@@ -147,7 +147,6 @@ public static partial class Playback
                 DownloadsPerDay = Get("downloadsPerDay"),
                 DownloadKbps = Get("downloadKbps"),
                 ScansPerDay = Get("scansPerDay"),
-                ScanBytes = kept.TryGetValue("scanBytes", out var sb) ? sb : ScanBytesFloor,
                 AudioStreams = Get("audioStreams"),
                 AudioTranscodes = Get("audioTranscodes"),
             },
@@ -163,8 +162,9 @@ public static partial class Playback
 /// <summary>
 /// The limits object (playback section 5, music section 5.1): playbacks of
 /// purpose play at once, of them transcoded, a bitrate cap (0: none);
-/// downloads at once, a day, their speed cap (0: none); scans a day, and the
-/// bytes one scan reads; with music, audio playbacks apart.
+/// downloads at once, a day, their speed cap (0: none); scans a day; with
+/// music, audio playbacks apart. The bytes one scan reads aren't a limit:
+/// each scan's answer states them.
 /// </summary>
 public sealed record PlaybackLimits
 {
@@ -189,16 +189,6 @@ public sealed record PlaybackLimits
     /// <summary>Scans a day (0: no scan access).</summary>
     public int ScansPerDay { get; init; }
 
-    /// <summary>
-    /// The bytes one scan ticket may read in all,
-    /// <see cref="Playback.ScanBytesFloor"/> to <see cref="Playback.ScanBytesTop"/>
-    /// (playback section 5); 0: not sent, the floor (<see cref="ScanCap"/>).
-    /// </summary>
-    public int ScanBytes { get; init; }
-
-    /// <summary>The bytes one scan ticket serves in all: <see cref="ScanBytes"/> when in range, else the floor (playback section 8, media section 4.2).</summary>
-    public long ScanCap => ScanBytes is >= Playback.ScanBytesFloor and <= Playback.ScanBytesTop ? ScanBytes : Playback.ScanBytesFloor;
-
     /// <summary>Audio playbacks at once, with music.</summary>
     public int AudioStreams { get; init; }
 
@@ -218,19 +208,18 @@ public sealed record PlaybackLimits
             return In(Streams, Playback.MaxStreams) && In(Transcodes, Playback.MaxStreams) && In(BitrateKbps, Playback.MaxLimitKbps) &&
                 In(Downloads, Playback.MaxDownloads) && In(DownloadsPerDay, Playback.MaxDownloadsPerDay) &&
                 In(DownloadKbps, Playback.MaxLimitKbps) && In(ScansPerDay, Playback.MaxScansPerDay) &&
-                (ScanBytes == 0 || ScanBytes is >= Playback.ScanBytesFloor and <= Playback.ScanBytesTop) &&
                 In(AudioStreams, Playback.MaxStreams) && In(AudioTranscodes, Playback.MaxStreams) &&
                 Transcodes <= Streams && AudioTranscodes <= AudioStreams;
         }
     }
 
-    /// <summary>Writes its members, scanBytes, audioStreams and audioTranscodes left out when 0.</summary>
+    /// <summary>Writes its members, audioStreams and audioTranscodes left out when 0.</summary>
     public void Write(JsonOut w)
     {
         ArgumentNullException.ThrowIfNull(w);
         w.Integer("streams", Streams).Integer("transcodes", Transcodes).Integer("bitrateKbps", BitrateKbps)
             .Integer("downloads", Downloads).Integer("downloadsPerDay", DownloadsPerDay).Integer("downloadKbps", DownloadKbps)
-            .Integer("scansPerDay", ScansPerDay).Integer("scanBytes", TranscodeTargets.NonZero(ScanBytes))
+            .Integer("scansPerDay", ScansPerDay)
             .Integer("audioStreams", TranscodeTargets.NonZero(AudioStreams))
             .Integer("audioTranscodes", TranscodeTargets.NonZero(AudioTranscodes));
     }

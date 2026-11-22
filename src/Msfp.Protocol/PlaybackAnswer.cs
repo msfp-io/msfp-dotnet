@@ -1,42 +1,46 @@
-using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace Msfp.Protocol;
 
-// play's answer (MSFP playback section 2.3), as a viewer's server checks
-// and cleans it, and the restart of a file being read (section 2.7).
+// play's answer (MSFP playback section 2.3, video section 5.3), as a
+// viewer's server checks and cleans it, and the restart of a file being
+// read (section 2.7). The answer carries no URLs: the viewer's server builds
+// them from the stream root and the ticket (MediaUrls).
 public static partial class Playback
 {
-    /// <summary>The only mimeType an hls stream may name.</summary>
+    /// <summary>The only mimeType an hls stream is relayed as.</summary>
     public const string HlsType = "application/vnd.apple.mpegurl";
 
+    /// <summary>The protocol of a stream served as HLS.</summary>
+    public const string ProtocolHls = "hls";
+
+    /// <summary>The protocol of the file as it is, by byte ranges.</summary>
+    public const string ProtocolFile = "file";
+
     /// <summary>
-    /// Checks and cleans play's answer: <paramref name="delivery"/> is what
-    /// the request asked ("" for none), <paramref name="root"/> the owning
-    /// server's stream root, <paramref name="catalogEtag"/> the etag the
-    /// catalog gave the copy ("" when unknown). Refused (null): a body that
-    /// isn't an I-JSON object, null at its top, a member of the wrong type;
-    /// id not a playback ID; method not direct, remux or transcode, or not
-    /// the delivery's (direct for file); stream not under root as its
-    /// protocol says (<see cref="TryStreamBase"/>), an hls mimeType other
-    /// than <see cref="HlsType"/>, a file stream for a remux or a transcode,
-    /// an hls one for delivery file, a file one without delivery (the
-    /// baseline is HLS); etag not 1 to 64 characters of A–Z a–z 0–9 - _;
-    /// positionMs absent or out of 0 to <see cref="MaxPositionMs"/>;
-    /// audioRenditions not a boolean. Cleaned: durationMs out of range set
-    /// to 0; tracks with another ID dropped; other IDs cleared; track members
-    /// of the wrong type or value dropped (a role kept when it is a token,
-    /// known or not); audioRenditions true with a file stream dropped;
-    /// maxBitrateKbps out of range dropped. Unknown members (versions and
-    /// info among them, since proposal 17) are ignored. A refused answer: the
-    /// viewer's server sends stop for its id, when it has one, and gives up.
+    /// Checks and cleans play's answer (playback section 2.3, video section
+    /// 5.3) against what the viewer's server asked and knows
+    /// (<paramref name="asked"/>). Refused (null): a body that isn't an
+    /// I-JSON object, null at its top; id or ticket not of the opaque form;
+    /// protocol not hls or file, or not the delivery's (file for file, hls
+    /// otherwise); method not direct, remux or transcode, or not the
+    /// delivery's (direct for file); etag not 1 to 64 characters of A–Z a–z
+    /// 0–9 - _; positionMs absent or out of 0 to <see cref="MaxPositionMs"/>;
+    /// versionId absent or out of its form; audioTrack not a string;
+    /// audioRenditions not a boolean; maxBitrateKbps not an integer. Cleaned:
+    /// an audioTrack of another form cleared; audioRenditions true with file
+    /// dropped; maxBitrateKbps out of range dropped; scanBytes (scans only)
+    /// <see cref="ScanBytesFloor"/> when missing or out of range; video's
+    /// subtitles (<see cref="Video.ReadServed"/>) and fontCount
+    /// (<see cref="Video.ReadFontCount"/>) for a video title only. Unknown
+    /// members (the stream, tracks, length, fonts and trickplay of earlier
+    /// drafts among them) are ignored. A refused answer: the viewer's server
+    /// sends stop for its id, when it has one, and gives up.
     /// </summary>
     /// <returns>The answer kept; null when refused.</returns>
-    public static PlayAnswer? ReadPlayAnswer(ReadOnlySpan<byte> body, string delivery, string root, string catalogEtag)
+    public static PlayAnswer? ReadPlayAnswer(ReadOnlySpan<byte> body, PlayAsked asked)
     {
-        ArgumentNullException.ThrowIfNull(root);
-        delivery ??= "";
-        catalogEtag ??= "";
+        ArgumentNullException.ThrowIfNull(asked);
         JsonObject o;
         try
         {
@@ -47,93 +51,36 @@ public static partial class Playback
             return null;
         }
 
-        // A string member: whether it is one, or absent and not required.
-        bool Str(string name, bool required, out string s)
-        {
-            var there = o.TryGetPropertyValue(name, out var v);
-            s = JsonMembers.AsString(v) ?? "";
-            return there ? JsonMembers.AsString(v) is not null : !required;
-        }
-
-        var want = delivery switch
+        var delivery = asked.Delivery ?? "";
+        var wantProtocol = delivery == DeliveryFile ? ProtocolFile : ProtocolHls;
+        var wantMethod = delivery switch
         {
             DeliveryFile => MethodDirect,
             DeliveryRemux => MethodRemux,
             DeliveryTranscode => MethodTranscode,
             _ => "",
         };
-        if (!Str("id", true, out var id) || !PlayId(id) || !Str("method", true, out var method) ||
-            method is not (MethodDirect or MethodRemux or MethodTranscode) || (delivery.Length > 0 && method != want) ||
-            !Str("etag", true, out var etag) || !Id(etag))
+        if (JsonMembers.AsString(o["id"]) is not { } id || !PlayId(id) ||
+            JsonMembers.AsString(o["ticket"]) is not { } ticket || !Id(ticket) ||
+            JsonMembers.AsString(o["protocol"]) is not { } protocol || protocol is not (ProtocolHls or ProtocolFile) || protocol != wantProtocol ||
+            JsonMembers.AsString(o["method"]) is not { } method || method is not (MethodDirect or MethodRemux or MethodTranscode) ||
+            (wantMethod.Length > 0 && method != wantMethod) ||
+            JsonMembers.AsString(o["etag"]) is not { } etag || !Id(etag) ||
+            JsonMembers.AsInteger(o["positionMs"]) is not { } pos || pos < 0 || pos > MaxPositionMs ||
+            JsonMembers.AsString(o["versionId"]) is not { } versionId || !Id(versionId))
         {
             return null;
         }
 
-        if (o["stream"] is not JsonObject stream)
+        var audioTrack = "";
+        if (o.TryGetPropertyValue("audioTrack", out var at))
         {
-            return null;
-        }
-
-        var url = JsonMembers.AsString(stream["url"]) ?? "";
-        var protocol = JsonMembers.AsString(stream["protocol"]) ?? "";
-        var mimeType = "";
-        if (stream.TryGetPropertyValue("mimeType", out var mt) && mt is not null)
-        {
-            if (JsonMembers.AsString(mt) is not { } m)
+            if (JsonMembers.AsString(at) is not { } t)
             {
                 return null;
             }
 
-            mimeType = m;
-        }
-
-        var file = protocol == "file";
-        if (!TryStreamBase(url, root, protocol, out var streamBase) ||
-            (!file && mimeType.Length > 0 && mimeType != HlsType) ||
-            (file && method != MethodDirect) || (delivery == DeliveryFile && !file) || (delivery.Length == 0 && protocol != "hls"))
-        {
-            return null;
-        }
-
-        if (JsonMembers.AsInteger(o["positionMs"]) is not { } pos || pos < 0 || pos > MaxPositionMs)
-        {
-            return null;
-        }
-
-        long duration = 0;
-        if (o.TryGetPropertyValue("durationMs", out var d))
-        {
-            if (JsonMembers.AsInteger(d) is not { } n)
-            {
-                return null;
-            }
-
-            if (n is >= 0 and <= MaxPositionMs)
-            {
-                duration = n;
-            }
-        }
-
-        var tracks = new List<PlayTrack>();
-        if (o.TryGetPropertyValue("audioTracks", out var ts))
-        {
-            if (ts is not JsonArray list)
-            {
-                return null;
-            }
-
-            foreach (var e in list)
-            {
-                if (ReadPlayTrack(e) is { } t)
-                {
-                    tracks.Add(t);
-                }
-            }
-        }
-
-        if (!Str("versionId", false, out var versionId) || !Str("audioTrack", false, out var audioTrack))
-        {
-            return null;
+            audioTrack = TryTrackId(t, 'a', out _) ? t : "";
         }
 
         var renditions = false;
@@ -144,10 +91,10 @@ public static partial class Playback
                 return null;
             }
 
-            renditions = b && !file;
+            renditions = b && protocol == ProtocolHls;
         }
 
-        var kbps = 0;
+        int? kbps = null;
         if (o.TryGetPropertyValue("maxBitrateKbps", out var k))
         {
             if (JsonMembers.AsInteger(k) is not { } n)
@@ -161,47 +108,39 @@ public static partial class Playback
             }
         }
 
+        long scanBytes = 0;
+        if (asked.Purpose == PurposeScan)
+        {
+            scanBytes = ScanCapOf(JsonMembers.AsInteger(o["scanBytes"]) ?? 0);
+        }
+
+        var video = asked.Video;
         return new PlayAnswer
         {
             Id = id,
+            Ticket = ticket,
+            Protocol = protocol,
             Method = method,
-            Stream = new PlayStream(url, protocol, mimeType, streamBase),
             Etag = etag,
             PositionMs = pos,
-            DurationMs = duration,
-            VersionId = Id(versionId) ? versionId : "",
-            AudioTracks = tracks,
-            AudioTrack = Id(audioTrack) ? audioTrack : "",
+            VersionId = versionId,
+            AudioTrack = audioTrack,
             AudioRenditions = renditions,
             MaxBitrateKbps = kbps,
-            ReadTitleAgain = catalogEtag.Length > 0 && etag != catalogEtag,
+            ScanBytes = scanBytes,
+            Subtitles = video ? Video.ReadServed(o["subtitles"], asked.Subtitles) : [],
+            FontCount = video ? Video.ReadFontCount(o["fontCount"]) : 0,
+            ReadTitleAgain = !string.IsNullOrEmpty(asked.CatalogEtag) && etag != asked.CatalogEtag,
         };
     }
 
-    // Reads a track of an answer: null, dropped, without an ID of its form;
-    // each other member of the wrong type or value dropped alone.
-    private static PlayTrack? ReadPlayTrack(JsonNode? e)
-    {
-        var o = e as JsonObject;
-        var id = JsonMembers.AsString(o?["id"]) ?? "";
-        if (!Id(id))
-        {
-            return null;
-        }
-
-        static bool Flag(JsonNode? n) => n is JsonValue v && v.GetValueKind() == JsonValueKind.True;
-        var language = JsonMembers.AsString(o!["language"]);
-        return new PlayTrack
-        {
-            Id = id,
-            Language = Languages.ValidTag(language) ? language! : "",
-            Channels = JsonMembers.AsInteger(o["channels"]) is { } n && n is >= 1 and <= 64 ? (int)n : 0,
-            Role = Names.Token(o["role"]) ?? "",
-            Default = Flag(o["default"]),
-            Forced = Flag(o["forced"]),
-            HearingImpaired = Flag(o["hearingImpaired"]),
-        };
-    }
+    /// <summary>
+    /// The bytes a scan's ticket may read in all (playback section 8), from
+    /// the scanBytes its answer states: that, from <see cref="ScanBytesFloor"/>
+    /// to <see cref="ScanBytesTop"/>; the floor when it is missing (0) or
+    /// out of range.
+    /// </summary>
+    public static long ScanCapOf(long scanBytes) => scanBytes is >= ScanBytesFloor and <= ScanBytesTop ? scanBytes : ScanBytesFloor;
 
     /// <summary>
     /// Whether the bytes of a new playback may follow those of
@@ -209,12 +148,11 @@ public static partial class Playback
     /// of delivery file, a new play of the same copy (its versionId),
     /// purpose and delivery, answered 200 (<paramref name="status"/>) with an
     /// answer <see cref="ReadPlayAnswer"/> keeps, of the same etag, compared
-    /// byte for byte. <paramref name="root"/> is the owning server's stream
-    /// root. The engine's RestartAsync follows these rules with its own
+    /// byte for byte. The engine's RestartAsync follows these rules with its own
     /// playbacks; this is for a host or another engine that keeps its
     /// readings itself (Go's wire.Restart, the vectors' restarts).
     /// </summary>
-    public static RestartOutcome Restart(FileReading reading, PlayRequest request, int status, ReadOnlySpan<byte> answer, string root)
+    public static RestartOutcome Restart(FileReading reading, PlayRequest request, int status, ReadOnlySpan<byte> answer)
     {
         ArgumentNullException.ThrowIfNull(reading);
         ArgumentNullException.ThrowIfNull(request);
@@ -226,7 +164,7 @@ public static partial class Playback
             return fail;
         }
 
-        if (ReadPlayAnswer(answer, DeliveryFile, root, "") is not { } a || a.Etag != reading.Etag)
+        if (ReadPlayAnswer(answer, new PlayAsked { Purpose = P(reading.Purpose), Delivery = DeliveryFile }) is not { } a || a.Etag != reading.Etag)
         {
             return fail with { StopNew = true };
         }
@@ -236,37 +174,57 @@ public static partial class Playback
 }
 
 /// <summary>
-/// What a viewer's server keeps of play's answer (playback section 2.3):
-/// the playback's own members, checked and cleaned
-/// (<see cref="Playback.ReadPlayAnswer"/>). The content parts' members
-/// (video's subtitles and previews, music's queue) are theirs to read;
-/// unknown members (versions, info, title, next) aren't kept.
+/// What a viewer's server asked and knows when it reads play's answer: the
+/// request's purpose and delivery, whether the title is video's, the copy's
+/// etag and subtitle tracks in the catalog.
+/// </summary>
+public sealed record PlayAsked
+{
+    /// <summary>The request's purpose; "" for play.</summary>
+    public string Purpose { get; init; } = "";
+
+    /// <summary>The request's delivery; "" for the baseline.</summary>
+    public string Delivery { get; init; } = "";
+
+    /// <summary>Whether the title is video's: its subtitles and fontCount are read.</summary>
+    public bool Video { get; init; }
+
+    /// <summary>The copy's etag in the catalog; "" when unknown.</summary>
+    public string CatalogEtag { get; init; } = "";
+
+    /// <summary>The copy's subtitle tracks in the catalog (their formats tell the forms video section 5.4 fixes).</summary>
+    public IReadOnlyList<CopySubtitle> Subtitles { get; init; } = [];
+}
+
+/// <summary>
+/// What a viewer's server keeps of play's answer (playback section 2.3,
+/// video section 5.3), checked and cleaned (<see cref="Playback.ReadPlayAnswer"/>).
+/// It says only what the catalog can't: the playback, its ticket and what
+/// plays. Every URL is built from the ticket (<see cref="Urls"/>,
+/// <see cref="MediaUrls"/>). Music's queue is music's to read.
 /// </summary>
 public sealed record PlayAnswer
 {
     /// <summary>The playback's ID.</summary>
     public string Id { get; init; } = "";
 
+    /// <summary>The playback's ticket.</summary>
+    public string Ticket { get; init; } = "";
+
+    /// <summary>hls or file.</summary>
+    public string Protocol { get; init; } = "";
+
     /// <summary>direct, remux or transcode.</summary>
     public string Method { get; init; } = "";
-
-    /// <summary>The stream.</summary>
-    public PlayStream Stream { get; init; } = new("", "", "", "");
 
     /// <summary>The copy's etag.</summary>
     public string Etag { get; init; } = "";
 
-    /// <summary>Where the playback starts, in milliseconds.</summary>
+    /// <summary>Where the playback starts, in the copy, in milliseconds.</summary>
     public long PositionMs { get; init; }
 
-    /// <summary>The duration, in milliseconds; 0 when unknown.</summary>
-    public long DurationMs { get; init; }
-
-    /// <summary>The copy playing; "" when not said.</summary>
+    /// <summary>The copy playing.</summary>
     public string VersionId { get; init; } = "";
-
-    /// <summary>The copy's audio tracks.</summary>
-    public IReadOnlyList<PlayTrack> AudioTracks { get; init; } = [];
 
     /// <summary>The audio track playing; "" when not said.</summary>
     public string AudioTrack { get; init; } = "";
@@ -278,43 +236,49 @@ public sealed record PlayAnswer
     /// </summary>
     public bool AudioRenditions { get; init; }
 
-    /// <summary>The bitrate cap the owning server applied; 0 when not said.</summary>
-    public int MaxBitrateKbps { get; init; }
+    /// <summary>The bitrate cap in effect; null when not said.</summary>
+    public int? MaxBitrateKbps { get; init; }
+
+    /// <summary>A scan's: the bytes its ticket may read in all (<see cref="Playback.ScanCapOf"/>); 0 for another purpose.</summary>
+    public long ScanBytes { get; init; }
+
+    /// <summary>Video's: the subtitle tracks served apart.</summary>
+    public IReadOnlyList<ServedSubtitle> Subtitles { get; init; } = [];
+
+    /// <summary>Video's: the copy's fonts, 0 to 64.</summary>
+    public int FontCount { get; init; }
 
     /// <summary>The etag isn't the catalog's: the answer wins for this playback; the title is read again from titles.</summary>
     public bool ReadTitleAgain { get; init; }
-}
 
-/// <summary>An answer's stream.</summary>
-/// <param name="Url">Its URL, under the owning server's stream root.</param>
-/// <param name="Protocol">hls or file.</param>
-/// <param name="MimeType">Its mimeType; "" when not said.</param>
-/// <param name="Base">The stream's base (<see cref="Playback.TryStreamBase"/>), under which every other URL of the answer must be.</param>
-public sealed record PlayStream(string Url, string Protocol, string MimeType, string Base);
+    /// <summary>The stream's URL under the owning server's stream root.</summary>
+    public string StreamUrl(string root) => MediaUrls.Stream(root, Ticket, Protocol);
 
-/// <summary>A track of an answer, of playback section 2.3's members (video's, its codec and the rest, are video's).</summary>
-public sealed record PlayTrack
-{
-    /// <summary>Its ID.</summary>
-    public string Id { get; init; } = "";
+    /// <summary>
+    /// The URLs the answer opens under the owning server's stream root, in
+    /// order: the stream; each subtitle track's base (subtitles/, ass/ or
+    /// pictures/, to which /&lt;part&gt; or /whole is added); each font. The
+    /// copy's sheets are the catalog's (<see cref="MediaUrls.Sheet"/>).
+    /// </summary>
+    public IReadOnlyList<string> Urls(string root)
+    {
+        var out_ = new List<string> { StreamUrl(root) };
+        foreach (var s in Subtitles)
+        {
+            out_.Add(MediaUrls.Subtitle(root, Ticket, s));
+            if (s.Ass)
+            {
+                out_.Add(MediaUrls.Subtitle(root, Ticket, s, ass: true));
+            }
+        }
 
-    /// <summary>Its language tag; "" when none or invalid.</summary>
-    public string Language { get; init; } = "";
+        for (var n = 0; n < FontCount; n++)
+        {
+            out_.Add(MediaUrls.Font(root, Ticket, n));
+        }
 
-    /// <summary>Its channels, 1 to 64; 0 when not said.</summary>
-    public int Channels { get; init; }
-
-    /// <summary>Its role, a token of the DASH role scheme (main, commentary, description…), known or not; "" when none.</summary>
-    public string Role { get; init; } = "";
-
-    /// <summary>Whether it is the default.</summary>
-    public bool Default { get; init; }
-
-    /// <summary>Whether it is forced.</summary>
-    public bool Forced { get; init; }
-
-    /// <summary>Whether it is for the hearing impaired.</summary>
-    public bool HearingImpaired { get; init; }
+        return out_;
+    }
 }
 
 /// <summary>A playback's file a viewer's server is reading (playback section 2.7).</summary>
