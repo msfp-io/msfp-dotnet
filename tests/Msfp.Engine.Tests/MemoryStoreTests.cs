@@ -142,6 +142,31 @@ public sealed class MemoryStoreTests
         await st.ReadAsync(async tx => Assert.Equal([new Leftover("p2", "a")], await tx.LeftoversAsync()), Ct);
     }
 
+    // Downloads, of both sides by their IDs; what is read is a copy; a
+    // deleted peer takes its own with it.
+    [Fact]
+    public async Task Downloads()
+    {
+        using var st = new MemoryStore();
+        var played = DateTimeOffset.FromUnixTimeSeconds(1800000000);
+        await st.UpdateAsync(async tx =>
+        {
+            var d = Assert.IsAssignableFrom<IDownloadsTx>(tx);
+            await tx.PutPeerAsync(new PeerRecord { Id = "p1", Key = B("k1") });
+            await d.PutDownloadAsync(new DownloadRecord { Id = "a", Peer = "p1", Title = "movie/tmdb/1", PlayedAt = played });
+            await d.PutDownloadAsync(new DownloadRecord { Id = "a", Viewer = true, Peer = "p2", TheirId = "t", Title = "movie/tmdb/1", PlayedAt = played });
+        }, Ct);
+        await st.ReadAsync(async tx =>
+        {
+            var got = await ((IDownloadsTx)tx).DownloadsAsync();
+            Assert.Equal([false, true], got.Select(x => x.Viewer));
+            got[0].Title = "changed";
+            Assert.Equal("movie/tmdb/1", (await ((IDownloadsTx)tx).DownloadsAsync())[0].Title);
+        }, Ct);
+        await st.UpdateAsync(tx => tx.DeletePeerAsync("p1"), Ct);
+        await st.ReadAsync(async tx => Assert.Equal("p2", Assert.Single(await ((IDownloadsTx)tx).DownloadsAsync()).Peer), Ct);
+    }
+
     // Codes, found by the hash of their secret, in ID order.
     [Fact]
     public async Task Codes()

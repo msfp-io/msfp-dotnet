@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace Msfp.Stores;
 
 /// <summary>A transaction on a state (Go's state.tx).</summary>
-internal sealed class StateTx : IStoreTx, IOwnLogTx, IGroupsTx
+internal sealed class StateTx : IStoreTx, IOwnLogTx, IGroupsTx, IDownloadsTx
 {
     private readonly bool readOnly;
     private readonly HashSet<string> cloned = new(StringComparer.Ordinal);
@@ -64,6 +64,9 @@ internal sealed class StateTx : IStoreTx, IOwnLogTx, IGroupsTx
                 break;
             case "groups":
                 s.Groups = new(s.Groups, StringComparer.Ordinal);
+                break;
+            case "downloads":
+                s.Downloads = new(s.Downloads, StringComparer.Ordinal);
                 break;
             case "catalogs":
                 s.Catalogs = new(s.Catalogs, StringComparer.Ordinal);
@@ -183,6 +186,15 @@ internal sealed class StateTx : IStoreTx, IOwnLogTx, IGroupsTx
             if (l.Peer == id)
             {
                 State.Leftovers.Remove(k);
+            }
+        }
+
+        OwnCollection("downloads");
+        foreach (var (k, d) in State.Downloads.ToList())
+        {
+            if (d.Peer == id)
+            {
+                State.Downloads.Remove(k);
             }
         }
         return ValueTask.CompletedTask;
@@ -525,6 +537,35 @@ internal sealed class StateTx : IStoreTx, IOwnLogTx, IGroupsTx
     {
         OwnCollection("groups");
         State.Groups.Remove(id);
+        return ValueTask.CompletedTask;
+    }
+
+    // Downloads, kept for their late reports (IDownloadsTx): by their side,
+    // then their ID. Records are copied in and out: the engine's changes
+    // reach the store only when put back.
+
+    internal static string DownloadKey(bool viewer, string id) => (viewer ? "viewer\n" : "owner\n") + id;
+
+    private static DownloadRecord CopyOf(DownloadRecord d) => d with { Queue = d.Queue is null ? null : [.. d.Queue] };
+
+    public ValueTask<IReadOnlyList<DownloadRecord>> DownloadsAsync()
+    {
+        Check();
+        return new(State.Downloads.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => CopyOf(kv.Value)).ToList());
+    }
+
+    public ValueTask PutDownloadAsync(DownloadRecord download)
+    {
+        ArgumentNullException.ThrowIfNull(download);
+        OwnCollection("downloads");
+        State.Downloads[DownloadKey(download.Viewer, download.Id)] = CopyOf(download);
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask DeleteDownloadAsync(bool viewer, string id)
+    {
+        OwnCollection("downloads");
+        State.Downloads.Remove(DownloadKey(viewer, id));
         return ValueTask.CompletedTask;
     }
 }

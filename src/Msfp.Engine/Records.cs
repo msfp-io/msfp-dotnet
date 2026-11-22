@@ -723,3 +723,51 @@ public sealed record ForgottenKey
 public sealed record Leftover(
     [property: JsonPropertyName("peer")] string Peer,
     [property: JsonPropertyName("playbackId")] string PlaybackId);
+
+/// <summary>
+/// A download kept for its late reports, 30 days after it started (MSFP
+/// playback section 7), so that a restart keeps them. Of a peer's download
+/// here (<see cref="Viewer"/> false): <see cref="Id"/> is the playback ID
+/// given to the peer, <see cref="Handle"/> the host's, <see cref="LastAt"/>
+/// the at of the latest report kept. Of this server's download on a peer
+/// (<see cref="Viewer"/> true): <see cref="Id"/> is the engine's ID of it,
+/// <see cref="TheirId"/> the peer's playback ID.
+/// </summary>
+public sealed record DownloadRecord
+{
+    /// <summary>The playback's ID: given to the peer, or the engine's of it on the peer.</summary>
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = "";
+
+    /// <summary>This server's download on a peer, rather than a peer's here.</summary>
+    [JsonPropertyName("viewer"), OmitEmpty]
+    public bool Viewer { get; set; }
+
+    /// <summary>The peer's ID.</summary>
+    [JsonPropertyName("peer")]
+    public string Peer { get; set; } = "";
+
+    /// <summary>Of a download on a peer, the peer's playback ID.</summary>
+    [JsonPropertyName("theirId"), OmitEmpty]
+    public string TheirId { get; set; } = "";
+
+    /// <summary>The title downloaded.</summary>
+    [JsonPropertyName("title")]
+    public string Title { get; set; } = "";
+
+    /// <summary>Its queue's titles, by place.</summary>
+    [JsonPropertyName("queue"), OmitEmpty]
+    public List<string>? Queue { get; set; }
+
+    /// <summary>Of a peer's download here, the host's handle of it.</summary>
+    [JsonPropertyName("handle"), OmitEmpty]
+    public string Handle { get; set; } = "";
+
+    /// <summary>When it was played: the 30 days count from then.</summary>
+    [JsonPropertyName("playedAt")]
+    public DateTimeOffset PlayedAt { get; set; }
+
+    /// <summary>Of a peer's download here, the at of the latest report kept.</summary>
+    [JsonPropertyName("lastAt"), OmitEmpty]
+    public DateTimeOffset? LastAt { get; set; }
+}

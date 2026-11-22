@@ -37,6 +37,9 @@ internal sealed class State
     // The groups this server is in (IGroupsTx), by ID.
     public Dictionary<string, JsonElement> Groups { get; set; } = new(StringComparer.Ordinal);
 
+    // Downloads kept for their late reports (IDownloadsTx), by DownloadKey.
+    public Dictionary<string, DownloadRecord> Downloads { get; set; } = new(StringComparer.Ordinal);
+
     // The peers' titles and the keys each was sent, by peer ID: kept apart,
     // since they are big and change on their own.
     public Dictionary<string, Catalog> Catalogs { get; set; } = new(StringComparer.Ordinal);
@@ -87,6 +90,11 @@ internal sealed class StateFile
 
     [JsonPropertyName("groups"), OmitEmpty]
     public SortedDictionary<string, JsonElement>? Groups { get; set; }
+
+    // Absent from a state.json written before the revision of version 0:
+    // none kept.
+    [JsonPropertyName("downloads"), OmitEmpty]
+    public SortedDictionary<string, DownloadRecord>? Downloads { get; set; }
 }
 
 /// <summary>One peer's titles, and the keys of our titles it was sent.</summary>

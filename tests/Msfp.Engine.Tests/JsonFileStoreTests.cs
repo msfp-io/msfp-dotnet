@@ -296,4 +296,51 @@ public sealed class JsonFileStoreTests : IDisposable
             Assert.Equal(2, await own.OwnSeqAsync());
         }, Ct);
     }
+
+    // Downloads (IDownloadsTx) are kept across reopening; a state.json
+    // written before they were (no "downloads") reads as none kept; a
+    // peer's go with it.
+    [Fact]
+    public async Task DownloadsKept()
+    {
+        await File.WriteAllTextAsync(Path.Combine(dir, "state.json"),
+            """{"peers":{},"codes":{},"forgotten":{},"libraryIds":{},"leftovers":{}}""", Ct);
+        var played = new DateTimeOffset(2026, 11, 22, 10, 0, 0, TimeSpan.Zero);
+        using (var st = JsonFileStore.Open(dir))
+        {
+            await st.UpdateAsync(async tx =>
+            {
+                var d = Assert.IsAssignableFrom<IDownloadsTx>(tx);
+                Assert.Empty(await d.DownloadsAsync());
+                await tx.PutPeerAsync(new PeerRecord { Id = "p1", Key = B("k") });
+                await tx.PutPeerAsync(new PeerRecord { Id = "p2", Key = B("k2") });
+                await d.PutDownloadAsync(new DownloadRecord { Id = "play_a", Peer = "p1", Title = "movie/tmdb/1", Handle = "h", PlayedAt = played, Queue = ["x"] });
+                await d.PutDownloadAsync(new DownloadRecord { Id = "play_a", Viewer = true, Peer = "p1", TheirId = "x", Title = "movie/tmdb/2", PlayedAt = played });
+                await d.PutDownloadAsync(new DownloadRecord { Id = "play_b", Peer = "p2", Title = "movie/tmdb/3", PlayedAt = played, LastAt = played.AddHours(1) });
+            }, Ct);
+        }
+
+        var file = await File.ReadAllTextAsync(Path.Combine(dir, "state.json"), Ct);
+        Assert.Contains("\"downloads\"", file, StringComparison.Ordinal);
+        using (var st = JsonFileStore.Open(dir))
+        {
+            await st.UpdateAsync(async tx =>
+            {
+                var d = (IDownloadsTx)tx;
+                var got = await d.DownloadsAsync();
+                Assert.Equal(3, got.Count);
+                Assert.Equal(played, got[0].PlayedAt);
+                Assert.Equal(["x"], got[0].Queue!);
+                Assert.Equal(played.AddHours(1), got.Single(x => x.Id == "play_b").LastAt);
+                await tx.DeletePeerAsync("p2");
+                await d.DeleteDownloadAsync(true, "play_a");
+                await d.DeleteDownloadAsync(true, "nothing");
+            }, Ct);
+            await st.ReadAsync(async tx =>
+            {
+                var left = Assert.Single(await ((IDownloadsTx)tx).DownloadsAsync());
+                Assert.Equal(("play_a", false, "h"), (left.Id, left.Viewer, left.Handle));
+            }, Ct);
+        }
+    }
 }

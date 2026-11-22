@@ -26,7 +26,7 @@ public sealed record JsonFileStoreOptions
 /// Open takes a lock on the directory, and fails while another holds it.
 /// <para>The files:</para>
 /// <list type="table">
-/// <item><term>state.json</term><description>the server record, peers, codes, forgotten keys, library IDs, leftovers</description></item>
+/// <item><term>state.json</term><description>the server record, peers, codes, forgotten keys, library IDs, leftovers, downloads</description></item>
 /// <item><term>peers/&lt;id&gt;.json</term><description>a peer's titles, and the keys of ours it was sent</description></item>
 /// <item><term>own.json</term><description>the change log of the host's own catalog, when the engine keeps it</description></item>
 /// <item><term>sealing.key</term><description>the key the seeds and secrets are sealed with (KeyFile)</description></item>
@@ -204,6 +204,7 @@ public sealed partial class JsonFileStore : IStore, ISealerProvider, IDisposable
             s.LibraryIds = Copy(file.LibraryIds);
             s.Leftovers = Copy(file.Leftovers);
             s.Groups = Copy(file.Groups);
+            s.Downloads = Copy(file.Downloads); // none in a state.json from before the revision of version 0
         }
         if (ReadJson<Own>(Path.Combine(dir, "own.json")) is { } own)
         {
@@ -270,6 +271,7 @@ public sealed partial class JsonFileStore : IStore, ISealerProvider, IDisposable
                 LibraryIds = new(s.LibraryIds, StringComparer.Ordinal),
                 Leftovers = new(s.Leftovers, StringComparer.Ordinal),
                 Groups = new(s.Groups, StringComparer.Ordinal),
+                Downloads = new(s.Downloads, StringComparer.Ordinal),
             });
         }
     }

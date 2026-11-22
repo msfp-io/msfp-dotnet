@@ -111,8 +111,9 @@ public interface IStoreTx
     ValueTask PutPeerAsync(PeerRecord peer);
 
     /// <summary>
-    /// Removes a peer, its catalog, the keys it was sent and its leftovers. A
-    /// peer that isn't there is no error.
+    /// Removes a peer, its catalog, the keys it was sent, its leftovers and its
+    /// downloads (<see cref="IDownloadsTx"/>). A peer that isn't there is no
+    /// error.
     /// </summary>
     /// <param name="id">The peer's ID.</param>
     ValueTask DeletePeerAsync(string id);
@@ -238,6 +239,29 @@ public interface IGroupsTx
 
     /// <summary>Deletes a group.</summary>
     ValueTask DeleteGroupAsync(string id);
+}
+
+/// <summary>
+/// What a transaction implements, besides <see cref="IStoreTx"/>, to keep
+/// downloads for their late reports across restarts (MSFP playback section
+/// 7): those of peers here, and this server's on peers. The shipped stores
+/// implement it; without it, downloads are kept in memory only, and a
+/// restart forgets them (a late report then gets 410, or
+/// <see cref="MsfpError.NotFound"/>).
+/// </summary>
+public interface IDownloadsTx
+{
+    /// <summary>Every download kept, of both sides.</summary>
+    ValueTask<IReadOnlyList<DownloadRecord>> DownloadsAsync();
+
+    /// <summary>Adds or replaces one, by its Viewer and Id.</summary>
+    /// <param name="download">The download.</param>
+    ValueTask PutDownloadAsync(DownloadRecord download);
+
+    /// <summary>Removes one; one that isn't there is no error.</summary>
+    /// <param name="viewer">Whether it is this server's download on a peer.</param>
+    /// <param name="id">Its ID.</param>
+    ValueTask DeleteDownloadAsync(bool viewer, string id);
 }
 
 /// <summary>
@@ -409,7 +433,7 @@ public interface ILyrics
 
 /// <summary>
 /// The owning side of a peer's playback here. The engine has checked the
-/// request (<see cref="Playback.ReadPlay"/>), found the title's copies as the
+/// request (<see cref="Playback.ReadPlay(ReadOnlySpan{byte}, Func{string, bool}?)"/>), found the title's copies as the
 /// catalog sends them, picked the copy and the tracks, refused what MSFP
 /// refuses of the delivery asked and what the pool's limits refuse early;
 /// then it asks the host how to serve the copy apart (Describe), and to
