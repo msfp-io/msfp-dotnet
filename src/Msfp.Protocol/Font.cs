@@ -52,48 +52,6 @@ public static class Font
         return true;
     }
 
-    /// <summary>
-    /// What a viewer's server keeps of the fonts member of play's answer
-    /// (video sections 5.3 and 6.1): an array of at most
-    /// <see cref="MaxFonts"/> strings, each exactly
-    /// &lt;root&gt;&lt;ticket&gt;/fonts/&lt;n&gt; for its index n, all under
-    /// one ticket (1 to 64 characters of A–Z a–z 0–9 _ -); null, the member
-    /// dropped, otherwise.
-    /// </summary>
-    /// <param name="fonts">The member.</param>
-    /// <param name="root">The owning server's stream root.</param>
-    public static IReadOnlyList<string>? ReadUrls(JsonNode? fonts, string root)
-    {
-        ArgumentNullException.ThrowIfNull(root);
-        if (fonts is not JsonArray list || list.Count > MaxFonts)
-        {
-            return null;
-        }
-
-        var out_ = new List<string>(list.Count);
-        string? ticket = null;
-        for (var i = 0; i < list.Count; i++)
-        {
-            if (JsonMembers.AsString(list[i]) is not { } s || !s.StartsWith(root, StringComparison.Ordinal))
-            {
-                return null;
-            }
-
-            var rest = s[root.Length..];
-            var slash = rest.IndexOf('/', StringComparison.Ordinal);
-            if (slash < 0 || !Playback.Id(rest[..slash]) || rest[(slash + 1)..] != "fonts/" + i.ToString(CultureInfo.InvariantCulture) ||
-                (ticket is not null && rest[..slash] != ticket))
-            {
-                return null;
-            }
-
-            ticket = rest[..slash];
-            out_.Add(s);
-        }
-
-        return out_;
-    }
-
     /// <summary>The media type a TrueType font is served as (media section 3.4).</summary>
     public const string Ttf = "font/ttf";
 

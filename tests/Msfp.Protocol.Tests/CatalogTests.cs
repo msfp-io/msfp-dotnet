@@ -121,15 +121,15 @@ public class CatalogTests
                     break;
                 case "answer":
                     var root = c.Str("streamRoot");
-                    var ok = CatalogRules.TryReadImageAnswer(body, root, out var ticket);
+                    var ok = CatalogRules.TryReadImageAnswer(body, out var ticket);
                     if (ok != c.Valid() || ticket != c.Str("ticket"))
                     {
                         failures.Add($"{name}: \"{ticket}\", {ok}; want \"{c.Str("ticket")}\", {c.Valid()} ({c.Str("reason")})");
                     }
 
-                    if (ok && CatalogRules.ImageUrl(root, ticket) != root + ticket + "/image")
+                    if (ok && CatalogRules.ImageUrl(root, ticket) != c.Str("url"))
                     {
-                        failures.Add($"{name}: ImageUrl");
+                        failures.Add($"{name}: ImageUrl {CatalogRules.ImageUrl(root, ticket)}");
                     }
 
                     break;
@@ -235,6 +235,15 @@ public class CatalogTests
         Assert.Equal("vvc", Names.Token(System.Text.Json.Nodes.JsonValue.Create("vvc")));
         Assert.Null(Names.Token(System.Text.Json.Nodes.JsonValue.Create(1)));
         Assert.Null(Names.Token(null));
-        Assert.Equal(["mpegts", "mp4"], Names.RemuxContainers);
+        Assert.Equal(["mp2t", "mp4"], Names.RemuxSubtypes);
+        foreach (var t in new[] { "video/mp4", "application/ttml+xml", "video/vnd.dlna.mpeg-tts", "3d/x_y", "a/" + new string('b', 125) })
+        {
+            Assert.True(Names.IsMediaType(t), t);
+        }
+
+        foreach (var t in new[] { null, "", "video", "video/MP4", "video/mp4; codecs=x", "a/b/c", "/mp4", "video/.x", "+a/b", "a/" + new string('b', 126) })
+        {
+            Assert.False(Names.IsMediaType(t), t);
+        }
     }
 }

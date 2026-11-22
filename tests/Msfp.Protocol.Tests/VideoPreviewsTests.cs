@@ -2,7 +2,7 @@ using System.Text;
 
 namespace Msfp.Protocol.Tests;
 
-/// <summary>The previews call (video sections 5.5 and 5.6), beyond video.json's cases.</summary>
+/// <summary>The previews call (video section 5.6), beyond video.json's cases.</summary>
 public class VideoPreviewsTests
 {
     private const string Root = "https://a.example.org/api/v1/stream/";
@@ -23,26 +23,15 @@ public class VideoPreviewsTests
     }
 
     [Fact]
-    public void Trickplay()
+    public void Answer()
     {
-        var p = Video.ReadPreviewsAnswer(Encoding.UTF8.GetBytes(
-            """{"trickplay":{"tileWidth":320,"tileHeight":180,"columns":10,"rows":10,"intervalMs":10000,"tileCount":150,"sheets":["""
-            + $"\"{Root}T1/trickplay/0\",\"{Root}T1/trickplay/1\"]}}}}"), Root);
-        Assert.NotNull(p);
-        Assert.Equal("T1", p.Ticket);
-        Assert.Equal(2, p.Trickplay.Sheets);
-
-        // Dropped: too few sheets; a number too big for any bound.
-        Assert.Null(Video.ReadPreviewsAnswer(Encoding.UTF8.GetBytes(
-            $$$"""{"trickplay":{"tileWidth":320,"tileHeight":180,"columns":10,"rows":10,"intervalMs":10000,"tileCount":150,"sheets":["{{{Root}}}T1/trickplay/0"]}}"""), Root));
-        Assert.Null(Video.ReadPreviewsAnswer(
-            """{"trickplay":{"tileWidth":9007199254740991,"tileHeight":180,"columns":1,"rows":1,"intervalMs":10000,"tileCount":1}}"""u8, Root));
-        Assert.Null(Video.ReadPreviewsAnswer("{}"u8, Root));
-
-        // Refused: a null number, another ticket, null at the top.
-        Assert.Throws<ProtocolException>(() => Video.ReadPreviewsAnswer("""{"trickplay":{"tileWidth":null}}"""u8, Root));
-        Assert.Throws<ProtocolException>(() => Video.ReadPreviewsAnswer("""{"trickplay":{},"x":null}"""u8, Root));
-        Assert.Throws<ProtocolException>(() => Video.ReadPreviewsAnswer(Encoding.UTF8.GetBytes(
-            $$$"""{"trickplay":{"sheets":["{{{Root}}}T1/trickplay/0","{{{Root}}}T2/trickplay/1"]}}"""), Root));
+        var p = Video.ReadPreviewsAnswer("""{"ticket":"T1","etag":"e1","trickplay":{"columns":10,"x":null}}"""u8);
+        Assert.Equal(new PreviewsAnswer("T1", "e1"), p);
+        Assert.Equal("""{"ticket":"T1","etag":"e1"}""", Encoding.UTF8.GetString(Video.WritePreviewsAnswer(p)));
+        Assert.Equal(Root + "T1/trickplay/2", MediaUrls.Sheet(Root, p.Ticket, 2));
+        foreach (var s in new[] { """{"ticket":"T1"}""", """{"etag":"e1"}""", """{"ticket":"T.1","etag":"e1"}""", "null", "[]" })
+        {
+            Assert.Throws<ProtocolException>(() => Video.ReadPreviewsAnswer(Encoding.UTF8.GetBytes(s)));
+        }
     }
 }

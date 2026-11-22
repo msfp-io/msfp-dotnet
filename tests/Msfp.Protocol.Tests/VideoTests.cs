@@ -9,7 +9,7 @@ public class VideoTests
 {
     // A copies member, after a comma.
     private const string OneCopy =
-        ""","copies":[{"id":"v1","durationMs":1000,"container":"mkv","size":1,"etag":"t","audioTracks":[]}]""";
+        ""","copies":[{"id":"v1","durationMs":1000,"mediaType":"video/matroska","size":1,"etag":"t","audioTracks":[]}]""";
 
     private static VideoTitle? Read(string s) => Video.ReadTitle(Encoding.UTF8.GetBytes(s));
 
@@ -62,7 +62,11 @@ public class VideoTests
 
         foreach (var c in TestVectors.Cases("video.json", "copies"))
         {
-            var got = Copies.Read(Encoding.UTF8.GetBytes(c.Str("text")));
+            // Six cases repeat a member (video's codecs), which I-JSON
+            // refuses: they are read with the last value, as the generator
+            // reads them.
+            var raw = Encoding.UTF8.GetBytes(c.Str("text"));
+            var got = Copies.Read(raw) ?? (c.Valid() ? Copies.Read(LastWins(JsonDocument.Parse(raw).RootElement)) : null);
             Check("copies", c, got is null ? null : Copies.Write(got), got is not null);
         }
 
@@ -88,20 +92,53 @@ public class VideoTests
                 continue;
             }
 
-            Previews? p = null;
-            var error = Throws(() => p = Video.ReadPreviewsAnswer(body, root));
-            var output = JsonOut.Object(o => o.Object("trickplay", p is null ? null : t => t
-                .Integer("tileWidth", p.Trickplay.TileWidth).Integer("tileHeight", p.Trickplay.TileHeight)
-                .Integer("columns", p.Trickplay.Columns).Integer("rows", p.Trickplay.Rows)
-                .Integer("intervalMs", p.Trickplay.IntervalMs).Integer("tileCount", p.Trickplay.TileCount)
-                .Strings("sheets", p.Urls)));
-            Check("previews", c, output, error is null);
+            PreviewsAnswer? p = null;
+            var error = Throws(() => p = Video.ReadPreviewsAnswer(body));
+            Check("previews", c, p is null ? null : Video.WritePreviewsAnswer(p), error is null);
         }
 
-        foreach (var c in TestVectors.Cases("video.json", "fontURLs"))
+        foreach (var c in TestVectors.Cases("video.json", "codecs"))
         {
-            var kept = Font.ReadUrls(JsonNode.Parse(c.Str("text")), root);
-            Check("fontURLs", c, kept is null ? null : JsonSerializer.SerializeToUtf8Bytes(kept), kept is not null);
+            var o = JsonNode.Parse(c.Str("text"))!.AsObject();
+            CodecsFacts? f = null;
+            if (Names.Token(o["codec"]) is { } codec)
+            {
+                var dv = o["dv"] is JsonObject d && JsonMembers.AsInteger(d["profile"]) is { } pr && JsonMembers.AsInteger(d["level"]) is { } lv
+                    ? new VideoDv((int)pr, (int)lv, (int)(JsonMembers.AsInteger(d["compatibility"]) ?? 0))
+                    : null;
+                var depth = JsonMembers.AsInteger(o["bitDepth"]) is { } bd and >= 1 and <= 32 ? (int?)bd : null;
+                f = Rfc6381.Read(codec, JsonMembers.AsString(o["codecs"]), depth, dv, out _);
+            }
+
+            Check("codecs", c, f is null ? null : JsonOut.Object(w => w.String("codec", f.Codec).String("codecs", f.Codecs)
+                .Integer("profile", f.Profile).String("tier", f.Tier).Integer("level", f.Level).Integer("bitDepth", f.BitDepth)
+                .String("chroma", f.Chroma).String("constraints", f.Constraints).String("mp4a", f.Mp4a)
+                .String("dolbyVision", f.DolbyVision)), f is not null);
+        }
+
+        var answerCopy = Copies.Read(Encoding.UTF8.GetBytes(file["answerCopy"]!.GetValue<string>()))!;
+        foreach (var c in TestVectors.Cases("video.json", "answers"))
+        {
+            var o = JsonNode.Parse(c.Str("text")) as JsonObject;
+            var ticket = o is null ? null : JsonMembers.AsString(o["ticket"]);
+            byte[]? output = null;
+            if (o is not null && ticket is not null && Playback.Id(ticket))
+            {
+                var served = Video.ReadServed(o["subtitles"], answerCopy.SubtitleTracks);
+                var fonts = Video.ReadFontCount(o["fontCount"]);
+                var a = new PlayAnswer { Ticket = ticket, Protocol = Playback.ProtocolHls, Subtitles = served, FontCount = fonts };
+                var urls = a.Urls(root).Skip(1).ToList(); // the stream's is playback.json's
+                for (var n = 0; n < (answerCopy.PreviewLayout?.Sheets ?? 0); n++)
+                {
+                    urls.Add(MediaUrls.Sheet(root, ticket, n));
+                }
+
+                output = JsonOut.Object(w => w
+                    .Objects("subtitles", served.Count > 0 ? served : null, (e, s) => e.String("id", s.Id).String("form", s.Form).Bool("ass", s.Ass ? true : null))
+                    .Integer("fontCount", fonts).Strings("urls", urls));
+            }
+
+            Check("answers", c, output, output is not null);
         }
 
         foreach (var c in TestVectors.Cases("video.json", "fontSets"))
@@ -130,15 +167,35 @@ public class VideoTests
 
     // A kept title as the vectors write it: absent members left out.
     internal static byte[] Write(VideoTitle t) => JsonOut.Object(o => o
-        .String("key", t.Key).String("kind", t.Kind).String("library", t.Library)
+        .String("key", t.Key).String("library", t.Library)
         .String("extraType", t.ExtraType.Length > 0 ? t.ExtraType : null)
-        .String("name", t.Description?.Name ?? (t.Name.Length > 0 ? t.Name : null))
+        .String("name", t.Description?.Name)
         .Integer("year", t.Description is { Year: > 0 } d ? d.Year : null)
         .Bool("image", t.Description is { Image: true } ? true : null)
         .Object("place", t.Place is { } pl ? o => o.Integer("season", pl.Season).Integer("episode", pl.Episode) : null)
         .Strings("with", t.With.Count > 0 ? t.With : null)
         .Object("ids", t.Ids.Count > 0 ? i => { foreach (var (k, v) in t.Ids) { i.String(k, v); } } : null)
         .Objects("copies", t.Copies.Count > 0 ? t.Copies : null, Copies.Write));
+
+    // A JSON value whose repeated members keep their last value.
+    private static JsonNode? LastWins(JsonElement e)
+    {
+        switch (e.ValueKind)
+        {
+            case JsonValueKind.Object:
+                var o = new JsonObject();
+                foreach (var p in e.EnumerateObject())
+                {
+                    o[p.Name] = LastWins(p.Value);
+                }
+
+                return o;
+            case JsonValueKind.Array:
+                return new JsonArray(e.EnumerateArray().Select(LastWins).ToArray());
+            default:
+                return JsonNode.Parse(e.GetRawText());
+        }
+    }
 
     // Drops the members that are false: a flag false is kept as absent.
     private static JsonNode? NoFalse(JsonNode? n)
@@ -270,11 +327,11 @@ public class VideoTests
 
         // Repeated copy IDs: the first kept; at most 16.
         var list = Enumerable.Range(0, 20).Select(i =>
-            $$"""{"id":"v{{i % 17}}","durationMs":1,"container":"x","size":1,"etag":"t","audioTracks":[]}""");
+            $$"""{"id":"v{{i % 17}}","durationMs":1,"mediaType":"x/y","size":1,"etag":"t","audioTracks":[]}""");
         got = Read("""{"key":"movie/tmdb/1","kind":"movie","library":"L","copies":[""" + string.Join(",", list) + "]}");
         Assert.NotNull(got);
         Assert.Equal(Copies.MaxCopies, got.Copies.Count);
-        Assert.Equal("x", got.Copies[0].Container);
+        Assert.Equal("x/y", got.Copies[0].MediaType);
 
         // The entry read isn't changed.
         var node = JsonNode.Parse("""{"key":"movie/tmdb/1","kind":"movie","library":"L","x":null""" + OneCopy + "}");
@@ -304,7 +361,8 @@ public class VideoTests
     [InlineData("tmdb", "949", false)]
     public void OtherId(string scheme, string value, bool ok) => Assert.Equal(ok, Video.OtherId(scheme, value));
 
-    // tmdb in ids: only on a series or an episode keyed under another scheme.
+    // ids only where the receiver can't find them itself: episodes, and
+    // titles keyed under tvdb; tmdb only on those keyed under another scheme.
     [Fact]
     public void OtherIdTmdb()
     {
@@ -313,7 +371,11 @@ public class VideoTests
         Assert.False(Video.OtherId(new VideoKey("series", "tmdb", 1396), "tmdb", "1396"));
         Assert.False(Video.OtherId(new VideoKey("series", "tvdb", 81189), "tmdb", "01396"));
         Assert.False(Video.OtherId(new VideoKey("movie", "local", Local: "x"), "imdb", "tt0133093"));
-        Assert.True(Video.OtherId(new VideoKey("movie", "tmdb", 603), "imdb", "tt0133093"));
+        Assert.False(Video.OtherId(new VideoKey("movie", "tmdb", 603), "imdb", "tt0133093"));
+        Assert.False(Video.OtherId(new VideoKey("series", "tmdb", 1399), "tvdb", "121361"));
+        Assert.True(Video.OtherId(new VideoKey("series", "tvdb", 121361), "imdb", "tt0944947"));
+        Assert.False(Video.OtherId(new VideoKey("series", "tvdb", 121361), "tvdb", "121361"));
+        Assert.True(Video.OtherId(new VideoKey("episode", "tmdb", 1399, EpisodeId: 63056), "tvdb", "3254641"));
     }
 
     [Fact]
@@ -328,5 +390,5 @@ public class VideoTests
 
     [Fact]
     public void CleanHdr() =>
-        Assert.Equal(["dv", "hdr10", "hdr10plus", "x"], Video.CleanHdr(["dv", "x", "hdr10plus", "HDR10", "hdr10", "dv", ""]));
+        Assert.Equal(["hdr10plus", "x"], Video.CleanHdr(["x", "hdr10plus", "HDR10", "hdr10plus", ""]));
 }

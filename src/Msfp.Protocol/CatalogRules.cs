@@ -116,15 +116,6 @@ public static class CatalogRules
     public static bool OpaqueKeyPart(string? s) => s is not null && Playback.Id(s);
 
     /// <summary>
-    /// The kind a caller keeps of a library (catalog sections 2 and 2.2): an
-    /// open field, kept when it is a token (movies, tvshows, music, mixed,
-    /// or any other); null, absent, when the library has none, or its kind
-    /// isn't a string or isn't a token ("" included).
-    /// </summary>
-    /// <param name="library">The library's JSON object.</param>
-    public static string? LibraryKind(JsonNode? library) => library is JsonObject o ? Names.Token(o["kind"]) : null;
-
-    /// <summary>
     /// Reads a local title's description from the title's JSON object, within
     /// <paramref name="bounds"/> (catalog section 4.3): name cleaned as
     /// <see cref="Music.CleanText"/> does, a name that isn't a string counting
@@ -227,43 +218,39 @@ public static class CatalogRules
     };
 
     /// <summary>
-    /// The url of an image call's answer: &lt;stream root&gt;&lt;ticket&gt;/image
+    /// The URL of a local title's image a viewer's server builds from the
+    /// ticket of image's answer: &lt;stream root&gt;&lt;ticket&gt;/image
     /// (catalog section 4.4, media section 1). The ticket works for 10
     /// minutes, for that URL only, and is no playback.
     /// </summary>
-    public static string ImageUrl(string root, string ticket) => root + ticket + "/image";
+    public static string ImageUrl(string root, string ticket) => MediaUrls.Image(root, ticket);
+
+    /// <summary>The body of an image call's answer, as an owning server sends it: {"ticket"}, no URL.</summary>
+    public static byte[] WriteImageAnswer(string ticket) => JsonOut.Object(o => o.String("ticket", ticket));
 
     /// <summary>
-    /// Checks an image call's answer against the owning server's stream root
-    /// (catalog section 4.4): url exactly &lt;root&gt;&lt;ticket&gt;/image,
-    /// compared as sent, the ticket of an ID's form
-    /// (<see cref="Playback.Id"/>). False drops the answer.
+    /// Reads an image call's answer (catalog section 4.4): {"ticket"}, the
+    /// ticket of an ID's form (<see cref="Playback.Id"/>); the viewer's server
+    /// builds the URL itself (<see cref="ImageUrl"/>). Unknown members (the
+    /// url of earlier drafts among them) are ignored. False refuses the
+    /// answer: there is no image.
     /// </summary>
     /// <param name="body">The answer's body.</param>
-    /// <param name="root">The owning server's stream root.</param>
     /// <param name="ticket">The ticket; "" when false.</param>
-    public static bool TryReadImageAnswer(ReadOnlySpan<byte> body, string root, out string ticket)
+    public static bool TryReadImageAnswer(ReadOnlySpan<byte> body, out string ticket)
     {
-        ArgumentNullException.ThrowIfNull(root);
         ticket = "";
-        string? url;
+        string? t;
         try
         {
-            url = StrictJson.ReadAnswer(body).GetString("url");
+            t = JsonMembers.AsString(StrictJson.ReadAnswer(body, keepNestedNulls: true)["ticket"]);
         }
         catch (ProtocolException)
         {
             return false;
         }
 
-        if (url is null || !url.StartsWith(root, StringComparison.Ordinal) || !url.EndsWith("/image", StringComparison.Ordinal)
-            || url.Length < root.Length + "/image".Length)
-        {
-            return false;
-        }
-
-        var t = url[root.Length..^"/image".Length];
-        if (!Playback.Id(t))
+        if (t is null || !Playback.Id(t))
         {
             return false;
         }

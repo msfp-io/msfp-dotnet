@@ -228,19 +228,19 @@ public sealed record Place(int Season, int Episode)
 }
 
 /// <summary>
-/// A peer's video title, as kept (video section 3.1): its key, its kind,
-/// the library it gives, and the members video adds, cleaned; a list
-/// empty, a string empty and an object null when absent.
+/// A peer's video title, as kept (video section 3.1): its key, the kind the
+/// key names (a title carries no kind member), the library it gives, and
+/// the members video adds, cleaned; a list empty, a string empty and an
+/// object null when absent.
 /// </summary>
 /// <param name="Key">Its key, canonical.</param>
-/// <param name="Kind">Its kind, the key's.</param>
+/// <param name="Kind">The kind its key names.</param>
 /// <param name="Library">The library it gives, still to be checked by the caller.</param>
 /// <param name="Copies">Its copies (films, episodes and extras, which always keep at least one), in the owning server's order.</param>
 /// <param name="Place">Its place in TMDB's numbering: for episodes keyed by their TMDB episode ID, and always for them; null for any other title.</param>
 /// <param name="With">The other episodes it holds (episodes).</param>
-/// <param name="Ids">Its other identifiers, by scheme in byte order (films, series and episodes of a public database).</param>
-/// <param name="ExtraType">What an extra is, a token (trailer, featurette, behindthescenes, deletedscene, interview, scene, short, clip, themesong, themevideo…), known or not; empty for any other title.</param>
-/// <param name="Name">An extra's own name, cleaned; empty when it has none, and for any other title.</param>
+/// <param name="Ids">Its other identifiers, by scheme in byte order (episodes of a public database, series keyed under tvdb).</param>
+/// <param name="ExtraType">What an extra is, a token (trailer, featurette, behindthescenes, deletedscene, interview, scene, short, clip, themesong, themevideo…), known or not; empty for any other title. An extra carries no name: it is shown by its type and a number.</param>
 /// <param name="Description">A local film's or series' description (video section 3.10), and always for them; null for any other title.</param>
 public sealed record VideoTitle(
     string Key,
@@ -251,7 +251,6 @@ public sealed record VideoTitle(
     IReadOnlyList<string> With,
     IReadOnlyDictionary<string, string> Ids,
     string ExtraType,
-    string Name,
     LocalDescription? Description);
 
 /// <summary>
@@ -282,9 +281,6 @@ public static partial class Video
 
     /// <summary>The greatest episode number of a <see cref="Place"/> (video section 3.1).</summary>
     public const int MaxEpisode = 99999;
-
-    /// <summary>The length of an extra's name, in code points (video section 3.9).</summary>
-    public const int MaxExtraName = 64;
 
     /// <summary>The values of a transcode's maxHeight (playback section 2.7).</summary>
     public static readonly IReadOnlyList<int> Heights = [480, 720, 1080, 1440, 2160, 4320];
@@ -344,23 +340,25 @@ public static partial class Video
 
     /// <summary>
     /// Whether <paramref name="value"/> is an identifier a title of
-    /// <paramref name="key"/> carries in ids (video section 4.3): imdb and
-    /// tvdb on films, series and episodes of the tmdb and tvdb schemes; tmdb
-    /// on series and episodes keyed under another scheme than tmdb (tvdb), 1
-    /// to 10 digits without a leading zero. What a sender sends, and a
-    /// receiver keeps.
+    /// <paramref name="key"/> carries in ids (video section 4.3, the
+    /// registry's ids schemes): only episodes of the tmdb and tvdb schemes
+    /// (imdb, tvdb, and tmdb when keyed under tvdb) and series keyed under
+    /// tvdb (imdb, tmdb); never films and series keyed under tmdb, whose
+    /// other identifiers TMDB's lookup by key gives, nor local titles. What a
+    /// sender sends, and a receiver keeps.
     /// </summary>
     public static bool OtherId(VideoKey key, string scheme, string value)
     {
         ArgumentNullException.ThrowIfNull(value);
-        if (key.Scheme == SchemeLocal || key.Kind is not ("movie" or "series" or "episode"))
+        var episode = key.Kind == "episode" && key.Scheme != SchemeLocal;
+        var tvdbSeries = key.Kind == "series" && key.Scheme == SchemeTvdb;
+        return scheme switch
         {
-            return false;
-        }
-
-        return scheme == SchemeTmdb
-            ? key.Scheme != SchemeTmdb && key.Kind is "series" or "episode" && TvdbRe().IsMatch(value)
-            : OtherId(scheme, value);
+            "imdb" => (episode || tvdbSeries) && ImdbRe().IsMatch(value),
+            "tvdb" => episode && TvdbRe().IsMatch(value),
+            SchemeTmdb => (episode || tvdbSeries) && key.Scheme == SchemeTvdb && TvdbRe().IsMatch(value),
+            _ => false,
+        };
     }
 
     /// <summary>
@@ -401,9 +399,8 @@ public static partial class Video
     /// <summary>
     /// Reads one entry of a titles answer as catalog section 3.3 and video
     /// sections 3.1, 3.8, 3.9 and 3.10 say: null, to skip it, when it isn't
-    /// an object whose key, kind and library are strings, when the key isn't
-    /// a canonical video key of a known scheme, when its kind isn't the
-    /// key's, when it is a film, an episode or an extra whose copies isn't an
+    /// an object whose key and library are strings, when the key isn't a
+    /// canonical video key of a known scheme, when it is a film, an episode or an extra whose copies isn't an
     /// array or keeps no copy (<see cref="Copies.Read(JsonNode?)"/>), an
     /// extra whose extraType is missing or isn't a token, an episode keyed by
     /// its TMDB episode ID without a valid place, or a local film or series
@@ -417,19 +414,19 @@ public static partial class Video
     {
         if (entry is not JsonObject o ||
             JsonMembers.AsString(o["key"]) is not { } key ||
-            JsonMembers.AsString(o["kind"]) is not { } kind ||
             JsonMembers.AsString(o["library"]) is not { } library)
         {
             return null;
         }
 
-        if (!VideoKey.TryParse(key, out var k) || k.Kind != kind)
+        // A kind member is unknown, ignored: the key names the kind.
+        if (!VideoKey.TryParse(key, out var k))
         {
             return null;
         }
 
-        // Extras (section 3.9).
-        string extraType = "", name = "";
+        // Extras (section 3.9): no name.
+        var extraType = "";
         if (k.Kind == "extra")
         {
             if (Names.Token(o["extraType"]) is not { } et)
@@ -438,10 +435,6 @@ public static partial class Video
             }
 
             extraType = et;
-            if (JsonMembers.AsString(o["name"]) is { } n)
-            {
-                name = Music.CleanText(n, MaxExtraName);
-            }
         }
 
         // The description of a local film or series (section 3.10).
@@ -462,7 +455,8 @@ public static partial class Video
 
         IReadOnlyList<string> with = k.Kind == "episode" ? CleanWith(k, Copies.Strings(o["with"])) : [];
 
-        // ids (section 4.3): films, series and episodes of a public database.
+        // ids (section 4.3): episodes of a public database, series keyed
+        // under tvdb.
         var ids = new SortedDictionary<string, string>(StringComparer.Ordinal);
         if (o["ids"] is JsonObject idList)
         {
@@ -490,7 +484,7 @@ public static partial class Video
             }
         }
 
-        return new VideoTitle(key, kind, library, copies, place, with, ids, extraType, name, description);
+        return new VideoTitle(key, k.Kind, library, copies, place, with, ids, extraType, description);
     }
 
     /// <summary>Reads one entry of a titles answer from its bytes, as <see cref="ReadTitle(JsonNode?)"/>; null too when they aren't I-JSON.</summary>

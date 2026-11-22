@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Numerics;
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
@@ -12,30 +11,29 @@ namespace Msfp.Protocol;
 /// viewer's server keeps (<see cref="Copies.Read(JsonNode?)"/>), in bounds,
 /// written again unchanged. A null member, an empty string or list and a
 /// false flag are absent; <see cref="AudioTracks"/> is required, and may be
-/// empty.
+/// empty. A copy carries no name, no bitrate (size × 8 / durationMs is its
+/// overall rate) and no day it was added: a viewer's server builds labels
+/// from its facts.
 /// </summary>
 /// <param name="Id">The copy's ID, of a library ID's form (<see cref="Playback.Id"/>).</param>
-/// <param name="DurationMs">Its duration, 0 to <see cref="Copies.MaxDurationMs"/>.</param>
-/// <param name="Container">Its container, a token (<see cref="Names.IsToken"/>): ffmpeg's muxer name, the name ffmpeg -f takes (matroska, mp4, mpegts), known or not.</param>
-/// <param name="Size">Its size in bytes, 1 to <see cref="Copies.MaxSize"/>.</param>
+/// <param name="DurationMs">Its length, all its parts: the length of what <paramref name="Size"/> measures, 0 to <see cref="Copies.MaxDurationMs"/>, exact.</param>
+/// <param name="MediaType">The file's media type (<see cref="Names.IsMediaType"/>): video/mp4, video/matroska, video/mp2t…, known or not.</param>
+/// <param name="Size">Its size in bytes, all its parts, 1 to <see cref="Copies.MaxSize"/>.</param>
 /// <param name="ETag">Its entity tag, of an ID's form.</param>
 /// <param name="AudioTracks">Its audio tracks.</param>
-public sealed record Copy(string Id, long DurationMs, string Container, long Size, string ETag, IReadOnlyList<CopyAudio> AudioTracks)
+public sealed record Copy(string Id, long DurationMs, string MediaType, long Size, string ETag, IReadOnlyList<CopyAudio> AudioTracks)
 {
-    /// <summary>Its name, plain text of at most <see cref="Copies.MaxName"/> code points.</summary>
-    public string? Name { get; init; }
-
     /// <summary>Its edition, a token (theatrical, directors, extended, unrated, remastered, special, imax…), known or not.</summary>
     public string? Edition { get; init; }
 
-    /// <summary>Where play starts, 0 to <see cref="DurationMs"/>.</summary>
+    /// <summary>For an episode in a copy holding several: where it starts in the copy, 0 to <see cref="DurationMs"/>.</summary>
     public long? StartMs { get; init; }
 
-    /// <summary>Its files, when it is made of several: 1 to <see cref="Copies.MaxParts"/>, their sizes adding up to <see cref="Size"/>.</summary>
-    public IReadOnlyList<CopyPart> Parts { get; init; } = [];
+    /// <summary>For an episode in a copy holding several: where it ends in the copy, above <see cref="StartMs"/> (0 when absent) and at most <see cref="DurationMs"/>.</summary>
+    public long? EndMs { get; init; }
 
-    /// <summary>Its overall bitrate in kbit/s, 1 to <see cref="Copies.MaxBitrateKbps"/>, exact.</summary>
-    public long? BitrateKbps { get; init; }
+    /// <summary>The number of files it is made of, 2 to <see cref="Copies.MaxParts"/>; null for one file. A copy of several parts is never served as file.</summary>
+    public int? Parts { get; init; }
 
     /// <summary>Its picture.</summary>
     public VideoStream? Video { get; init; }
@@ -49,99 +47,98 @@ public sealed record Copy(string Id, long DurationMs, string Container, long Siz
     /// <summary>Its skip markers.</summary>
     public IReadOnlyList<CopySegment> Segments { get; init; } = [];
 
-    /// <summary>Whether it has seek-bar previews (video section 5.5).</summary>
-    public bool Previews { get; init; }
+    /// <summary>The layout of its seek-bar previews (video section 5.5), when the owning server has them.</summary>
+    public PreviewLayout? PreviewLayout { get; init; }
 
-    /// <summary>The day it was added, YYYY-MM-DD.</summary>
-    public string? Added { get; init; }
-
-    /// <summary>Its 3D mode, of <see cref="Copies.ThreeDModes"/>.</summary>
+    /// <summary>How a 3D picture is laid out, a token (sbs, tab, sbs-rl, tab-rl, mvc…), known or not; null for 2D.</summary>
     public string? ThreeD { get; init; }
+
+    /// <summary>Whether it is made of several files (<see cref="Parts"/>).</summary>
+    public bool Several => Parts is > 1;
 }
 
-/// <summary>One file of a copy made of several (video section 3.2).</summary>
-public sealed record CopyPart(long Size, long DurationMs);
-
 /// <summary>A copy's picture (video section 3.3).</summary>
-/// <param name="Codec">Its codec, a token: ffmpeg's codec_name (h264, hevc, av1, vvc), known or not.</param>
+/// <param name="Codec">Its codec, a registry token (h264, hevc, av1, vp9, vvc, prores…), known or not.</param>
 /// <param name="Width">Its width, 1 to <see cref="Copies.MaxVideoSide"/>.</param>
 /// <param name="Height">Its height, 1 to <see cref="Copies.MaxVideoSide"/>.</param>
 public sealed record VideoStream(string Codec, int Width, int Height)
 {
-    /// <summary>Its codec tag, 1 to 8 letters and digits.</summary>
-    public string? CodecTag { get; init; }
-
-    /// <summary>Its codecs string of RFC 6381 (avc1.640028, hvc1.2.4.L153.B0, dvh1.08.06), 1 to 64 characters of A-Z a-z 0-9 . -.</summary>
+    /// <summary>
+    /// Its codecs string of RFC 6381 (avc1.640028, hvc1.2.4.L153.B0,
+    /// av01.0.08M.10), 1 to 64 characters of A-Z a-z 0-9 . + -: required for
+    /// h264, hevc, av1 and vp9 (<see cref="Rfc6381.Required"/>); on Dolby
+    /// Vision the base codec's string, <see cref="Dv"/> holding the rest.
+    /// </summary>
     public string? Codecs { get; init; }
 
-    /// <summary>Its profile as ffmpeg prints it (Main 10, High), plain text of 1 to <see cref="Copies.MaxProfile"/> code points, never cut.</summary>
-    public string? Profile { get; init; }
-
-    /// <summary>Its level, 0 to 1000.</summary>
-    public double? Level { get; init; }
-
-    /// <summary>Its sample (pixel) aspect ratio as ffmpeg prints it, "&lt;w&gt;:&lt;h&gt;" (32:27), each side 1 to 65,535; null for square pixels.</summary>
+    /// <summary>Its sample (pixel) aspect ratio, "&lt;w&gt;:&lt;h&gt;" (32:27), each side 1 to 65,535; null for square pixels.</summary>
     public string? SampleAspect { get; init; }
 
     /// <summary>The degrees clockwise the picture must be turned to show upright: 0, 90, 180 or 270; null for 0.</summary>
     public int? Rotation { get; init; }
 
-    /// <summary>Its bit depth, 1 to 16.</summary>
+    /// <summary>Its bit depth, 1 to 16: the authoritative one, where codecs holds one too.</summary>
     public int? BitDepth { get; init; }
 
-    /// <summary>Its colour description (ITU-T H.273 names as ffmpeg prints them): the base fact of its dynamic range.</summary>
+    /// <summary>Its colour, as ITU-T H.273 code points (video section 3.6): the base fact of its dynamic range.</summary>
     public VideoColour? Colour { get; init; }
 
     /// <summary>
-    /// Its enhancement layers and dynamic metadata (hdr10plus, dv…), tokens
+    /// Its enhancement layers and dynamic metadata (hdr10plus…), tokens
     /// sorted in byte order, each once, at most <see cref="Copies.MaxHdr"/>;
-    /// hdr10 and hlg are said by <see cref="Colour"/>, not here.
+    /// HDR10 and HLG are said by <see cref="Colour"/>, Dolby Vision by
+    /// <see cref="Dv"/>.
     /// </summary>
     public IReadOnlyList<string> Hdr { get; init; } = [];
 
-    /// <summary>Its Dolby Vision configuration record, with dv in <see cref="Hdr"/>.</summary>
+    /// <summary>Its Dolby Vision configuration record, whenever the copy has Dolby Vision.</summary>
     public VideoDv? Dv { get; init; }
 
-    /// <summary>Its frame rate as ffmpeg prints avg_frame_rate, "&lt;num&gt;/&lt;den&gt;" (24000/1001, 25/1), each 1 to 1,000,000, the fraction reduced.</summary>
+    /// <summary>Its frame rate, "&lt;num&gt;/&lt;den&gt;" (24000/1001, 25/1), each 1 to 1,000,000, the fraction reduced: the nominal rate, the average for a variable one.</summary>
     public string? Fps { get; init; }
+
+    /// <summary>On an h264 stream only: its declared maximum number of reference frames (max_num_ref_frames), 1 to 16.</summary>
+    public int? RefFrames { get; init; }
 
     /// <summary>Whether it is interlaced.</summary>
     public bool Interlaced { get; init; }
 }
 
 /// <summary>
-/// A Dolby Vision configuration record (video section 3.3): its profile (0
+/// A Dolby Vision configuration record (video section 3.6): its profile (0
 /// to 127), level (0 to 63) and base-layer compatibility ID (0 to 15), and
-/// whether an enhancement layer, a base layer and an RPU are present (null
-/// when not said).
+/// whether an enhancement layer is present (null when not said).
 /// </summary>
 public sealed record VideoDv(int Profile, int Level, int Compatibility)
 {
     /// <summary>Whether an enhancement layer is present; null when not said.</summary>
     public bool? El { get; init; }
-
-    /// <summary>Whether a base layer is present; null when not said.</summary>
-    public bool? Bl { get; init; }
-
-    /// <summary>Whether an RPU is present; null when not said.</summary>
-    public bool? Rpu { get; init; }
 }
 
 /// <summary>
-/// A picture's colour description: the ITU-T H.273 names as ffmpeg prints
-/// them, each a token, known or not (primaries bt2020, transfer smpte2084
-/// or arib-std-b67, matrix bt2020nc, range tv or pc). At least one member is
-/// set.
+/// A picture's colour (video section 3.6): ITU-T H.273 code points, 0 to
+/// 255, each null when unknown (2, unspecified, is never kept), and H.273's
+/// full-range flag. At least one member is set.
 /// </summary>
-public sealed record VideoColour(string? Primaries, string? Transfer, string? Matrix, string? Range)
+/// <param name="Primaries">Its colour primaries (1: BT.709, 9: BT.2020).</param>
+/// <param name="Transfer">Its preferred transfer characteristics (1: BT.709, 16: PQ, 18: HLG; 14 and 15: standard range in BT.2020).</param>
+/// <param name="Matrix">Its matrix coefficients (1: BT.709, 9: BT.2020 non-constant).</param>
+/// <param name="FullRange">H.273's full-range flag; null when unknown.</param>
+public sealed record VideoColour(int? Primaries, int? Transfer, int? Matrix, bool? FullRange = null)
 {
-    /// <summary>Whether its transfer is HDR10's (smpte2084, PQ) or HLG's (arib-std-b67).</summary>
-    public bool HighRange => Transfer is "smpte2084" or "arib-std-b67";
+    /// <summary>H.273's transfer of PQ, HDR10's (SMPTE ST 2084).</summary>
+    public const int TransferPq = 16;
+
+    /// <summary>H.273's transfer of HLG (ARIB STD-B67).</summary>
+    public const int TransferHlg = 18;
+
+    /// <summary>Whether its transfer is PQ or HLG: a high dynamic range.</summary>
+    public bool HighRange => Transfer is TransferPq or TransferHlg;
 }
 
-/// <summary>A copy's audio track (video section 3.3), with the a&lt;n&gt; ID play gives it.</summary>
-/// <param name="Id">Its ID (<see cref="Playback.TryTrackId"/>, a).</param>
-/// <param name="Codec">Its codec, a token: ffmpeg's codec_name (aac, eac3, truehd, dts, opus, pcm_s24le), known or not.</param>
+/// <summary>A copy's audio track (video section 3.3), with the a&lt;n&gt; ID play takes.</summary>
+/// <param name="Id">Its ID (<see cref="Playback.TryTrackId"/>, a): for a copy of one file, the stream's index in the file.</param>
+/// <param name="Codec">Its codec, a registry token (aac, ac3, eac3, truehd, dts, opus, flac, pcm_s24le…), known or not.</param>
 public sealed record CopyAudio(string Id, string Codec)
 {
     /// <summary>Its language, a valid tag (<see cref="Languages.ValidTag"/>).</summary>
@@ -159,17 +156,11 @@ public sealed record CopyAudio(string Id, string Codec)
     /// <summary>Whether it is forced.</summary>
     public bool Forced { get; init; }
 
-    /// <summary>Its index among the file's streams, 0 to 999.</summary>
-    public int? FileIndex { get; init; }
-
-    /// <summary>Its codecs string of RFC 6381 (mp4a.40.2, ec-3), 1 to 64 characters of A-Z a-z 0-9 . -.</summary>
+    /// <summary>Its codecs string of RFC 6381 (mp4a.40.2, ec-3, dtsh), 1 to 64 characters of A-Z a-z 0-9 . + -: required for aac and dts.</summary>
     public string? Codecs { get; init; }
 
-    /// <summary>Its profile as ffmpeg prints it (LC, HE-AAC, DTS-HD MA, Dolby TrueHD + Dolby Atmos), plain text of 1 to <see cref="Copies.MaxProfile"/> code points, never cut.</summary>
-    public string? Profile { get; init; }
-
-    /// <summary>Its channel layout, 1 to 32 characters of A-Z a-z 0-9 ( ) . _ -.</summary>
-    public string? Layout { get; init; }
+    /// <summary>The object-based format it carries, a token (dolby-atmos, dts-x…), known or not.</summary>
+    public string? Objects { get; init; }
 
     /// <summary>Its sample rate, 8,000 to 768,000.</summary>
     public int? SampleRate { get; init; }
@@ -177,50 +168,63 @@ public sealed record CopyAudio(string Id, string Codec)
     /// <summary>Its bit depth, 8 to 32.</summary>
     public int? BitDepth { get; init; }
 
-    /// <summary>Its title, plain text of at most <see cref="Copies.MaxName"/> code points.</summary>
-    public string? Title { get; init; }
-
-    /// <summary>Whether it is in the title's original language.</summary>
+    /// <summary>Whether it is in the title's original language, by the file's own flag only.</summary>
     public bool Original { get; init; }
 }
 
-/// <summary>A copy's subtitle track (video section 3.3), with the s&lt;n&gt; ID play gives it.</summary>
-/// <param name="Id">Its ID (<see cref="Playback.TryTrackId"/>, s).</param>
-/// <param name="Format">Its source format, a token: ffmpeg's codec_name (subrip, ass, webvtt, hdmv_pgs_subtitle, dvd_subtitle), known or not; "" when the owning server doesn't know it.</param>
+/// <summary>A copy's subtitle track (video section 3.3), with its s&lt;n&gt; ID.</summary>
+/// <param name="Id">Its ID (<see cref="Playback.TryTrackId"/>, s): for a copy of one file, the stream's index in the file, a track beside it (external) above the file's streams.</param>
+/// <param name="Format">Its source format, a registry token (subrip, ass, webvtt, hdmv_pgs_subtitle, dvd_subtitle…), known or not; "" when the owning server doesn't know it.</param>
 public sealed record CopySubtitle(string Id, string Format)
 {
     /// <summary>Its language, a valid tag (<see cref="Languages.ValidTag"/>).</summary>
     public string? Language { get; init; }
 
+    /// <summary>Its role, a token of the DASH role scheme (subtitle, commentary, description, easyreader…), known or not; never forced-subtitle or caption, which are the flags.</summary>
+    public string? Role { get; init; }
+
     /// <summary>Whether it is the default track.</summary>
     public bool Default { get; init; }
 
-    /// <summary>Whether it is forced.</summary>
+    /// <summary>Whether it is forced: the only forced flag.</summary>
     public bool Forced { get; init; }
 
-    /// <summary>Whether it is for the deaf and hard of hearing.</summary>
+    /// <summary>Whether it is for the deaf and hard of hearing (SDH): the only such flag.</summary>
     public bool HearingImpaired { get; init; }
 
     /// <summary>Whether it is a file beside the copy's.</summary>
     public bool External { get; init; }
-
-    /// <summary>Its index among the file's streams, 0 to 999.</summary>
-    public int? FileIndex { get; init; }
-
-    /// <summary>Its title, plain text of at most <see cref="Copies.MaxName"/> code points.</summary>
-    public string? Title { get; init; }
 }
 
 /// <summary>A chapter of a copy (video section 3.4), its name plain text of at most <see cref="Copies.MaxChapterName"/> code points.</summary>
 public sealed record CopyChapter(long StartMs, string? Name = null);
 
-/// <summary>A skip marker of a copy (video section 3.4): <paramref name="Kind"/> is a token (intro, outro, recap, preview, commercial…), known or not, <paramref name="StartMs"/> before <paramref name="EndMs"/>.</summary>
-public sealed record CopySegment(string Kind, long StartMs, long EndMs, bool Final = false);
+/// <summary>A skip marker of a copy (video section 3.4): <paramref name="Kind"/> is a token (intro, outro, recap, preview, commercial…), known or not, <paramref name="StartMs"/> before <paramref name="EndMs"/>. The last outro is the final credits.</summary>
+public sealed record CopySegment(string Kind, long StartMs, long EndMs);
+
+/// <summary>
+/// A copy's seek-bar previews (video section 5.5), in the catalog: tiles of
+/// <paramref name="TileWidth"/> × <paramref name="TileHeight"/> pixels, every
+/// <paramref name="IntervalMs"/>, laid out <paramref name="Columns"/> ×
+/// <paramref name="Rows"/> on each sheet, <paramref name="TileCount"/> in
+/// all. Read in bounds only (<see cref="Copies.ReadPreviewLayout"/>).
+/// </summary>
+public sealed record PreviewLayout(int TileWidth, int TileHeight, int Columns, int Rows, int IntervalMs, int TileCount)
+{
+    /// <summary>The most sheets a copy's previews may have.</summary>
+    public const int MaxSheets = 1000;
+
+    /// <summary>The most a sheet may be, as read (media section 2.4): 8 MiB.</summary>
+    public const int MaxSheetBytes = 8 << 20;
+
+    /// <summary>How many sheets the tiles fill: ⌈tileCount / (columns × rows)⌉, at most <see cref="MaxSheets"/>.</summary>
+    public int Sheets => (int)((TileCount + ((long)Columns * Rows) - 1) / ((long)Columns * Rows));
+}
 
 /// <summary>
 /// The copies of a film, an episode or an extra (MSFP video sections 3.2 to
 /// 3.8): their bounds, what a viewer's server keeps of them, how an owning
-/// server writes them, and their order.
+/// server writes them, and the order the implementers' notes advise.
 /// </summary>
 public static partial class Copies
 {
@@ -230,10 +234,10 @@ public static partial class Copies
     /// <summary>The longest a copy may last: 100 days.</summary>
     public const long MaxDurationMs = 8_640_000_000;
 
-    /// <summary>The greatest size of a copy, and of a part.</summary>
+    /// <summary>The greatest size of a copy.</summary>
     public const long MaxSize = 999_999_999_999_999;
 
-    /// <summary>How many parts a copy may have.</summary>
+    /// <summary>How many files a copy may be made of.</summary>
     public const int MaxParts = 16;
 
     /// <summary>How many audio tracks a copy keeps at most.</summary>
@@ -248,35 +252,16 @@ public static partial class Copies
     /// <summary>How many skip markers a copy keeps at most.</summary>
     public const int MaxSegments = 32;
 
-    /// <summary>The length of a copy's name and of a track's title, in code points (video section 3.6).</summary>
-    public const int MaxName = 64;
-
-    /// <summary>The length of a stream's profile, in code points (video section 3.3): a longer one counts as absent, never cut.</summary>
-    public const int MaxProfile = 64;
-
     /// <summary>How many entries a video stream's hdr keeps at most (video section 3.8).</summary>
     public const int MaxHdr = 8;
 
     /// <summary>The length of a chapter's name, in code points.</summary>
     public const int MaxChapterName = 64;
 
-    /// <summary>The greatest bitrate of a copy.</summary>
-    public const long MaxBitrateKbps = 10_000_000;
-
     /// <summary>The greatest width or height of a picture.</summary>
     public const int MaxVideoSide = 100_000;
 
-    /// <summary>A copy's 3D modes (video section 3.2).</summary>
-    public static readonly IReadOnlyList<string> ThreeDModes = ["sbs", "tab", "mvc"];
-
-
-    [GeneratedRegex(@"^[A-Za-z0-9]{1,8}\z")]
-    private static partial Regex CodecTagRe();
-
-    [GeneratedRegex(@"^[A-Za-z0-9()._-]{1,32}\z")]
-    private static partial Regex LayoutRe();
-
-    [GeneratedRegex(@"^[A-Za-z0-9.-]{1,64}\z")]
+    [GeneratedRegex(@"^[A-Za-z0-9.+-]{1,64}\z")]
     private static partial Regex CodecsRe();
 
     [GeneratedRegex(@"^([1-9][0-9]{0,6})/([1-9][0-9]{0,6})\z")]
@@ -285,26 +270,29 @@ public static partial class Copies
     [GeneratedRegex(@"^([1-9][0-9]{0,4}):([1-9][0-9]{0,4})\z")]
     private static partial Regex AspectRe();
 
-    [GeneratedRegex(@"^[0-9]{4}-[0-9]{2}-[0-9]{2}\z")]
-    private static partial Regex DateRe();
+    /// <summary>Whether <paramref name="s"/> has the form of a codecs string (video section 3.5): 1 to 64 characters of A-Z a-z 0-9 . + -.</summary>
+    public static bool CodecsForm(string? s) => s is not null && CodecsRe().IsMatch(s);
 
     /// <summary>
     /// Reads one entry of a title's copies as video section 3.8 says: null,
     /// to skip it, when it isn't an object, when its id or etag isn't of an
     /// ID's form, when durationMs or size isn't an integer in range, when
-    /// container isn't a token (core section 8.5), or when audioTracks isn't
-    /// an array. Its open values are kept as they are when they are tokens,
-    /// known or not; its other members, out of range, of the wrong type or
-    /// out of their form, count as absent alone; a bad entry of one of its
-    /// lists is skipped alone. Whether its id repeats
-    /// an earlier copy's is the title's to check (<see cref="Video.ReadTitle(JsonNode?)"/> does).
+    /// mediaType isn't a media type (core section 8.5), or when audioTracks
+    /// isn't an array. Its open values are kept as they are when they are
+    /// well formed, known or not; its other members, out of range, of the
+    /// wrong type or out of their form, count as absent alone; a bad entry of
+    /// one of its lists is skipped alone; members of earlier drafts (name,
+    /// container, bitrateKbps, added, previews, a track's title, profile,
+    /// layout, fileIndex, codecTag, level, dv's bl and rpu, a segment's
+    /// final) are ignored. Whether its id repeats an earlier copy's is the
+    /// title's to check (<see cref="ReadList"/> does).
     /// </summary>
     public static Copy? Read(JsonNode? entry)
     {
         if (entry is not JsonObject o ||
             JsonMembers.AsString(o["id"]) is not { } id || !Playback.Id(id) ||
             !Integer(o["durationMs"], 0, MaxDurationMs, out var duration) ||
-            Names.Token(o["container"]) is not { } container ||
+            Names.MediaType(o["mediaType"]) is not { } mediaType ||
             !Integer(o["size"], 1, MaxSize, out var size) ||
             JsonMembers.AsString(o["etag"]) is not { } etag || !Playback.Id(etag) ||
             o["audioTracks"] is not JsonArray audio)
@@ -312,23 +300,19 @@ public static partial class Copies
             return null;
         }
 
-        return new Copy(id, duration, container, size, etag, ReadAudioTracks(audio))
+        long? start = Integer(o["startMs"], 0, duration, out var st) ? st : null;
+        return new Copy(id, duration, mediaType, size, etag, ReadAudioTracks(audio))
         {
-            Name = Text(o["name"], MaxName),
             Edition = Names.Token(o["edition"]),
-            StartMs = Integer(o["startMs"], 0, duration, out var start) ? start : null,
-            Parts = ReadParts(o["parts"], size),
-            BitrateKbps = Integer(o["bitrateKbps"], 1, MaxBitrateKbps, out var bitrate) ? bitrate : null,
+            StartMs = start,
+            EndMs = Integer(o["endMs"], (start ?? 0) + 1, duration, out var end) ? end : null,
+            Parts = Integer(o["parts"], 2, MaxParts, out var parts) ? (int)parts : null,
             Video = ReadVideoStream(o["video"]),
             SubtitleTracks = ReadSubtitleTracks(o["subtitleTracks"]),
             Chapters = ReadChapters(o["chapters"], duration),
             Segments = ReadSegments(o["segments"], duration),
-            Previews = Video.True(o["previews"]),
-            Added = JsonMembers.AsString(o["added"]) is { } added && DateRe().IsMatch(added) &&
-                    DateOnly.TryParseExact(added, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _)
-                ? added
-                : null,
-            ThreeD = OneOf(o["threeD"], ThreeDModes),
+            PreviewLayout = ReadPreviewLayout(o["previewLayout"]),
+            ThreeD = Names.Token(o["threeD"]),
         };
     }
 
@@ -365,6 +349,28 @@ public static partial class Copies
         return out_;
     }
 
+    /// <summary>
+    /// Reads a copy's previewLayout as video section 5.5 says: null, dropped
+    /// alone, unless it is an object whose six members are integers within
+    /// their bounds (tiles 1 to 2,048 pixels each way, 1 to 100 columns and
+    /// rows, a full sheet at most 4,096 pixels each way, intervalMs 100 to
+    /// 3,600,000, tileCount 1 to 1,000 × columns × rows). Other members (sheet
+    /// URLs of earlier drafts) are ignored.
+    /// </summary>
+    public static PreviewLayout? ReadPreviewLayout(JsonNode? node)
+    {
+        if (node is not JsonObject o ||
+            !Integer(o["tileWidth"], 1, 2048, out var w) || !Integer(o["tileHeight"], 1, 2048, out var h) ||
+            !Integer(o["columns"], 1, 100, out var c) || !Integer(o["rows"], 1, 100, out var r) ||
+            !Integer(o["intervalMs"], 100, 3_600_000, out var iv) || c * w > 4096 || r * h > 4096 ||
+            !Integer(o["tileCount"], 1, PreviewLayout.MaxSheets * c * r, out var n))
+        {
+            return null;
+        }
+
+        return new PreviewLayout((int)w, (int)h, (int)c, (int)r, (int)iv, (int)n);
+    }
+
     /// <summary>A copy's JSON, as an owning server sends it and the vectors write what is kept: absent members left out, audioTracks always written.</summary>
     public static byte[] Write(Copy copy)
     {
@@ -377,35 +383,43 @@ public static partial class Copies
     {
         ArgumentNullException.ThrowIfNull(o);
         ArgumentNullException.ThrowIfNull(c);
-        o.String("id", c.Id).String("name", Absent(c.Name)).String("edition", Absent(c.Edition))
-            .Integer("durationMs", c.DurationMs).Integer("startMs", c.StartMs).String("container", c.Container)
-            .Integer("size", c.Size).String("etag", c.ETag)
-            .Objects("parts", Absent(c.Parts), (p, part) => p.Integer("size", part.Size).Integer("durationMs", part.DurationMs))
-            .Integer("bitrateKbps", c.BitrateKbps)
+        o.String("id", c.Id).String("edition", Absent(c.Edition))
+            .Integer("durationMs", c.DurationMs).Integer("startMs", c.StartMs).Integer("endMs", c.EndMs)
+            .String("mediaType", c.MediaType).Integer("size", c.Size).String("etag", c.ETag)
+            .Integer("parts", c.Parts)
             .Object("video", c.Video is { } v ? w => WriteVideo(w, v) : null)
             .Objects("audioTracks", c.AudioTracks, WriteAudio)
             .Objects("subtitleTracks", Absent(c.SubtitleTracks), WriteSubtitle)
             .Objects("chapters", Absent(c.Chapters), (w, ch) => w.Integer("startMs", ch.StartMs).String("name", Absent(ch.Name)))
             .Objects("segments", Absent(c.Segments), (w, s) => w.String("kind", s.Kind).Integer("startMs", s.StartMs)
-                .Integer("endMs", s.EndMs).Bool("final", Flag(s.Final)))
-            .Bool("previews", Flag(c.Previews)).String("added", Absent(c.Added)).String("threeD", Absent(c.ThreeD));
+                .Integer("endMs", s.EndMs))
+            .Object("previewLayout", c.PreviewLayout is { } l ? w => WritePreviewLayout(w, l) : null)
+            .String("threeD", Absent(c.ThreeD));
+    }
+
+    /// <summary>Writes a previewLayout's members into an object being written.</summary>
+    public static void WritePreviewLayout(JsonOut w, PreviewLayout l)
+    {
+        ArgumentNullException.ThrowIfNull(w);
+        ArgumentNullException.ThrowIfNull(l);
+        w.Integer("tileWidth", l.TileWidth).Integer("tileHeight", l.TileHeight).Integer("columns", l.Columns)
+            .Integer("rows", l.Rows).Integer("intervalMs", l.IntervalMs).Integer("tileCount", l.TileCount);
     }
 
     /// <summary>
     /// Whether <paramref name="a"/> comes before <paramref name="b"/> in the
-    /// recommended default order of a title's copies (video section 3.7): of
-    /// a greater height, a picture wider than 16:9 counted as a 16:9 one as
-    /// wide (3840 × 1600 as 2160), then with high dynamic range when b has
-    /// none (<see cref="HighRange"/>), then with more hdr entries; a copy
-    /// without video after those with one. The order is the owning server's
-    /// own preference: this is the recommended default, not a rule.
+    /// order of copies the implementers' notes advise (not a rule: the order
+    /// is the owning server's preference): of a greater height, a picture
+    /// wider than 16:9 counted as a 16:9 one as wide (3840 × 1600 as 2160),
+    /// then with a high dynamic range when b has none (<see cref="HighRange"/>),
+    /// then with more hdr entries; a copy without video after those with one.
     /// </summary>
     public static bool Better(Copy a, Copy b) => Compare(a, b) < 0;
 
     /// <summary>
-    /// Orders two copies as video section 3.7's recommended default does:
-    /// negative when <paramref name="a"/> comes first, 0 when they are equal
-    /// on all three (the owning server's order then stands).
+    /// Orders two copies as the notes' order does: negative when
+    /// <paramref name="a"/> comes first, 0 when they are equal on all three
+    /// (the owning server's order then stands).
     /// </summary>
     public static int Compare(Copy a, Copy b)
     {
@@ -430,17 +444,17 @@ public static partial class Copies
     }
 
     /// <summary>
-    /// Whether a picture has high dynamic range, as video section 3.7's
-    /// recommended order counts it: a colour transfer of smpte2084 or
-    /// arib-std-b67, or a non-empty hdr.
+    /// Whether a picture has a high dynamic range, as the notes' order counts
+    /// it: an H.273 transfer of 16 (PQ) or 18 (HLG), a dv object, or a
+    /// non-empty hdr.
     /// </summary>
     public static bool HighRange(VideoStream v)
     {
         ArgumentNullException.ThrowIfNull(v);
-        return v.Colour is { HighRange: true } || v.Hdr.Count > 0;
+        return v.Colour is { HighRange: true } || v.Dv is not null || v.Hdr.Count > 0;
     }
 
-    /// <summary>A title's copies in the recommended default order of video section 3.7, keeping the owning server's own order between equal ones.</summary>
+    /// <summary>A title's copies in the notes' order, keeping the owning server's own order between equal ones.</summary>
     public static IReadOnlyList<Copy> Sorted(IEnumerable<Copy> copies)
     {
         ArgumentNullException.ThrowIfNull(copies);
@@ -453,32 +467,6 @@ public static partial class Copies
 
     // Orders true before false.
     private static int BoolRank(bool a, bool b) => a == b ? 0 : a ? -1 : 1;
-
-    // Parts: none unless there are 1 to MaxParts, each in range, whose
-    // sizes add up to size.
-    private static IReadOnlyList<CopyPart> ReadParts(JsonNode? node, long size)
-    {
-        if (node is not JsonArray list || list.Count == 0 || list.Count > MaxParts)
-        {
-            return [];
-        }
-
-        var out_ = new List<CopyPart>();
-        long sum = 0;
-        foreach (var e in list)
-        {
-            if (e is not JsonObject o || !Integer(o["size"], 1, MaxSize, out var s) ||
-                !Integer(o["durationMs"], 0, MaxDurationMs, out var d))
-            {
-                return [];
-            }
-
-            sum += s;
-            out_.Add(new CopyPart(s, d));
-        }
-
-        return sum == size ? out_ : [];
-    }
 
     // The picture: null, absent, unless it is an object whose codec is a
     // token and whose width and height are integers in range; its other
@@ -493,19 +481,18 @@ public static partial class Copies
 
         var hdr = o["hdr"] is JsonArray ? Video.CleanHdr(Strings(o["hdr"])) : [];
         VideoDv? dv = null;
-        if (o["dv"] is JsonObject d && hdr.Contains("dv") &&
+        if (o["dv"] is JsonObject d &&
             Integer(d["profile"], 0, 127, out var p) && Integer(d["level"], 0, 63, out var l) &&
             Integer(d["compatibility"], 0, 15, out var c))
         {
-            dv = new VideoDv((int)p, (int)l, (int)c) { El = Music.BoolOf(d["el"]), Bl = Music.BoolOf(d["bl"]), Rpu = Music.BoolOf(d["rpu"]) };
+            dv = new VideoDv((int)p, (int)l, (int)c) { El = Music.BoolOf(d["el"]) };
         }
 
         VideoColour? colour = null;
         if (o["colour"] is JsonObject col)
         {
-            var kept = new VideoColour(Names.Token(col["primaries"]), Names.Token(col["transfer"]),
-                Names.Token(col["matrix"]), Names.Token(col["range"]));
-            if (kept != new VideoColour(null, null, null, null))
+            var kept = new VideoColour(H273(col["primaries"]), H273(col["transfer"]), H273(col["matrix"]), Music.BoolOf(col["fullRange"]));
+            if (kept != new VideoColour(null, null, null))
             {
                 colour = kept;
             }
@@ -513,10 +500,7 @@ public static partial class Copies
 
         return new VideoStream(codec, (int)w, (int)h)
         {
-            CodecTag = Form(o["codecTag"], CodecTagRe()),
             Codecs = Form(o["codecs"], CodecsRe()),
-            Profile = Profile(o["profile"]),
-            Level = Number(o["level"], out var level) && level is >= 0 and <= 1000 ? level : null,
             SampleAspect = Ratio(o["sampleAspect"], AspectRe(), 65_535, false),
             Rotation = Integer(o["rotation"], 0, 270, out var r) && r % 90 == 0 ? (int)r : null,
             BitDepth = Integer(o["bitDepth"], 1, 16, out var b) ? (int)b : null,
@@ -524,9 +508,13 @@ public static partial class Copies
             Hdr = hdr,
             Dv = dv,
             Fps = Ratio(o["fps"], FpsRe(), 1_000_000, true),
+            RefFrames = codec == "h264" && Integer(o["refFrames"], 1, 16, out var rf) ? (int)rf : null,
             Interlaced = Video.True(o["interlaced"]),
         };
     }
+
+    // An H.273 code point, 0 to 255; 2 (unspecified) counts as absent.
+    private static int? H273(JsonNode? node) => Integer(node, 0, 255, out var n) && n != 2 ? (int)n : null;
 
     // A ratio of two numbers in its form, each at most top; reduced: its
     // two numbers have no common divisor but 1. Null otherwise.
@@ -541,14 +529,6 @@ public static partial class Copies
         var b = long.Parse(m.Groups[2].ValueSpan, NumberStyles.None, CultureInfo.InvariantCulture);
         return a <= top && b <= top && (!reduced || (long)BigInteger.GreatestCommonDivisor(a, b) == 1) ? s : null;
     }
-
-    // A profile as ffmpeg prints it (video section 3.3): made plain text,
-    // null when empty or longer than MaxProfile, never cut.
-    private static string? Profile(JsonNode? node) =>
-        JsonMembers.AsString(node) is { } s && Music.CleanText(s, MaxProfile + 1) is { Length: > 0 } t &&
-        t.EnumerateRunes().Count() <= MaxProfile
-            ? t
-            : null;
 
     // The first MaxAudioTracks good tracks, each ID once.
     private static IReadOnlyList<CopyAudio> ReadAudioTracks(JsonArray list)
@@ -574,13 +554,10 @@ public static partial class Copies
                 Role = Names.Token(o["role"]),
                 Default = Video.True(o["default"]),
                 Forced = Video.True(o["forced"]),
-                FileIndex = Index(o["fileIndex"]),
                 Codecs = Form(o["codecs"], CodecsRe()),
-                Profile = Profile(o["profile"]),
-                Layout = Form(o["layout"], LayoutRe()),
+                Objects = Names.Token(o["objects"]),
                 SampleRate = Integer(o["sampleRate"], 8_000, 768_000, out var rate) ? (int)rate : null,
                 BitDepth = Integer(o["bitDepth"], 8, 32, out var depth) ? (int)depth : null,
-                Title = Text(o["title"], MaxName),
                 Original = Video.True(o["original"]),
             });
         }
@@ -614,12 +591,11 @@ public static partial class Copies
             out_.Add(new CopySubtitle(id, Names.Token(o["format"]) ?? "")
             {
                 Language = Tag(o["language"]),
+                Role = Names.Token(o["role"]),
                 Default = Video.True(o["default"]),
                 Forced = Video.True(o["forced"]),
                 HearingImpaired = Video.True(o["hearingImpaired"]),
                 External = Video.True(o["external"]),
-                FileIndex = Index(o["fileIndex"]),
-                Title = Text(o["title"], MaxName),
             });
         }
 
@@ -679,7 +655,7 @@ public static partial class Copies
                 continue;
             }
 
-            out_.Add(new CopySegment(kind, start, end, Video.True(o["final"])));
+            out_.Add(new CopySegment(kind, start, end));
         }
 
         return out_;
@@ -687,17 +663,15 @@ public static partial class Copies
 
     private static void WriteVideo(JsonOut w, VideoStream v)
     {
-        w.String("codec", v.Codec).String("codecTag", Absent(v.CodecTag)).String("codecs", Absent(v.Codecs))
-            .String("profile", Absent(v.Profile))
-            .Node("level", v.Level is { } level ? JsonValue.Create(level) : null)
+        w.String("codec", v.Codec).String("codecs", Absent(v.Codecs))
             .Integer("width", v.Width).Integer("height", v.Height).String("sampleAspect", Absent(v.SampleAspect))
             .Integer("rotation", v.Rotation).Integer("bitDepth", v.BitDepth)
-            .Object("colour", v.Colour is { } c ? o => o.String("primaries", Absent(c.Primaries))
-                .String("transfer", Absent(c.Transfer)).String("matrix", Absent(c.Matrix)).String("range", Absent(c.Range)) : null)
+            .Object("colour", v.Colour is { } c ? o => o.Integer("primaries", c.Primaries)
+                .Integer("transfer", c.Transfer).Integer("matrix", c.Matrix).Bool("fullRange", c.FullRange) : null)
             .Strings("hdr", Absent(v.Hdr))
             .Object("dv", v.Dv is { } dv ? d => d.Integer("profile", dv.Profile).Integer("level", dv.Level)
-                .Integer("compatibility", dv.Compatibility).Bool("el", dv.El).Bool("bl", dv.Bl).Bool("rpu", dv.Rpu) : null)
-            .String("fps", Absent(v.Fps))
+                .Integer("compatibility", dv.Compatibility).Bool("el", dv.El) : null)
+            .String("fps", Absent(v.Fps)).Integer("refFrames", v.RefFrames)
             .Bool("interlaced", Flag(v.Interlaced));
     }
 
@@ -708,10 +682,8 @@ public static partial class Copies
         ArgumentNullException.ThrowIfNull(t);
         w.String("id", t.Id).String("language", Absent(t.Language)).Integer("channels", t.Channels)
             .String("role", Absent(t.Role)).Bool("default", Flag(t.Default)).Bool("forced", Flag(t.Forced))
-            .Integer("fileIndex", t.FileIndex).String("codec", t.Codec).String("codecs", Absent(t.Codecs))
-            .String("profile", Absent(t.Profile))
-            .String("layout", Absent(t.Layout)).Integer("sampleRate", t.SampleRate).Integer("bitDepth", t.BitDepth)
-            .String("title", Absent(t.Title)).Bool("original", Flag(t.Original));
+            .String("codec", t.Codec).String("codecs", Absent(t.Codecs)).String("objects", Absent(t.Objects))
+            .Integer("sampleRate", t.SampleRate).Integer("bitDepth", t.BitDepth).Bool("original", Flag(t.Original));
     }
 
     /// <summary>Writes a subtitle track's members into an object being written, as a copy's subtitleTracks carries them.</summary>
@@ -719,9 +691,9 @@ public static partial class Copies
     {
         ArgumentNullException.ThrowIfNull(w);
         ArgumentNullException.ThrowIfNull(t);
-        w.String("id", t.Id).String("language", Absent(t.Language)).Bool("default", Flag(t.Default))
-            .Bool("forced", Flag(t.Forced)).Bool("hearingImpaired", Flag(t.HearingImpaired)).String("format", Absent(t.Format))
-            .Bool("external", Flag(t.External)).Integer("fileIndex", t.FileIndex).String("title", Absent(t.Title));
+        w.String("id", t.Id).String("language", Absent(t.Language)).String("role", Absent(t.Role))
+            .Bool("default", Flag(t.Default)).Bool("forced", Flag(t.Forced)).Bool("hearingImpaired", Flag(t.HearingImpaired))
+            .String("format", Absent(t.Format)).Bool("external", Flag(t.External));
     }
 
     private static string? Absent(string? s) => string.IsNullOrEmpty(s) ? null : s;
@@ -744,14 +716,6 @@ public static partial class Copies
         return false;
     }
 
-    // Any JSON number, as a double.
-    private static bool Number(JsonNode? node, out double f)
-    {
-        f = 0;
-        return node is JsonValue v && v.GetValueKind() == JsonValueKind.Number &&
-               double.TryParse(v.ToJsonString(), NumberStyles.Float, CultureInfo.InvariantCulture, out f) && double.IsFinite(f);
-    }
-
     // A list's strings: none when it isn't a list, an entry that isn't a
     // string skipped.
     internal static List<string> Strings(JsonNode? node)
@@ -771,21 +735,14 @@ public static partial class Copies
         return out_;
     }
 
-    // A track's fileIndex, 0 to 999.
-    private static int? Index(JsonNode? node) => Integer(node, 0, 999, out var n) ? (int)n : null;
-
     // The string when it matches re.
     private static string? Form(JsonNode? node, Regex re) => JsonMembers.AsString(node) is { } s && re.IsMatch(s) ? s : null;
-
-    // The string when list holds it.
-    private static string? OneOf(JsonNode? node, IReadOnlyList<string> list) =>
-        JsonMembers.AsString(node) is { } s && list.Contains(s, StringComparer.Ordinal) ? s : null;
 
     // A valid tag (Languages.ValidTag), never converted.
     private static string? Tag(JsonNode? node) => JsonMembers.AsString(node) is { } s && Languages.ValidTag(s) ? s : null;
 
-    // A name or a title made plain text and cut (video section 3.6); null
-    // when it isn't a string or nothing is left.
+    // A chapter's name made plain text and cut; null when it isn't a
+    // string or nothing is left.
     private static string? Text(JsonNode? node, int max) =>
         JsonMembers.AsString(node) is { } s && Music.CleanText(s, max) is { Length: > 0 } t ? t : null;
 }

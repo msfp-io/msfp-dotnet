@@ -21,20 +21,12 @@ public class StrictVectorTests
     }
 
     [Fact]
-    public void LibraryKindVectors()
+    public void OpenMediaTypeVectors()
     {
-        var cases = TestVectors.Cases("strict.json", "libraryKinds");
-        var failures = new List<string>();
-        foreach (var c in cases)
-        {
-            var got = CatalogRules.LibraryKind(JsonNode.Parse(c.Str("library"))) ?? "";
-            if (got != c.Str("kind"))
-            {
-                failures.Add($"{c.Str("name")}: \"{got}\", want \"{c.Str("kind")}\"");
-            }
-        }
-
-        TestVectors.NoFailures(failures, cases.Count, "strict.json libraryKinds");
+        var cases = TestVectors.Cases("strict.json", "openMediaTypes");
+        var failures = cases.Where(c => Names.IsMediaType(c.Str("text")) != c.Valid())
+            .Select(c => $"\"{c.Str("text")}\": want valid {c.Valid()}").ToList();
+        TestVectors.NoFailures(failures, cases.Count, "strict.json openMediaTypes");
     }
 
     [Fact]
