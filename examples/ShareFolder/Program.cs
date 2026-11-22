@@ -245,6 +245,11 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
                 {
                     Streams = N(1), Transcodes = N(2), Downloads = N(3), DownloadsPerDay = N(4), DownloadKbps = N(5), ScansPerDay = N(6),
                 };
+                if (limits.ScansPerDay > 0)
+                {
+                    limits.ScanBytes = Playback.ScanBytesRecommended; // a scan reads at most 32 MiB
+                }
+
                 await engine.SetLimitsAsync(lw.Length > 0 ? lw[0] : "", limits);
                 Console.WriteLine("limits: " + limits);
                 break;
@@ -283,6 +288,9 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
                 break;
             case "play":
                 var peerAndKey = arg.Split(' ', 2);
+                // No delivery: the baseline, H.264 and AAC in HLS, which a
+                // browser plays (MSFP playback section 2.7). A viewer's server
+                // that knows its device would choose from the copy's facts.
                 var pb = await engine.PlayAsync(peerAndKey[0], new Msfp.PlayRequest { Title = peerAndKey.Length > 1 ? peerAndKey[1] : "" });
                 watches.Start(pb.Id);
                 var name = pb.Protocol == "hls" ? "master.m3u8" : "file";

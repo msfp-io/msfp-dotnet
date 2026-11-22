@@ -284,8 +284,8 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
             : throw new MsfpException(MsfpError.NotFound);
 
     // Describes a video file as the catalog lists a copy (MSFP video section
-    // 3.2): its exact size, an etag from its size and its time, its container
-    // from its extension, what ffprobe says of it (Probes.cs), its .vtt
+    // 3.2): its exact size, an etag from its size and its time, its
+    // container's ffmpeg name from its extension, what ffprobe says of it (Probes.cs), its .vtt
     // subtitles, its previews. Its ID is its handle: its path in the folder.
     private Protocol.Copy? CopyOf(string rel)
     {
@@ -298,8 +298,7 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
 
         var probed = _probes.Describe(path, info);
         var etag = Convert.ToString(info.Length, 16) + "-" + Convert.ToString(info.LastWriteTimeUtc.Ticks, 16);
-        // P17: container is ffmpeg's muxer name now (matroska for .mkv); the extension until the example's step.
-        return new Protocol.Copy(rel, probed.DurationMs, Path.GetExtension(rel).TrimStart('.').ToLowerInvariant(),
+        return new Protocol.Copy(rel, probed.DurationMs, Muxers.GetValueOrDefault(Path.GetExtension(rel).TrimStart('.').ToLowerInvariant(), ""),
             info.Length, etag, probed.Audio)
         {
             BitrateKbps = probed.BitrateKbps,
@@ -312,6 +311,14 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
             Previews = Previews(path) is not null,
         };
     }
+
+    // The ffmpeg muxer names (what ffmpeg -f takes) of the containers this
+    // example shares, by extension: MSFP's container (video section 3.5), not
+    // ffprobe's list of demuxers ("matroska,webm").
+    private static readonly Dictionary<string, string> Muxers = new(StringComparer.Ordinal)
+    {
+        ["mkv"] = "matroska", ["webm"] = "webm", ["mp4"] = "mp4", ["m4v"] = "mp4", ["mov"] = "mov", ["ts"] = "mpegts",
+    };
 
     // The .vtt files beside a video file, s<n> by position.
     private static List<string> Subtitles(string path)
@@ -356,9 +363,13 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
         ValueTask.FromResult(new CopyInfo { Trickplay = Local(copy) ? Previews(Path.Combine(dir, copy)) : null });
 
     /// <summary>
-    /// Serves the file (delivery file, always that of a download or a scan)
-    /// when the viewer's server asks it or plays its container, the HLS copy
-    /// otherwise. The handle is the protocol and the file's path.
+    /// Serves the file when the viewer's server asks it (delivery file, always
+    /// that of a download or a scan); its HLS copy, made beside it, for a remux
+    /// or without delivery (the baseline: this example counts on its HLS
+    /// copies being H.264 and AAC, as an operator makes them); it makes no
+    /// transcode, and no audio renditions, which the answer then says
+    /// (<see cref="Started"/>'s AudioRenditions false: MSFP playback section
+    /// 2.3). The handle is the protocol and the file's path.
     /// </summary>
     public ValueTask<Started> StartAsync(StartRequest request, CancellationToken ct)
     {

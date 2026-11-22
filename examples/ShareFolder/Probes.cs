@@ -7,16 +7,17 @@ using Msfp.Protocol;
 namespace Msfp.Examples.ShareFolder;
 
 /// <summary>What ffprobe said of a file: what a copy carries of it (MSFP video section 3.2).</summary>
-/// <param name="DurationMs">Its length, to the second below; 0 when unknown.</param>
-/// <param name="BitrateKbps">Its bitrate, to the 500 below; null when unknown.</param>
+/// <param name="DurationMs">Its length, in milliseconds; 0 when unknown.</param>
+/// <param name="BitrateKbps">Its bitrate, in kbit/s; null when unknown.</param>
 /// <param name="Video">Its picture; null when unknown.</param>
 /// <param name="Audio">Its audio tracks, a0, a1… by position.</param>
 internal sealed record Probed(long DurationMs, long? BitrateKbps, VideoStream? Video, IReadOnlyList<CopyAudio> Audio);
 
 /// <summary>
 /// Describes video files with ffprobe, when it is installed: their length,
-/// bitrate, picture and audio tracks, as MSFP video section 3.2 lists a copy.
-/// Without ffprobe, or for a file it can't read, a copy says only what every
+/// bitrate, picture and audio tracks, as MSFP video section 3.2 lists a copy,
+/// exact, with ffmpeg's names as ffprobe gives them (MSFP takes those names,
+/// open: video section 3.5). Without ffprobe, or for a file it can't read, a copy says only what every
 /// file says (its size, its container) and its length is 0. What ffprobe said
 /// is kept by file, size and time, so a file is probed once until it changes.
 /// </summary>
@@ -82,10 +83,10 @@ internal sealed class Probes
         }
 
         var duration = double.TryParse(o.Format?.Duration, NumberStyles.Float, CultureInfo.InvariantCulture, out var s) && s > 0
-            ? (long)s * 1000 // rounded down to a whole second
+            ? (long)(s * 1000) // exact, in milliseconds
             : 0;
-        long? bitrate = long.TryParse(o.Format?.BitRate, NumberStyles.None, CultureInfo.InvariantCulture, out var b) && b >= 500_000
-            ? b / 1000 / 500 * 500 // rounded down to a whole 500
+        long? bitrate = long.TryParse(o.Format?.BitRate, NumberStyles.None, CultureInfo.InvariantCulture, out var b) && b >= 1000
+            ? b / 1000
             : null;
         VideoStream? video = null;
         var audio = new List<CopyAudio>();
@@ -94,14 +95,17 @@ internal sealed class Probes
             switch (st.CodecType)
             {
                 case "video" when video is null && st.Width > 0 && st.Height > 0:
-                    video = new VideoStream(st.CodecName ?? "", st.Width, st.Height) // P17: ffmpeg's codec_name as it is
+                    // ffprobe's avg_frame_rate is MSFP's fps as it is
+                    // ("24000/1001"; "0/0" for none, which a receiver drops).
+                    video = new VideoStream(st.CodecName ?? "", st.Width, st.Height)
                     {
-                        Fps = FrameRate(st.AvgFrameRate),
+                        Profile = Present(st.Profile), Fps = Present(st.AvgFrameRate),
                     };
                     break;
                 case "audio":
-                    audio.Add(new CopyAudio("a" + audio.Count.ToString(CultureInfo.InvariantCulture), st.CodecName ?? "") // P17
+                    audio.Add(new CopyAudio("a" + audio.Count.ToString(CultureInfo.InvariantCulture), st.CodecName ?? "")
                     {
+                        Profile = Present(st.Profile), Layout = Present(st.Layout),
                         Language = Languages.TrySentTag(st.Tags?.Language ?? "", out var tag) ? tag : null,
                         Channels = st.Channels > 0 ? st.Channels : null,
                         SampleRate = int.TryParse(st.SampleRate, NumberStyles.None, CultureInfo.InvariantCulture, out var rate) && rate > 0 ? rate : null,
@@ -118,18 +122,7 @@ internal sealed class Probes
         return new Probed(duration, bitrate, video, audio);
     }
 
-    // P17: ffprobe's "24000/1001" as it is (ffprobe reduces it); null when unknown.
-    private static string? FrameRate(string? s)
-    {
-        var parts = (s ?? "").Split('/');
-        if (parts.Length != 2 || !long.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var num) ||
-            !long.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var den) || den == 0 || num <= 0)
-        {
-            return null;
-        }
-
-        return s;
-    }
+    private static string? Present(string? s) => string.IsNullOrEmpty(s) ? null : s;
 
     // What ffprobe's JSON says that a copy uses.
     private sealed record Output(
@@ -143,10 +136,12 @@ internal sealed class Probes
     private sealed record OutputStream(
         [property: JsonPropertyName("codec_type")] string? CodecType,
         [property: JsonPropertyName("codec_name")] string? CodecName,
+        [property: JsonPropertyName("profile")] string? Profile,
         [property: JsonPropertyName("width")] int Width,
         [property: JsonPropertyName("height")] int Height,
         [property: JsonPropertyName("avg_frame_rate")] string? AvgFrameRate,
         [property: JsonPropertyName("channels")] int Channels,
+        [property: JsonPropertyName("channel_layout")] string? Layout,
         [property: JsonPropertyName("sample_rate")] string? SampleRate,
         [property: JsonPropertyName("disposition")] OutputDisposition? Disposition,
         [property: JsonPropertyName("tags")] OutputTags? Tags);
