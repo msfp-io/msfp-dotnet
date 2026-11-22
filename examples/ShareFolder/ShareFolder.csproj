@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
-  <!-- A small host sharing a folder of films with the servers it pairs
+  <!-- A small host sharing a folder of films and series with the servers it pairs
        with by typed commands, and playing theirs: msfp-go's
        examples/share-folder in C#. -->
   <PropertyGroup>

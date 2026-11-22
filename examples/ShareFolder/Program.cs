@@ -1,17 +1,20 @@
 // A small MSFP host: one server, its records in JSON files, sharing a
-// folder of films (Folder.cs) with the servers it pairs with by hand, and
-// playing theirs. msfp-go's examples/share-folder, in C#.
+// folder of films and series (Folder.cs) with the servers it pairs with by
+// hand, and playing theirs. msfp-go's examples/share-folder, in C#.
 //
 // Two of them on one machine, in two terminals:
 //
-//   dotnet run -- --address https://127.0.0.1:8441 --listen :8441 --data a --films ~/films --loopback
+//   dotnet run -- --address https://127.0.0.1:8441 --listen :8441 --data a --folder ~/videos --loopback
 //   dotnet run -- --address https://127.0.0.1:8442 --listen :8442 --data b --loopback
 //
 // --loopback lets peers on the same machine be called (the engine refuses
 // local addresses otherwise); --listen defaults to the address's port, on
 // every interface. Then type "code" in the first, "redeem <code>" in the
 // second, compare the fingerprints both print, and "accept <id>" in the
-// first. The commands:
+// first. With ffprobe installed, copies are described from their files
+// (length, bitrate, picture, audio tracks); with ffmpeg, preview sheets and
+// JPEG images are re-encoded (.NET has no JPEG codec: without it, no
+// previews are offered or relayed). The commands:
 //
 //   code [note]        make a pairing code, shown once
 //   preview <code>     what a code says, before redeeming it
@@ -26,7 +29,10 @@
 //   confirm <id>       accept a peer's new key, after comparing fingerprints
 //   address <url>      move this server (listen there too, so it reaches itself)
 //   uncallable on|off  this server can't be called (behind a router), or can again
-//   offer <id>         share the films with a peer
+//   offer <id>         share the folder with a peer
+//   local <id> on|off  share its local titles with the peer too (off by default)
+//   limits <id> <streams> <transcodes> [<downloads> <downloads a day> <download kbps> <scans a day>]
+//                      the peer's streams here; downloads and scans allowed (none by default)
 //   want <id>          read a peer's titles, all its libraries
 //   titles <id>        list a peer's titles, as read
 //   play <id> <key>    play a peer's title: prints a URL that curl -k or ffplay -tls_verify 0 plays
@@ -35,6 +41,10 @@
 //   pause <playback>   say the viewer paused (resume <playback>: resumed); a playback is
 //                      reported to its peer every minute until stopped, since a peer ends
 //                      one it hears nothing of for 2 minutes
+//   download <id> <key>  download a peer's title: prints the URL of the file to save (a download
+//                      lives 24 hours, its late reports 30 days)
+//   late <download> <position ms>  send a download's late report (watched offline)
+//   previews <id> <key>  fetch a peer's film's previews before it plays
 //   stop <playback>    end a playback
 //   rescan             tell the engine the folder changed
 //   group-create <name>          found a group
@@ -45,7 +55,8 @@
 //   admin <group> <member>       name a member admin (the owner only)
 //   ban <group> <member>         ban a member
 //   dissolve <group>             end the group and the pairings only it made
-//   group-offer <group>          share the films with the group
+//   group-offer <group>          share the folder with the group
+//   group-local <group> on|off   share its local titles with the group too
 //   auto <group> on|off          accept the group's members by itself
 //   leave <group>                leave the group
 //   quit
@@ -61,7 +72,7 @@ using Msfp.Stores;
 var address = Arg("--address") ?? throw new ArgumentException("--address https://host[:port] is required");
 var listen = Arg("--listen") ?? ":" + new Uri(address).Port;
 var data = Arg("--data") ?? "msfp-data";
-var films = Arg("--films");
+var shared = Arg("--folder");
 var loopback = args.Contains("--loopback");
 
 var cert = SelfSigned(new Uri(address).Host);
@@ -71,7 +82,7 @@ builder.WebHost.ConfigureKestrel(k => k.Listen(ListenAt(listen), l => l.UseHttps
 var app = builder.Build();
 
 using var store = JsonFileStore.Open(data);
-var folder = films is null ? null : new Folder(films);
+var folder = shared is null ? null : new Folder(shared);
 var notifier = new ConsoleNotifier();
 using var engine = await MsfpEngine.OpenAsync(new MsfpConfig
 {
@@ -85,7 +96,12 @@ using var engine = await MsfpEngine.OpenAsync(new MsfpConfig
     Catalog = folder,
     Playback = folder,
     Media = folder,
+    SheetEncoder = FfmpegSheets.IfInstalled(),
 });
+if (folder is not null)
+{
+    folder.Opaque = engine.OpaqueKeyPart;
+}
 
 // The federation routes: the raw target, no authentication in front, no
 // compression of the answers.
@@ -212,8 +228,44 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
                 Console.WriteLine("can't be called: " + arg);
                 break;
             case "offer":
-                await engine.SetOffersAsync(arg, ["films"]);
+                await engine.SetOffersAsync(arg, ["folder"]);
                 Console.WriteLine("offered");
+                break;
+            case "local":
+            case "group-local":
+                var idAndOn = arg.Split(' ', 2);
+                var on = idAndOn.Length > 1 && idAndOn[1] == "on";
+                await (cmd == "local" ? engine.SetLocalAsync(idAndOn[0], on) : engine.SetGroupLocalAsync(idAndOn[0], on));
+                Console.WriteLine("local titles shared: " + (on ? "on" : "off"));
+                break;
+            case "limits":
+                var lw = arg.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                int N(int i) => i < lw.Length ? int.Parse(lw[i], System.Globalization.CultureInfo.InvariantCulture) : 0;
+                var limits = new Limits
+                {
+                    Streams = N(1), Transcodes = N(2), Downloads = N(3), DownloadsPerDay = N(4), DownloadKbps = N(5), ScansPerDay = N(6),
+                };
+                await engine.SetLimitsAsync(lw.Length > 0 ? lw[0] : "", limits);
+                Console.WriteLine("limits: " + limits);
+                break;
+            case "download":
+                var dl = arg.Split(' ', 2);
+                var download = await engine.PlayAsync(dl[0], new Msfp.PlayRequest
+                {
+                    Title = dl.Length > 1 ? dl[1] : "", Purpose = Playback.PurposeDownload, Delivery = Playback.DeliveryFile,
+                });
+                Console.WriteLine($"{address}/watch/{download.Id}/file  ({download.Size} bytes; stop {download.Id})");
+                break;
+            case "late":
+                var late = arg.Split(' ', 2);
+                await engine.ReportOfflineAsync(late[0], new OfflineReport(
+                    late.Length > 1 && long.TryParse(late[1], System.Globalization.CultureInfo.InvariantCulture, out var ms) ? ms : 0, DateTimeOffset.UtcNow));
+                Console.WriteLine("sent");
+                break;
+            case "previews":
+                var pk = arg.Split(' ', 2);
+                var pv = await PreviewsOfAsync(pk[0], pk.Length > 1 ? pk[1] : "");
+                Console.WriteLine($"{pv.Sheets.Count} sheets of {pv.Trickplay.TileCount} tiles");
                 break;
             case "want":
                 var libraries = await engine.TheirLibrariesAsync(arg);
@@ -310,7 +362,7 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
                 Console.WriteLine("done");
                 break;
             case "group-offer":
-                await engine.SetGroupOffersAsync(arg, ["films"]);
+                await engine.SetGroupOffersAsync(arg, ["folder"]);
                 Console.WriteLine("offered");
                 break;
             case "leave":
@@ -340,9 +392,10 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
                 break;
             default:
                 Console.WriteLine("code [note] | preview <code> | redeem <code> | accept <id> | peers | check <id> | end <id> | server | " +
-                    "rotate [key] | stolen [key|none] | confirm <id> | address <url> | uncallable on|off | offer <id> | want <id> | " +
-                    "titles <id> | play <id> <key> | stop <playback> | rescan | group-create <name> | groups | invite <group> | pair <group> <mail> | " +
-                    "refuse <group> <mail> | join-accept <group> <peer> | admin <group> <member> | ban <group> <member> | dissolve <group> | group-offer <group> | auto <group> on|off | leave <group> | quit");
+                    "rotate [key] | stolen [key|none] | confirm <id> | address <url> | uncallable on|off | offer <id> | local <id> on|off | " +
+                    "limits <id> <n>... | want <id> | titles <id> | play <id> <key> | download <id> <key> | late <download> <ms> | previews <id> <key> | " +
+                    "stop <playback> | rescan | group-create <name> | groups | invite <group> | pair <group> <mail> | " +
+                    "refuse <group> <mail> | join-accept <group> <peer> | admin <group> <member> | ban <group> <member> | dissolve <group> | group-offer <group> | group-local <group> on|off | auto <group> on|off | leave <group> | quit");
                 break;
         }
     }
@@ -354,6 +407,19 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
 
 await stop.CancelAsync();
 await app.StopAsync();
+
+// The previews of a peer's title's best copy.
+async Task<PreviewSheets> PreviewsOfAsync(string peer, string key)
+{
+    Msfp.Title? t = null;
+    await store.ReadAsync(async tx => t = await tx.PeerTitleAsync(peer, key), default);
+    if (t is not Msfp.VideoTitle v || v.BestCopy() is not { Previews: true } c)
+    {
+        throw new MsfpException(MsfpError.NotFound);
+    }
+
+    return await engine.PreviewsAsync(peer, key, c.Id);
+}
 
 MsfpRequest Request(HttpContext ctx, Stream body) => new()
 {
