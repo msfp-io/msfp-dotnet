@@ -32,8 +32,9 @@ namespace Msfp.Examples.ShareFolder;
 /// <para>
 /// Files are served as they are: by byte ranges (delivery file), or as their
 /// HLS copy (a remux made beforehand) when the viewer doesn't play their
-/// container. Nothing is transcoded. A copy is described from its file
-/// (Probes.cs).
+/// container. A play without delivery of a copy outside the baseline is
+/// transcoded by ffmpeg before the answer (Baseline.cs). A copy is described
+/// from its file (Probes.cs).
 /// </para>
 /// </summary>
 internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback, IMedia
@@ -350,13 +351,15 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
     public ValueTask<CopyInfo> DescribeAsync(string copy, CancellationToken ct) => ValueTask.FromResult(new CopyInfo());
 
     /// <summary>
-    /// Serves the file when the viewer's server asks it (delivery file, always
-    /// that of a download or a scan); its HLS copy, made beside it, for a remux
-    /// to its segments' media type (video/mp2t for .ts segments, video/mp4
-    /// otherwise) or without delivery (the baseline: this example counts on
-    /// its HLS copies being within it, H.264 High 4.1 8-bit SDR and AAC-LC
-    /// stereo, as an operator makes them); it makes no
-    /// transcode, and no audio renditions, which the answer then says
+    /// Serves what the engine decided (the request's Served), or refuses: the
+    /// file when the viewer's server asks it (delivery file, always that of a
+    /// download or a scan); its HLS copy, made beside it, for a remux to its
+    /// segments' media type (video/mp2t for .ts segments, video/mp4
+    /// otherwise), and without delivery when the engine found the copy within
+    /// the baseline (H.264 High 4.1 8-bit SDR BT.709 and AAC-LC stereo, the
+    /// HLS copy then taken to be the same streams); without delivery outside
+    /// it, a transcode ffmpeg makes (Baseline.cs). It makes no transcode asked
+    /// by delivery, and no audio renditions, which the answer then says
     /// (<see cref="Started"/>'s AudioRenditions false: MSFP playback section
     /// 2.3). The handle is the protocol and the file's path.
     /// </summary>
@@ -381,6 +384,8 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
                 var segments = hls && Directory.EnumerateFiles(hlsDir, "*.ts").Any() ? "mp2t" : "mp4";
                 (method, protocol) = hls && request.Served.Segments == segments ? ("remux", "hls") : throw new MsfpException(MsfpError.DeliveryRefused);
                 break;
+            case "" when request.Served.Method == Playback.MethodTranscode:
+                return BaselineAsync(request, path, ct);
             default:
                 (method, protocol) = hls ? ("remux", "hls") : throw new MsfpException(MsfpError.NotPlayable);
                 break;
@@ -398,8 +403,6 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
 
     public ValueTask ProgressAsync(Report report, CancellationToken ct) => ValueTask.CompletedTask;
 
-    public ValueTask StopAsync(string handle, EndReason reason, CancellationToken ct) => ValueTask.CompletedTask;
-
     /// <summary>
     /// Answers what a playback's ticket opens (or, for a sheet under a
     /// previews ticket, OfCopy, a copy's: its handle is then the file's path).
@@ -414,16 +417,17 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
 
         var file = Path.Combine(dir, rel);
         var stem = Stem(file);
+        var hlsDir = (path.OfCopy ? null : Made(handle)) ?? stem + ".hls";
         switch (path.Kind)
         {
             case MediaKind.File:
                 await ServeFileAsync(file, range, output, ct);
                 return;
             case MediaKind.Master:
-                await ServeFileAsync(Path.Combine(stem + ".hls", "master.m3u8"), null, output, ct);
+                await ServeFileAsync(Path.Combine(hlsDir, "master.m3u8"), null, output, ct);
                 return;
             case MediaKind.Playlist or MediaKind.Segment:
-                await ServeFileAsync(Path.Combine(stem + ".hls", path.Name), range, output, ct);
+                await ServeFileAsync(Path.Combine(hlsDir, path.Name), range, output, ct);
                 return;
             case MediaKind.Sheet:
                 await ServeFileAsync(Path.Combine(stem + ".trickplay", path.Sheet.ToString(CultureInfo.InvariantCulture) + ".jpg"), null, output, ct);

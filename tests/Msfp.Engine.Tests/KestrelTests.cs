@@ -202,7 +202,7 @@ public sealed class KestrelTests
         var pb = await b.Engine.PlayAsync(onB, new PlayRequest { Title = "movie/tmdb/949" });
         var master = new MemorySink();
         await b.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.Master }, "", master);
-        Assert.Equal(HostKit.Master, master.Text);
+        Assert.Equal(HostKit.FilledMaster, master.Text);
         // The media playlist first: the owning server serves only the names
         // its playlists gave (media section 1).
         await b.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.Playlist, Name = "v0.m3u8" }, "", new MemorySink());

@@ -803,9 +803,10 @@ public sealed partial class MsfpEngine
             return HostRefusal(e, "start");
         }
 
-        if (StartedBreaks(@in, chosen, started, queued) is { } why)
+        if (StartedBreaks(@in, chosen, served, started, queued) is { } why)
         {
-            _log.LogWarning("msfp: the host started a playback MSFP doesn't allow; it is stopped: {Why}", why);
+            _log.LogError("msfp: the host started a playback MSFP doesn't allow; it is stopped: {Why} (decided {Decided}, method {Method}, protocol {Protocol})",
+                why, served.Method, started.Method, started.Protocol);
             slot?.Release();
             HostStop(started.Handle, EndReason.Stopped);
             return Answer.Refuse(ProblemType.Internal);
@@ -917,15 +918,18 @@ public sealed partial class MsfpEngine
     };
 
     // What the host's start breaks of MSFP, null for nothing: a method or
-    // protocol MSFP doesn't have, another delivery than the one asked (file
+    // protocol MSFP doesn't have, another method than a transcode the engine
+    // decided (Served: without delivery, a copy outside the baseline is
+    // transcoded; one within it may be served direct, remux or transcode:
+    // section 2.3), another delivery than the one asked (file
     // is direct as file; remux, transcode and the baseline without delivery
     // are hls), file of a copy of
     // several parts, file played otherwise than direct; a queue entry of a
     // place not asked, twice, or served against the same rules for its own
     // delivery.
-    private static string? StartedBreaks(Protocol.PlayRequest @in, OfferedCopy c, Started s, List<QueuedCopy> asked)
+    private static string? StartedBreaks(Protocol.PlayRequest @in, OfferedCopy c, Served served, Started s, List<QueuedCopy> asked)
     {
-        static string? Check(string delivery, string method, string protocol, int parts)
+        static string? Check(string delivery, string decided, string method, string protocol, int parts)
         {
             if (method is not ("direct" or "remux" or "transcode") || protocol is not ("hls" or "file"))
             {
@@ -935,6 +939,11 @@ public sealed partial class MsfpEngine
             if (delivery.Length > 0 && method != MethodOf(delivery))
             {
                 return "another method than the delivery asked";
+            }
+
+            if (decided == Playback.MethodTranscode && method != decided)
+            {
+                return "another method than the transcode decided";
             }
 
             if ((delivery == Playback.DeliveryFile && protocol != "file") ||
@@ -951,7 +960,7 @@ public sealed partial class MsfpEngine
             return protocol == "file" && parts > 1 ? "a copy of several parts as file" : null;
         }
 
-        if (Check(@in.Delivery, s.Method, s.Protocol, Math.Max(c.Copy.Parts ?? 1, 1)) is { } why)
+        if (Check(@in.Delivery, served.Method, s.Method, s.Protocol, Math.Max(c.Copy.Parts ?? 1, 1)) is { } why)
         {
             return why;
         }
@@ -964,7 +973,7 @@ public sealed partial class MsfpEngine
                 return "a queue entry of no place asked";
             }
 
-            if (Check(a.Delivery, q.Method, q.Protocol, 1) is { } qwhy)
+            if (Check(a.Delivery, a.Served.Method, q.Method, q.Protocol, 1) is { } qwhy)
             {
                 return "a queue entry: " + qwhy;
             }

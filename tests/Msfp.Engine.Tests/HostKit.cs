@@ -79,6 +79,9 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
 
     public string Protocol { get; set; } = "hls";
 
+    /// <summary>Without delivery, a transcode the engine decided is one, unless Lies.</summary>
+    public bool Lies { get; set; }
+
     public Exception? StartError { get; set; }
 
     public bool NoAdmit { get; set; }
@@ -153,9 +156,9 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
                 var a = audio[i];
                 var handle = key + "#" + i.ToString(CultureInfo.InvariantCulture);
                 t.Copies.Add(new Msfp.Protocol.Copy(handle, 5_400_000, "video/matroska", 20, "e" + i.ToString(CultureInfo.InvariantCulture),
-                    [new CopyAudio("a0", "aac") { Language = a, Channels = 2, Default = true, Codecs = "mp4a.40.2" }])
+                    [new CopyAudio("a0", "aac") { Language = a, Channels = 2, SampleRate = 48_000, Default = true, Codecs = "mp4a.40.2" }])
                 {
-                    Video = new VideoStream("h264", 1920, 1080) { Codecs = "avc1.640028", BitDepth = 8 },
+                    Video = new VideoStream("h264", 1920, 1080) { Codecs = "avc1.640028", BitDepth = 8, Colour = new VideoColour(1, 1, 1) },
                     SubtitleTracks = [new CopySubtitle("s0", "subrip") { Language = "fr" }, new CopySubtitle("s1", "hdmv_pgs_subtitle") { Language = "fr" }],
                 });
             }
@@ -262,11 +265,11 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
         bool noAdmit;
         Task? hold;
         SemaphoreSlim? entered;
-        bool queue, noRenditions;
+        bool queue, noRenditions, lies;
         lock (_lock)
         {
             (method, protocol, error, noAdmit, hold, entered, queue) = (Method, Protocol, StartError, NoAdmit, Hold, Entered, Queue);
-            noRenditions = NoRenditions;
+            (noRenditions, lies) = (NoRenditions, Lies);
         }
 
         if (hold is not null)
@@ -292,6 +295,9 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
             case Playback.DeliveryTranscode:
                 (method, protocol) = ("transcode", "hls");
                 break;
+            default:
+                method = request.Served.Method == Playback.MethodTranscode && !lies ? Playback.MethodTranscode : method;
+                break;
         }
 
         if (!noAdmit)
@@ -312,7 +318,7 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
                     Playback.DeliveryFile => new StartedEntry(q.Place, "direct", "file"),
                     Playback.DeliveryRemux => new StartedEntry(q.Place, "remux", "hls"),
                     Playback.DeliveryTranscode => new StartedEntry(q.Place, "transcode", "hls"),
-                    _ => new StartedEntry(q.Place, method, protocol),
+                    _ => new StartedEntry(q.Place, q.Served.Method == Playback.MethodTranscode && !lies ? Playback.MethodTranscode : method, protocol),
                 }).ToList() : null,
             };
         }
@@ -577,6 +583,9 @@ internal static class HostKit
     }
 
     public const string Master = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-STREAM-INF:BANDWIDTH=5000000\nv0.m3u8\n";
+
+    /// <summary>Master as the engine sends it of a film's copy left unchanged: CODECS and RESOLUTION filled from the copy (media 3.1).</summary>
+    public const string FilledMaster = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-STREAM-INF:BANDWIDTH=5000000,CODECS=\"avc1.640028,mp4a.40.2\",RESOLUTION=1920x1080\nv0.m3u8\n";
     public const string MediaList = "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:6.0,\nseg0.m4s\n#EXT-X-ENDLIST\n";
 
     /// <summary>A host with one film, movie/tmdb/949, in English and French, and its media.</summary>

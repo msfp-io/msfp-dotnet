@@ -55,7 +55,7 @@ public sealed class PlaybackTests
         Assert.DoesNotContain("movie/tmdb/949#", plays[0].ResponseBody, StringComparison.Ordinal);
         // The media, through B.
         var o = await FetchAsync(s.B, pb.Id, new MediaPath { Kind = MediaKind.Master });
-        Assert.Equal(HostKit.Master, o.Text);
+        Assert.Equal(HostKit.FilledMaster, o.Text);
         Assert.Equal("application/vnd.apple.mpegurl", o.ContentType);
         o = await FetchAsync(s.B, pb.Id, new MediaPath { Kind = MediaKind.Segment, Name = "v0.m3u8" });
         Assert.Equal(HostKit.MediaList, o.Text); // by a name the master named
@@ -268,10 +268,10 @@ public sealed class PlaybackTests
         var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film });
         var url = HostKit.StreamPath(s.Exchanges("play")[^1].ResponseBody);
         var first = await HostKit.GetFullAsync(s.A, url);
-        Assert.Equal((200, HostKit.Master), (first.Status, first.Text()));
+        Assert.Equal((200, HostKit.FilledMaster), (first.Status, first.Text()));
         h.Files["master.m3u8"] = HostKit.Bytes("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nother.m3u8\n");
         var again = await HostKit.GetFullAsync(s.A, url);
-        Assert.Equal((200, HostKit.Master), (again.Status, again.Text()));
+        Assert.Equal((200, HostKit.FilledMaster), (again.Status, again.Text()));
         await s.B.Engine.StopAsync(pb.Id, -1);
         await s.A.WaitAsync();
         Assert.Equal(405, await HostKit.GetAsync(s.A, url, "HEAD"));
@@ -373,7 +373,7 @@ public sealed class PlaybackTests
         Assert.DoesNotContain("subtitle", s.Exchanges("play")[0].RequestBody, StringComparison.Ordinal);
         // One audio stream: a second track waits for the first's stop.
         Assert.Equal(MsfpError.StreamLimitReached, await PlayErrorAsync(s, new PlayRequest { Title = Track }));
-        await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Track, Replaces = pb.Id });
+        await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Track, Delivery = Playback.DeliveryFile, Replaces = pb.Id });
         // A film counts in streams: 0 here.
         h.Film("music", "movie/tmdb/1", "en");
         Assert.Equal(409, await CallAsync(s, "play", "{\"title\":\"movie/tmdb/1\"}"));
@@ -579,5 +579,39 @@ public sealed class PlaybackTests
         await Assert.ThrowsAsync<MsfpException>(() => done);
         await s.A.WaitAsync();
         Assert.Equal(EndReason.PairingEnded, h.Stops()["h1"]);
+    }
+
+    // A host's start of another method than the engine decided is the host's
+    // failure: without delivery, a copy outside the baseline (here no colour
+    // stated, so not known BT.709) must be transcoded; a host that says remux
+    // is stopped, and the peer gets a 500, never the method (playback
+    // sections 2.3, 2.7).
+    [Fact]
+    public async Task StartedMethodAsDecided()
+    {
+        var h = HostKit.FilmHost();
+        h.EditCopy(Film, 0, c => c with { Video = c.Video! with { Colour = null } });
+        using var s = await Sharing.StartAsync(h);
+        lock (h.Lock)
+        {
+            (h.Method, h.Lies) = ("remux", true);
+        }
+
+        var e = await Assert.ThrowsAsync<MsfpException>(() => s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film }));
+        Assert.Equal((MsfpError.NotPlayable, MsfpError.PeerFailed), (e.Code, (e.InnerException as MsfpException)?.Code));
+        await s.A.WaitAsync();
+        lock (h.Lock)
+        {
+            Assert.Single(h.StartedList);
+            Assert.Equal(Playback.MethodTranscode, h.StartedList[0].Served.Method);
+            h.Lies = false;
+        }
+
+        Assert.Equal(EndReason.Stopped, h.Stops()["h1"]);
+        var plays = s.Exchanges("play");
+        Assert.Single(plays);
+        Assert.DoesNotContain("\"remux\"", plays[0].ResponseBody, StringComparison.Ordinal);
+        var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film });
+        Assert.Equal(Playback.MethodTranscode, pb.Method);
     }
 }
