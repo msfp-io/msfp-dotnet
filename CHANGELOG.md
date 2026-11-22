@@ -13,6 +13,27 @@
   `Compilation`, `Date`, `OriginalDate`, `Genres`, `Image`), no `Year` or
   `DurationMs`. The stores write copies with the specification's names,
   as the Go engine does.
+- Playback and media (step B2): `play` takes the title's copies as the
+  catalog sends them; `ICatalog.CopiesAsync` and the engine's `Copy` are
+  gone, and `IPlayback.DescribeAsync` gives only what the catalog doesn't
+  say (`CopyInfo`: previews' layout, fonts, tracks not served apart).
+  `StartRequest` carries `Purpose`, `Delivery`, `Container`, `Transcode`,
+  `AudioRenditions` and a music `Queue`; `Started` its `Queue` (no
+  `Segments`: copies carry them); `IPlayback.ProgressAsync` takes a
+  `Report` (with `At`, `Title`, `Stop`, `Late`). `MediaPath` has
+  `MediaKind.Ass`, `MediaKind.Font`, `Whole`, `Font`, `Entry` (a queue
+  entry's stream) and `OfCopy`; for `MediaKind.File` the engine resolves
+  the range against the copy's size and writes the status itself, the
+  ETag through `IETagSink`. `Limits` gains `Downloads`,
+  `DownloadsPerDay`, `DownloadKbps`, `ScansPerDay`. `Capabilities` is
+  `Protocol.PlayCapabilities`. The remote `Track` has no `Label` (and
+  `Format`, `External`, `Text`, `Ass`); `RemotePlayback` has no `Segments`
+  and gains `Purpose`, `Delivery`, `Etag`, `Size`, `CopyChanged`,
+  `BurnedTrack`, `Fonts`, `Queue`. `PlaybackView` and `PlaybackStarted`
+  carry the purpose.
+- Media answers `HEAD` and other methods with `405` (a host's sink adds
+  `Allow: GET`); the file by byte ranges with its exact size and `ETag`;
+  playlists only complete, their renditions the copy's audio tracks.
 - `titles` pages are bounded by size too (5,000 titles, 3 MiB), `next`
   set whenever titles remain; copies are cleaned before they leave (names
   and track titles only when they are labels).
@@ -25,6 +46,16 @@
 - `SetLocalAsync` and `SetGroupLocalAsync` (`PeerView.Local`,
   `GroupView.Local`): local titles shared, per pairing and per group, off
   by default.
+- Downloads and scans (`Playback.PurposeDownload`, `PurposeScan`): a
+  download's ticket of 24 hours without the idle rule, its reads paced at
+  `downloadKbps`; a scan's of 10 minutes, its reads within 32 MiB.
+  `ReportOfflineAsync` sends a download's late reports; `RestartAsync`
+  reads a file on under a new playback of the same etag
+  (`MsfpError.CopyChanged` otherwise); `PlayingTrack` names the queued
+  track playing. `MsfpError.DeliveryRefused`.
+- The `previews` call (`PreviewsAsync`, sheets fetched before a first
+  play) and the `lyrics` call (`TrackLyricsAsync`; a host's `ILyrics`
+  gives them). `IETagSink`: a sink given the file's ETag.
 - The `image` call: a host's `IImages` gives a local title's image,
   served under a ticket of its own; `TitleImageAsync` asks a peer for
   one, checked and re-encoded. `OpaqueKeyPart` makes opaque parts of

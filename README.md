@@ -137,6 +137,11 @@ app.Map("/api/v1/stream/{**rest}", async (HttpContext ctx) =>
 });
 ```
 
+Give it every method (HEAD and the others get a 405). The sink writes the
+status and the headers the engine gives, and adds `Accept-Ranges: bytes`
+to a 200 or a 206, the file's ETag it is given (`IETagSink`) and
+`Allow: GET` to a 405 (the example's `AspNetSink` does).
+
 The operator offers libraries with `SetOffersAsync` and sets limits
 with `SetLimitsAsync`; the host calls `CatalogChanged()` when its titles
 change. An episode keyed by its TMDB episode ID
@@ -146,9 +151,13 @@ one it isn't sent, and a new place is a change of the title. A peer's such
 episodes come with theirs. To read a peer's titles: `TheirLibrariesAsync`, `SetWantsAsync`,
 then `RunAsync` reads them on schedule (or `ReadNowAsync`) into the
 store, where the host reads them; `PlayableAsync` says whether they can
-be played now. A viewer plays with `PlayAsync`, the host serves the media
-at its own route through `FetchAsync` (`MediaPath.TryParse` reads its
-URL), and reports with `Progress` and `StopAsync`.
+be played now. A viewer plays with `PlayAsync` (to watch, to download, or
+to let a media server scan the file: `PlayRequest.Purpose`, `Delivery`),
+the host serves the media at its own route through `FetchAsync`
+(`MediaPath.TryParse` reads its URL), and reports with `Progress` and
+`StopAsync` (a download's late reports with `ReportOfflineAsync`);
+`PreviewsAsync` and `TrackLyricsAsync` fetch a copy's previews and a
+track's lyrics before any play.
 
 Preview sheets a peer sends are re-encoded before they reach a viewer
 (MSFP video section 7). .NET has no JPEG codec, so the engine has no
