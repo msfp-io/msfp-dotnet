@@ -360,7 +360,7 @@ public sealed partial class MsfpEngine
         byte[] kept;
         try
         {
-            kept = Media.FilterPlaylist(body, path.Kind == MediaKind.Master ? Media.MasterSubset : Media.MediaSubset);
+            kept = Media.FilterPlaylist(body, path.Kind == MediaKind.Master ? Media.MasterSubset : Media.MediaSubset, null); // B2: the playback's audio tracks, for a master's #EXT-X-MEDIA renditions
             if (!kept.AsSpan().SequenceEqual(NormalLines(body)))
             {
                 throw new ProtocolException(ProtocolError.Json, "tags outside media 1's subset");
