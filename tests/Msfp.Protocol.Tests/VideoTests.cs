@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace Msfp.Protocol.Tests;
@@ -6,52 +7,152 @@ namespace Msfp.Protocol.Tests;
 /// <summary>wire/video_test.go, and the cases of video.json.</summary>
 public class VideoTests
 {
+    // A copies member, after a comma.
+    private const string OneCopy =
+        ""","copies":[{"id":"v1","durationMs":1000,"container":"mkv","size":1,"etag":"t","audioTracks":[]}]""";
+
     private static VideoTitle? Read(string s) => Video.ReadTitle(Encoding.UTF8.GetBytes(s));
 
+    // Every list of video.json.
     [Fact]
     public void VideoVectors()
     {
-        var libraries = TestVectors.Load("video.json")["libraries"]!.AsArray().Select(n => n!.GetValue<string>()).ToList();
-        var cases = TestVectors.Cases("video.json", "titles");
+        var file = TestVectors.Load("video.json");
+        var libraries = file["libraries"]!.AsArray().Select(n => n!.GetValue<string>()).ToList();
+        var root = file["streamRoot"]!.GetValue<string>();
         var failures = new List<string>();
-        foreach (var c in cases)
+        var total = 0;
+
+        void Check(string list, JsonObject c, byte[]? got, bool ok)
         {
-            var got = Read(c.Str("text"));
-            if (got is not null && !libraries.Contains(got.Library))
+            total++;
+            if (ok != c.Valid())
             {
-                got = null; // the caller's check: a library it asked for
+                failures.Add($"{list} {c.Str("name")}: kept {ok}, want {c.Valid()} ({c.Str("reason")})");
+                return;
             }
 
-            if ((got is not null) != c.Valid())
+            if (!ok || got is null || c["output"] is null)
             {
-                failures.Add($"{c.Str("name")}: kept {got is not null}, want {c.Valid()}");
-                continue;
+                return;
             }
 
-            if (got is null)
+            var have = JsonNode.Parse(got);
+            if (!JsonNode.DeepEquals(have, NoFalse(JsonNode.Parse(c.Str("output")))))
             {
-                continue;
-            }
-
-            var have = JsonNode.Parse(Write(got));
-            if (!JsonNode.DeepEquals(have, JsonNode.Parse(c.Str("output"))))
-            {
-                failures.Add($"{c.Str("name")}:\n    got  {have!.ToJsonString()}\n    want {c.Str("output")}");
+                failures.Add($"{list} {c.Str("name")}:\n    got  {have!.ToJsonString()}\n    want {c.Str("output")}");
             }
         }
 
-        TestVectors.NoFailures(failures, cases.Count, "video.json titles");
+        foreach (var list in new[] { "titles", "extras", "localTitles" })
+        {
+            foreach (var c in TestVectors.Cases("video.json", list))
+            {
+                var got = Read(c.Str("text"));
+                if (got is not null && !libraries.Contains(got.Library))
+                {
+                    got = null; // the caller's check: a library it asked for
+                }
+
+                Check(list, c, got is null ? null : Write(got), got is not null);
+            }
+        }
+
+        foreach (var c in TestVectors.Cases("video.json", "copies"))
+        {
+            var got = Copies.Read(Encoding.UTF8.GetBytes(c.Str("text")));
+            Check("copies", c, got is null ? null : Copies.Write(got), got is not null);
+        }
+
+        foreach (var list in new[] { "localKeys", "tvdbKeys" })
+        {
+            foreach (var c in TestVectors.Cases("video.json", list))
+            {
+                var ok = VideoKey.TryParse(c.Str("text"), out var k);
+                Check(list, c, null, ok);
+                if (ok && (k.Kind != c.Str("kind") || k.ToString() != c.Str("text")))
+                {
+                    failures.Add($"{list} {c.Str("name")}: kind {k.Kind}, {k}");
+                }
+            }
+        }
+
+        foreach (var c in TestVectors.Cases("video.json", "previews"))
+        {
+            var body = Encoding.UTF8.GetBytes(c.Str("text"));
+            if (c.Str("side") == "request")
+            {
+                Check("previews", c, null, Throws(() => Video.ReadPreviewsRequest(body)) is null);
+                continue;
+            }
+
+            Previews? p = null;
+            var error = Throws(() => p = Video.ReadPreviewsAnswer(body, root));
+            var output = JsonOut.Object(o => o.Object("trickplay", p is null ? null : t => t
+                .Integer("tileWidth", p.Trickplay.TileWidth).Integer("tileHeight", p.Trickplay.TileHeight)
+                .Integer("columns", p.Trickplay.Columns).Integer("rows", p.Trickplay.Rows)
+                .Integer("intervalMs", p.Trickplay.IntervalMs).Integer("tileCount", p.Trickplay.TileCount)
+                .Strings("sheets", p.Urls)));
+            Check("previews", c, output, error is null);
+        }
+
+        TestVectors.NoFailures(failures, total, "video.json");
+    }
+
+    private static ProtocolException? Throws(Action a)
+    {
+        try
+        {
+            a();
+            return null;
+        }
+        catch (ProtocolException e)
+        {
+            return e;
+        }
     }
 
     // A kept title as the vectors write it: absent members left out.
     internal static byte[] Write(VideoTitle t) => JsonOut.Object(o => o
         .String("key", t.Key).String("kind", t.Kind).String("library", t.Library)
-        .Strings("audio", t.Audio.Count > 0 ? t.Audio : null)
-        .Strings("subtitles", t.Subtitles.Count > 0 ? t.Subtitles : null)
-        .Object("video", t.Video is { } p ? v => v.Integer("height", p.Height).Strings("hdr", p.Hdr.Count > 0 ? p.Hdr : null) : null)
+        .String("extraType", t.ExtraType.Length > 0 ? t.ExtraType : null)
+        .String("name", t.Description?.Name ?? (t.Name.Length > 0 ? t.Name : null))
+        .Integer("year", t.Description is { Year: > 0 } d ? d.Year : null)
+        .Bool("image", t.Description is { Image: true } ? true : null)
         .Object("place", t.Place is { } pl ? o => o.Integer("season", pl.Season).Integer("episode", pl.Episode) : null)
         .Strings("with", t.With.Count > 0 ? t.With : null)
-        .Object("ids", t.Ids.Count > 0 ? i => { foreach (var (k, v) in t.Ids) { i.String(k, v); } } : null));
+        .Object("ids", t.Ids.Count > 0 ? i => { foreach (var (k, v) in t.Ids) { i.String(k, v); } } : null)
+        .Objects("copies", t.Copies.Count > 0 ? t.Copies : null, Copies.Write));
+
+    // Drops the members that are false: a flag false is kept as absent.
+    private static JsonNode? NoFalse(JsonNode? n)
+    {
+        switch (n)
+        {
+            case JsonObject o:
+                foreach (var name in o.Where(m => m.Value is JsonValue v && v.GetValueKind() == JsonValueKind.False)
+                             .Select(m => m.Key).ToList())
+                {
+                    o.Remove(name);
+                }
+
+                foreach (var (_, v) in o)
+                {
+                    NoFalse(v);
+                }
+
+                break;
+            case JsonArray a:
+                foreach (var e in a)
+                {
+                    NoFalse(e);
+                }
+
+                break;
+        }
+
+        return n;
+    }
 
     // Video title keys in their one canonical form (video section 4): any
     // other form of the same title is refused.
@@ -60,17 +161,25 @@ public class VideoTests
     {
         var valid = new Dictionary<string, VideoKey>
         {
-            ["movie/tmdb/949"] = new("movie", 949),
-            ["movie/tmdb/9999999999"] = new("movie", 9_999_999_999),
-            ["series/tmdb/1399"] = new("series", 1399),
-            ["series/tmdb/1399/s0"] = new("season", 1399),
-            ["series/tmdb/1399/s9999"] = new("season", 1399, 9999),
-            ["series/tmdb/1399/e63056"] = new("episode", 1399, EpisodeId: 63056),
-            ["series/tmdb/1399/e1"] = new("episode", 1399, EpisodeId: 1),
-            ["series/tmdb/1399/s1/e2"] = new("episode", 1399, 1, 2),
-            ["series/tmdb/1399/s1/e0"] = new("episode", 1399, 1),
-            ["series/tmdb/1399/s0/e99999"] = new("episode", 1399, 0, 99999),
-            ["series/tmdb/1/e9999999999"] = new("episode", 1, EpisodeId: 9_999_999_999),
+            ["movie/tmdb/949"] = new("movie", "tmdb", 949),
+            ["movie/tmdb/9999999999"] = new("movie", "tmdb", 9_999_999_999),
+            ["series/tmdb/1399"] = new("series", "tmdb", 1399),
+            ["series/tmdb/1399/s0"] = new("season", "tmdb", 1399),
+            ["series/tmdb/1399/s9999"] = new("season", "tmdb", 1399, Season: 9999),
+            ["series/tmdb/1399/e63056"] = new("episode", "tmdb", 1399, EpisodeId: 63056),
+            ["series/tmdb/1399/e1"] = new("episode", "tmdb", 1399, EpisodeId: 1),
+            ["series/tmdb/1399/s1/e2"] = new("episode", "tmdb", 1399, Season: 1, Episode: 2),
+            ["series/tmdb/1399/s1/e0"] = new("episode", "tmdb", 1399, Season: 1),
+            ["series/tmdb/1399/s0/e99999"] = new("episode", "tmdb", 1399, Episode: 99999),
+            ["series/tmdb/1/e9999999999"] = new("episode", "tmdb", 1, EpisodeId: 9_999_999_999),
+            ["series/tvdb/81189/a27"] = new("episode", "tvdb", 81189, Episode: 27, Absolute: true),
+            ["series/tvdb/81189/a0"] = new("episode", "tvdb", 81189, Absolute: true),
+            ["series/tvdb/81189/s1/e2"] = new("episode", "tvdb", 81189, Season: 1, Episode: 2),
+            ["movie/local/q3Zp0Lw8"] = new("movie", "local", Local: "q3Zp0Lw8"),
+            ["series/local/Hk2v9TnA/s1/e3"] = new("episode", "local", Local: "Hk2v9TnA", Season: 1, Episode: 3),
+            ["movie/tmdb/348/x/Tr7aQ1"] = new("extra", "tmdb", 348, Extra: "Tr7aQ1", ParentKind: "movie"),
+            ["series/tmdb/1399/s0/x/a"] = new("extra", "tmdb", 1399, Extra: "a", ParentKind: "season"),
+            ["series/local/x/x/x"] = new("extra", "local", Local: "x", Extra: "x", ParentKind: "series"),
         };
         foreach (var (key, want) in valid)
         {
@@ -82,16 +191,23 @@ public class VideoTests
         string[] invalid =
         [
             "", "movie/tmdb/", "movie/tmdb/0", "movie/tmdb/0949", "movie/tmdb/10000000000", "movie/tmdb/-1",
-            "movie/tmdb/949/s1", "movie/imdb/tt0133093", "series/tvdb/81189", "Movie/tmdb/949", "movie/TMDB/949",
+            "movie/tmdb/949/s1", "movie/imdb/tt0133093", "movie/tvdb/81189", "Movie/tmdb/949", "movie/TMDB/949",
             "season/tmdb/1399", "episode/tmdb/1399", "series/tmdb/1399/", "series/tmdb/1399/s01", "series/tmdb/1399/s10000",
-            "series/tmdb/1399/e0", "series/tmdb/1399/e063056", "series/tmdb/1399/e12345678901",
+            "series/tmdb/1399/e0", "series/tmdb/1399/e063056", "series/tmdb/1399/e12345678901", "series/tmdb/1399/a1",
             "series/tmdb/1399/s1/e01", "series/tmdb/1399/s1/e100000", "series/tmdb/1399/s1/e", "series/tmdb/1399/s/e1",
             "series/tmdb/1399/e63056/e1", "series/tmdb/1399/s1/e2/x", "series/tmdb/+1399", "series/tmdb/1399/s+1",
             "series/tmdb/1399/s1/s2", "movie/tmdb/949 ", "item/0123456789abcdef0123456789abcdef",
-            "movie/tmdb/٩٤٩",
+            "series/tmdb/1399/e63056/x/a", "series/tmdb/1399/s1/e1/x/a", "movie/tmdb/1/x/a/x/b", "movie/tmdb/1/x/",
+            "movie/tmdb/1/x/a.b", "movie/tmdb/1/y/a", "series/local/a/e1", "series/tvdb/1/e1", "movie/tmdb/٩٤٩",
         ];
         var accepted = invalid.Where(k => VideoKey.TryParse(k, out _)).ToList();
         Assert.True(accepted.Count == 0, "accepted: " + string.Join(", ", accepted));
+
+        Assert.True(VideoKey.TryParse("series/tvdb/81189/s1/x/Tr1", out var extra));
+        Assert.Equal("series/tvdb/81189/s1", extra.Parent.ToString());
+        Assert.Equal("series/tvdb/81189", extra.Series);
+        Assert.True(extra.Playable);
+        Assert.Null(new VideoKey("movie", "tmdb", 1).Parent);
     }
 
     // What a receiver keeps of a title (catalog section 3.3, video section
@@ -99,56 +215,63 @@ public class VideoTests
     [Fact]
     public void ReadVideoTitle()
     {
-        Assert.Null(Read("""{"key":"movie/tmdb/949","kind":"series","library":"L"}"""));
-        Assert.Null(Read("""{"key":"movie/tmdb/0949","kind":"movie","library":"L"}"""));
-        foreach (var s in new[] { "\"x\"", """{"key":1,"kind":"movie","library":"L"}""", """{"key":"movie/tmdb/949","kind":"movie","library":3}""" })
-        {
-            Assert.Null(Read(s));
-        }
-
-        var tags = """["fr","FR","fr-CA","x","fr_CA",3,"aaaaaaaaaaaaa","de","en","es","it","nl","pt","ja","ko","zh","ru","sv"]""";
-        var got = Read("{\"key\":\"series/tmdb/1399/e63056\",\"kind\":\"episode\",\"library\":\"L\",\"place\":{\"season\":1,\"episode\":1},\"audio\":" + tags +
-            ",\"subtitles\":\"fr\",\"with\":[\"series/tmdb/1399/e63057\",\"series/tmdb/1399/e63056\",\"series/tmdb/2/e1\"," +
-            "\"series/tmdb/1399/s1/e3\",7,\"series/tmdb/1399/s1\"],\"ids\":{\"imdb\":\"tt1480055\",\"tvdb\":\"0123\",\"wikidata\":\"Q1\"}}");
+        var got = Read("""{"key":"series/tmdb/1399/e63056","kind":"episode","library":"L","place":{"season":1,"episode":1,"x":2}""" + OneCopy +
+            ""","with":["series/tmdb/1399/e63057","series/tmdb/1399/e63056","series/tmdb/2/e1","series/tmdb/1399/s1/e3",7,"series/tmdb/1399/s1","series/tvdb/1399/s1/e3"]""" +
+            ""","ids":{"imdb":"tt1480055","tvdb":"0123","wikidata":"Q1"},"audio":["en"]}""");
         Assert.NotNull(got);
-        Assert.Equal(["fr", "fr-CA", "de", "en", "es", "it", "nl", "pt", "ja", "ko", "zh", "ru"], got.Audio);
-        Assert.Empty(got.Subtitles);
         Assert.Equal(["series/tmdb/1399/e63057", "series/tmdb/1399/s1/e3"], got.With);
         Assert.Equal(new Dictionary<string, string> { ["imdb"] = "tt1480055" }, got.Ids);
         Assert.Equal(new Place(1, 1), got.Place);
+        Assert.Single(got.Copies);
 
-        // ids that isn't an object, with that isn't a list: absent.
-        got = Read("""{"key":"movie/tmdb/949","kind":"movie","library":"L","ids":["tt0133093"],"with":"x","audio":["en"]}""");
+        foreach (var place in new[]
+                 {
+                     "", ""","place":null""", ""","place":[1,1]""", ""","place":{"season":1}""",
+                     ""","place":{"season":1.0,"episode":1}""", ""","place":{"season":"1","episode":1}""",
+                     ""","place":{"season":10000,"episode":1}""", ""","place":{"season":1,"episode":-1}""",
+                 })
+        {
+            Assert.True(Read("""{"key":"series/tmdb/1399/e63056","kind":"episode","library":"L" """ + OneCopy + place + "}") is null, place);
+        }
+
+        // No copies, copies of the wrong type, none left: skipped; series and
+        // seasons carry none.
+        foreach (var s in new[]
+                 {
+                     """{"key":"movie/tmdb/949","kind":"movie","library":"L"}""",
+                     """{"key":"movie/tmdb/949","kind":"movie","library":"L","copies":{}}""",
+                     """{"key":"movie/tmdb/949","kind":"movie","library":"L","copies":null}""",
+                     """{"key":"movie/tmdb/949","kind":"movie","library":"L","copies":[1,{"id":"v1"}]}""",
+                     """{"key":"movie/tmdb/949","kind":"series","library":"L","copies":[]}""",
+                     """{"key":1,"kind":"movie","library":"L"}""", "\"x\"",
+                 })
+        {
+            Assert.True(Read(s) is null, s);
+        }
+
+        got = Read("""{"key":"series/tmdb/1399/s1","kind":"season","library":"L" """ + OneCopy + ""","ids":{"imdb":"tt0944947"}}""");
+        Assert.True(got is { Copies.Count: 0, Ids.Count: 0 });
+
+        // Repeated copy IDs: the first kept; at most 8.
+        var list = Enumerable.Range(0, 10).Select(i =>
+            $$"""{"id":"v{{i % 9}}","durationMs":1,"container":"x","size":1,"etag":"t","audioTracks":[]}""");
+        got = Read("""{"key":"movie/tmdb/1","kind":"movie","library":"L","copies":[""" + string.Join(",", list) + "]}");
         Assert.NotNull(got);
-        Assert.Empty(got.Ids);
-        Assert.Empty(got.With);
-        Assert.Equal(["en"], got.Audio);
+        Assert.Equal(Copies.MaxCopies, got.Copies.Count);
+        Assert.Equal(Names.Other, got.Copies[0].Container);
 
-        // Seasons and series have no languages, seasons no ids, films no with.
-        got = Read("""{"key":"series/tmdb/1399/s1","kind":"season","library":"L","audio":["en"],"ids":{"imdb":"tt0944947"}}""");
-        Assert.True(got is { Audio.Count: 0, Ids.Count: 0 });
-        got = Read("""{"key":"movie/tmdb/949","kind":"movie","library":"L","with":["series/tmdb/1399/e1"]}""");
-        Assert.True(got is { With.Count: 0 });
-
-        // An episode keyed by its TMDB ID needs its place; on any other
-        // title place is ignored.
-        Assert.Null(Read("""{"key":"series/tmdb/1399/e63056","kind":"episode","library":"L"}"""));
-        Assert.Null(Read("""{"key":"series/tmdb/1399/e63056","kind":"episode","library":"L","place":{"season":1,"episode":1.0}}"""));
-        Assert.Null(Read("""{"key":"series/tmdb/1399/s1/e2","kind":"episode","library":"L","place":{"season":1,"episode":2}}""")!.Place);
-        Assert.Null(Read("""{"key":"movie/tmdb/949","kind":"movie","library":"L","place":{"season":1,"episode":2}}""")!.Place);
-
-        // hdr null is of the wrong type: the picture is absent.
-        Assert.Null(Read("""{"key":"movie/tmdb/949","kind":"movie","library":"L","video":{"height":1080,"hdr":null}}""")!.Video);
-        Assert.Equal(1080, Read("""{"key":"movie/tmdb/949","kind":"movie","library":"L","video":{"height":1080}}""")!.Video!.Height);
-
-        // At most 16 in with.
-        var with = Enumerable.Range(0, 20).Select(i => new VideoKey("episode", 1, EpisodeId: i + 2).ToString());
-        Assert.Equal(Video.MaxWith, Video.CleanWith(new VideoKey("episode", 1, EpisodeId: 1), with).Count);
+        // The entry read isn't changed.
+        var node = JsonNode.Parse("""{"key":"movie/tmdb/1","kind":"movie","library":"L","x":null""" + OneCopy + "}");
+        Assert.NotNull(Video.ReadTitle(node));
+        Assert.True(node!.AsObject().ContainsKey("x"));
     }
 
     [Fact]
-    public void CleanTags() =>
-        Assert.Equal(["fr-CA", "es-419"], Video.CleanTags(["fr-CA", "fr-ca", "", "x", "<script>", "es-419", "toolongtagvalue"]));
+    public void CleanWithCap()
+    {
+        var with = Enumerable.Range(0, 20).Select(i => new VideoKey("episode", "tmdb", 1, EpisodeId: i + 2).ToString());
+        Assert.Equal(Video.MaxWith, Video.CleanWith(new VideoKey("episode", "tmdb", 1, EpisodeId: 1), with).Count);
+    }
 
     [Theory]
     [InlineData("imdb", "tt0133093", true)]
@@ -176,14 +299,6 @@ public class VideoTests
     }
 
     [Fact]
-    public void PictureBetter()
-    {
-        var hd = new Picture(1080, []);
-        var uhd = new Picture(2160, []);
-        var uhdHdr = new Picture(2160, ["hdr10"]);
-        Assert.True(uhd.Better(hd));
-        Assert.True(uhdHdr.Better(uhd));
-        Assert.False(uhd.Better(uhdHdr));
-        Assert.Equal(["hdr10", "dv"], Video.CleanHdr(["dv", "x", "hdr10", "dv"]));
-    }
+    public void CleanHdr() =>
+        Assert.Equal(["hdr10", "hdr10plus", "dv"], Video.CleanHdr(["dv", "x", "hdr10plus", "hdr10", "dv"]));
 }

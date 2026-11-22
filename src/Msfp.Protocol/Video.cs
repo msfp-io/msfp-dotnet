@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
@@ -8,33 +9,70 @@ namespace Msfp.Protocol;
 /// A video title key, parsed (video section 4): movie/tmdb/949,
 /// series/tmdb/1399, series/tmdb/1399/s1, series/tmdb/1399/e63056 (an
 /// episode by TMDB's ID of it), series/tmdb/1399/s1/e2 (an episode by its
-/// numbers, for one TMDB doesn't list).
+/// numbers), series/tvdb/81189/a27 (by its absolute number),
+/// movie/local/q3Zp0Lw8, movie/tmdb/348/x/Tr7aQ1 (an extra).
 /// </summary>
-/// <param name="Kind">movie, series, season or episode.</param>
-/// <param name="Tmdb">The film's or the series' TMDB ID.</param>
+/// <param name="Kind">movie, series, season, episode or extra.</param>
+/// <param name="Scheme"><see cref="Video.SchemeTmdb"/>, <see cref="Video.SchemeTvdb"/> or <see cref="Video.SchemeLocal"/>.</param>
+/// <param name="Id">The film's or the series' TMDB or TheTVDB ID; 0 under the local scheme.</param>
+/// <param name="Local">The film's or the series' opaque identifier under the local scheme; empty otherwise.</param>
 /// <param name="Season">A season's number, or an episode's season when it is named by its numbers.</param>
-/// <param name="Episode">An episode's number, when it is named by its numbers.</param>
+/// <param name="Episode">An episode's number, when it is named by its numbers; with <paramref name="Absolute"/>, TheTVDB's absolute number.</param>
+/// <param name="Absolute">Whether the episode is named by its absolute number (series/tvdb/&lt;id&gt;/a&lt;number&gt;).</param>
 /// <param name="EpisodeId">TMDB's ID of an episode named by it; 0 for one named by its numbers.</param>
-public readonly record struct VideoKey(string Kind, long Tmdb, int Season = 0, int Episode = 0, long EpisodeId = 0)
+/// <param name="Extra">An extra's opaque part, after x/; the other members are then those of the title it belongs to, of kind <paramref name="ParentKind"/>.</param>
+/// <param name="ParentKind">For an extra, the kind of the title it belongs to: movie, series or season; empty otherwise.</param>
+public readonly record struct VideoKey(
+    string Kind,
+    string Scheme,
+    long Id = 0,
+    string Local = "",
+    int Season = 0,
+    int Episode = 0,
+    bool Absolute = false,
+    long EpisodeId = 0,
+    string Extra = "",
+    string ParentKind = "")
 {
-    /// <summary>Whether play takes the title: a film or an episode (video section 5).</summary>
-    public bool Playable => Kind is "movie" or "episode";
+    /// <summary>Whether play takes the title, and whether it carries copies: a film, an episode or an extra (video section 5).</summary>
+    public bool Playable => Kind is "movie" or "episode" or "extra";
 
     /// <summary>
     /// Whether the key names an episode by TMDB's ID of it
     /// (series/tmdb/&lt;id&gt;/e&lt;episode id&gt;): such an episode carries
-    /// its <see cref="Place"/> (video sections 3.1 and 4.1).
+    /// its <see cref="Protocol.Place"/> (video sections 3.1 and 4.1).
     /// </summary>
     public bool ByEpisodeId => Kind == "episode" && EpisodeId > 0;
 
     /// <summary>
+    /// The key of the film or the series this key is, or is under: its
+    /// first three parts (movie/tmdb/949, series/tvdb/81189).
+    /// </summary>
+    public string Series
+    {
+        get
+        {
+            var kind = Kind == "movie" || (Kind == "extra" && ParentKind == "movie") ? "movie" : "series";
+            var id = Scheme == Video.SchemeLocal ? Local : Id.ToString(CultureInfo.InvariantCulture);
+            return kind + "/" + Scheme + "/" + id;
+        }
+    }
+
+    /// <summary>For an extra, the title it belongs to (video section 4.6); null for any other title.</summary>
+    public VideoKey? Parent => Kind == "extra" ? this with { Kind = ParentKind, ParentKind = "", Extra = "" } : null;
+
+    /// <summary>
     /// Reads a video title key in its one canonical form (video section 4):
-    /// the kind, the scheme tmdb, the TMDB ID (1 to 9,999,999,999), then for
-    /// a season s&lt;season&gt; (0, or 1 to 4 digits), for an episode
-    /// e&lt;episode id&gt; (1 to 10 digits) or s&lt;season&gt;/e&lt;episode&gt;
-    /// (episode 0, or 1 to 5 digits); never a leading zero. Any other key is
-    /// false: another form of the same title is another string, which a
-    /// receiver skips.
+    /// the kind, the scheme (tmdb, tvdb for series only, local), the ID (1
+    /// to 9,999,999,999) or the local identifier
+    /// (<see cref="CatalogRules.OpaqueKeyPart"/>), then for a season
+    /// s&lt;season&gt; (0, or 1 to 4 digits), for an episode
+    /// e&lt;episode id&gt; (tmdb only, 1 to 10 digits),
+    /// s&lt;season&gt;/e&lt;episode&gt; (episode 0, or 1 to 5 digits) or
+    /// a&lt;number&gt; (tvdb only, as episodes); never a leading zero. An
+    /// extra is the key of a film, a series or a season, then x/&lt;opaque&gt;.
+    /// Any other key is false: another form of the same title is another
+    /// string, which a receiver skips.
     /// </summary>
     /// <param name="key">The key's text.</param>
     /// <param name="parsed">The key; default when false.</param>
@@ -43,36 +81,75 @@ public readonly record struct VideoKey(string Kind, long Tmdb, int Season = 0, i
         ArgumentNullException.ThrowIfNull(key);
         parsed = default;
         var parts = key.Split('/');
-        if (parts.Length is < 3 or > 5 || parts[1] != "tmdb")
+        var n = parts.Length;
+        if (n >= 5 && parts[n - 2] == "x")
         {
-            return false;
-        }
+            if (!TryParse(string.Join('/', parts[..^2]), out var parent) || !CatalogRules.OpaqueKeyPart(parts[n - 1]) ||
+                parent.Kind is not ("movie" or "series" or "season"))
+            {
+                return false;
+            }
 
-        if (!Decimal(parts[2], 10, false, out var id) || id > 9_999_999_999)
-        {
-            return false;
-        }
-
-        var kind = parts[0];
-        if ((kind == "movie" || kind == "series") && parts.Length == 3)
-        {
-            parsed = new VideoKey(kind, id);
+            parsed = parent with { Kind = "extra", ParentKind = parent.Kind, Extra = parts[n - 1] };
             return true;
         }
 
-        if (kind != "series")
+        if (n is < 3 or > 5)
         {
             return false;
         }
 
-        if (parts[3].StartsWith('e') && parts.Length == 4)
+        var k = new VideoKey(parts[0], parts[1]);
+        bool ok;
+        switch (k.Scheme)
+        {
+            case Video.SchemeTmdb or Video.SchemeTvdb:
+                ok = Decimal(parts[2], 10, false, out var id);
+                k = k with { Id = id };
+                break;
+            case Video.SchemeLocal:
+                ok = CatalogRules.OpaqueKeyPart(parts[2]);
+                k = k with { Local = parts[2] };
+                break;
+            default:
+                return false;
+        }
+
+        if (!ok)
+        {
+            return false;
+        }
+
+        if (n == 3 && ((k.Kind == "movie" && k.Scheme != Video.SchemeTvdb) || k.Kind == "series"))
+        {
+            parsed = k;
+            return true;
+        }
+
+        if (k.Kind != "series" || n == 3)
+        {
+            return false;
+        }
+
+        if (n == 4 && parts[3].StartsWith('e') && k.Scheme == Video.SchemeTmdb)
         {
             if (!Decimal(parts[3][1..], 10, false, out var episodeId))
             {
                 return false;
             }
 
-            parsed = new VideoKey("episode", id, EpisodeId: episodeId);
+            parsed = k with { Kind = "episode", EpisodeId = episodeId };
+            return true;
+        }
+
+        if (n == 4 && parts[3].StartsWith('a') && k.Scheme == Video.SchemeTvdb)
+        {
+            if (!Decimal(parts[3][1..], 5, true, out var absolute))
+            {
+                return false;
+            }
+
+            parsed = k with { Kind = "episode", Episode = (int)absolute, Absolute = true };
             return true;
         }
 
@@ -81,9 +158,9 @@ public readonly record struct VideoKey(string Kind, long Tmdb, int Season = 0, i
             return false;
         }
 
-        if (parts.Length == 4)
+        if (n == 4)
         {
-            parsed = new VideoKey("season", id, (int)season);
+            parsed = k with { Kind = "season", Season = (int)season };
             return true;
         }
 
@@ -92,21 +169,26 @@ public readonly record struct VideoKey(string Kind, long Tmdb, int Season = 0, i
             return false;
         }
 
-        parsed = new VideoKey("episode", id, (int)season, (int)episode);
+        parsed = k with { Kind = "episode", Season = (int)season, Episode = (int)episode };
         return true;
     }
 
     /// <summary>The key, as <see cref="TryParse"/> reads it.</summary>
     public override string ToString()
     {
-        var id = Tmdb.ToString(CultureInfo.InvariantCulture);
+        if (Parent is { } parent)
+        {
+            return parent + "/x/" + Extra;
+        }
+
+        var series = Series;
         return Kind switch
         {
-            "movie" => "movie/tmdb/" + id,
-            "series" => "series/tmdb/" + id,
-            "season" => "series/tmdb/" + id + "/s" + Season.ToString(CultureInfo.InvariantCulture),
-            _ when EpisodeId > 0 => "series/tmdb/" + id + "/e" + EpisodeId.ToString(CultureInfo.InvariantCulture),
-            _ => "series/tmdb/" + id + "/s" + Season.ToString(CultureInfo.InvariantCulture) + "/e" +
+            "movie" or "series" => series,
+            "season" => series + "/s" + Season.ToString(CultureInfo.InvariantCulture),
+            _ when EpisodeId > 0 => series + "/e" + EpisodeId.ToString(CultureInfo.InvariantCulture),
+            _ when Absolute => series + "/a" + Episode.ToString(CultureInfo.InvariantCulture),
+            _ => series + "/s" + Season.ToString(CultureInfo.InvariantCulture) + "/e" +
                  Episode.ToString(CultureInfo.InvariantCulture),
         };
     }
@@ -132,33 +214,13 @@ public readonly record struct VideoKey(string Kind, long Tmdb, int Season = 0, i
 }
 
 /// <summary>
-/// What a film's or an episode's copy offers for playing (video section
-/// 3.2): its stepped height, and its HDR formats (none for standard range).
-/// </summary>
-/// <param name="Height">One of <see cref="Video.Heights"/>.</param>
-/// <param name="Hdr">Its HDR formats, in <see cref="Video.HdrFormats"/>' order; empty for standard range.</param>
-public sealed record Picture(int Height, IReadOnlyList<string> Hdr)
-{
-    /// <summary>
-    /// Whether this is a better copy than <paramref name="other"/> (video
-    /// section 3.2): of a greater height, then with HDR when the other has
-    /// none, then with more formats.
-    /// </summary>
-    public bool Better(Picture other)
-    {
-        ArgumentNullException.ThrowIfNull(other);
-        return Height != other.Height ? Height > other.Height : Hdr.Count > other.Hdr.Count;
-    }
-}
-
-/// <summary>
 /// An episode's place in TMDB's numbering (video sections 3 and 4.1): the
 /// season and episode numbers TMDB gives it now, in the series' own season
 /// list. Carried by episodes keyed by their TMDB episode ID only, and
 /// required for them.
 /// </summary>
 /// <param name="Season">The season number, 0 (specials) to <see cref="Video.MaxSeason"/>.</param>
-/// <param name="Episode">The episode number, 0 to <see cref="Video.MaxEpisode"/>.</param>
+/// <param name="Episode">The episode number, 0 (a pilot or prologue) to <see cref="Video.MaxEpisode"/>.</param>
 public sealed record Place(int Season, int Episode)
 {
     /// <summary>Whether both numbers are in range (video section 3.1): what a sender sends, and a receiver keeps.</summary>
@@ -166,39 +228,50 @@ public sealed record Place(int Season, int Episode)
 }
 
 /// <summary>
-/// A peer's video title, as kept: its key, its kind, the library it gives,
-/// and the members video adds, cleaned (lists empty when absent).
+/// A peer's video title, as kept (video section 3.1): its key, its kind,
+/// the library it gives, and the members video adds, cleaned; a list
+/// empty, a string empty and an object null when absent.
 /// </summary>
 /// <param name="Key">Its key, canonical.</param>
 /// <param name="Kind">Its kind, the key's.</param>
 /// <param name="Library">The library it gives, still to be checked by the caller.</param>
-/// <param name="Audio">Its audio languages (films and episodes).</param>
-/// <param name="Subtitles">Its subtitle languages (films and episodes).</param>
-/// <param name="Video">Its picture (films and episodes); null when absent.</param>
-/// <param name="Place">Its place in TMDB's numbering (episodes keyed by their TMDB episode ID, which a receiver skips without one); null for any other title.</param>
+/// <param name="Copies">Its copies (films, episodes and extras, which always keep at least one), in the owning server's order.</param>
+/// <param name="Place">Its place in TMDB's numbering: for episodes keyed by their TMDB episode ID, and always for them; null for any other title.</param>
 /// <param name="With">The other episodes it holds (episodes).</param>
-/// <param name="Ids">Its other identifiers, by scheme (not seasons).</param>
+/// <param name="Ids">Its other identifiers, by scheme in byte order (films, series and episodes of a public database).</param>
+/// <param name="ExtraType">What an extra is, one of <see cref="Names.ExtraTypes"/> (clip when unknown); empty for any other title.</param>
+/// <param name="Name">An extra's own name, cleaned; empty when it has none, and for any other title.</param>
+/// <param name="Description">A local film's or series' description (video section 3.10), and always for them; null for any other title.</param>
 public sealed record VideoTitle(
     string Key,
     string Kind,
     string Library,
-    IReadOnlyList<string> Audio,
-    IReadOnlyList<string> Subtitles,
-    Picture? Video,
+    IReadOnlyList<Copy> Copies,
     Place? Place,
     IReadOnlyList<string> With,
-    IReadOnlyDictionary<string, string> Ids);
+    IReadOnlyDictionary<string, string> Ids,
+    string ExtraType,
+    string Name,
+    LocalDescription? Description);
 
 /// <summary>
-/// Video titles (MSFP video, sections 3 and 4): what a server keeps of a
-/// title a peer lists in titles (catalog section 3.3, video section 3.1).
+/// Video titles (MSFP video, sections 3 and 4): their keys, of the tmdb,
+/// tvdb and local schemes and of extras, and what a server keeps of a title
+/// a peer lists in titles (catalog section 3.3, video section 3.1). Copies
+/// are in <see cref="Copies"/>; the previews call is in VideoPreviews.cs.
 /// </summary>
 public static partial class Video
 {
-    /// <summary>
-    /// How many tags a title's language list keeps at most (video section
-    /// 3.1): each a valid tag (<see cref="Languages.ValidTag"/>), each once.
-    /// </summary>
+    /// <summary>The scheme of TMDB's IDs (video section 4).</summary>
+    public const string SchemeTmdb = "tmdb";
+
+    /// <summary>The scheme of TheTVDB's IDs, for series only (video section 4.4).</summary>
+    public const string SchemeTvdb = "tvdb";
+
+    /// <summary>The scheme of a title of no public database, under an opaque identifier (video section 4.5).</summary>
+    public const string SchemeLocal = "local";
+
+    /// <summary>How many language tags a list of them holds at most (<see cref="Languages.SentTags"/>).</summary>
     public const int MaxTags = 12;
 
     /// <summary>How many other episodes' keys an episode's with lists at most (video section 4.2).</summary>
@@ -210,11 +283,14 @@ public static partial class Video
     /// <summary>The greatest episode number of a <see cref="Place"/> (video section 3.1).</summary>
     public const int MaxEpisode = 99999;
 
-    /// <summary>The heights a picture is stepped to (video sections 3.2 and 5.1).</summary>
-    public static readonly IReadOnlyList<int> Heights = [480, 720, 1080, 1440, 2160, 4320];
+    /// <summary>The length of an extra's name, in code points (video section 3.9).</summary>
+    public const int MaxExtraName = 64;
 
-    /// <summary>The HDR formats a picture may list, in their order.</summary>
-    public static readonly IReadOnlyList<string> HdrFormats = ["hdr10", "hlg", "dv"];
+    /// <summary>
+    /// The heights a picture is stepped to (video section 5.1's coarsening
+    /// of maxHeight); a copy's HDR formats are <see cref="Names.HdrFormats"/>.
+    /// </summary>
+    public static readonly IReadOnlyList<int> Heights = [480, 720, 1080, 1440, 2160, 4320];
 
     [GeneratedRegex(@"^tt[0-9]{7,10}\z")]
     private static partial Regex ImdbRe();
@@ -222,36 +298,16 @@ public static partial class Video
     [GeneratedRegex(@"^[1-9][0-9]{0,9}\z")]
     private static partial Regex TvdbRe();
 
-    /// <summary>Keeps of a peer's tags those <see cref="Languages.ValidTag"/> allows, each once, at most <see cref="MaxTags"/>; a bad tag is skipped alone.</summary>
-    public static IReadOnlyList<string> CleanTags(IEnumerable<string> tags)
-    {
-        ArgumentNullException.ThrowIfNull(tags);
-        var out_ = new List<string>();
-        foreach (var t in tags)
-        {
-            if (out_.Count == MaxTags)
-            {
-                break;
-            }
-
-            if (Languages.ValidTag(t) && !out_.Contains(t, StringComparer.OrdinalIgnoreCase))
-            {
-                out_.Add(t);
-            }
-        }
-
-        return out_;
-    }
-
     /// <summary>
     /// Keeps of an episode's with the keys of other episodes of the same
-    /// series, each once, at most <see cref="MaxWith"/>; a bad key is skipped
-    /// alone.
+    /// series (the same scheme and ID), each once, at most
+    /// <see cref="MaxWith"/>; a bad key is skipped alone.
     /// </summary>
     public static IReadOnlyList<string> CleanWith(VideoKey episode, IEnumerable<string> keys)
     {
         ArgumentNullException.ThrowIfNull(keys);
         var self = episode.ToString();
+        var series = episode.Series;
         var out_ = new List<string>();
         foreach (var s in keys)
         {
@@ -260,8 +316,8 @@ public static partial class Video
                 break;
             }
 
-            if (!VideoKey.TryParse(s, out var k) || k.Kind != "episode" || k.Tmdb != episode.Tmdb || s == self ||
-                out_.Contains(s, StringComparer.OrdinalIgnoreCase))
+            if (s is null || !VideoKey.TryParse(s, out var k) || k.Kind != "episode" || k.Series != series || s == self ||
+                out_.Contains(s, StringComparer.Ordinal))
             {
                 continue;
             }
@@ -311,44 +367,34 @@ public static partial class Video
         return out_;
     }
 
-    /// <summary>Keeps of formats those <see cref="HdrFormats"/> lists, each once, in its order; none for standard range.</summary>
+    /// <summary>Keeps of formats those <see cref="Names.HdrFormats"/> lists, each once, in its order (video section 3.3); none for standard range.</summary>
     public static IReadOnlyList<string> CleanHdr(IEnumerable<string> formats)
     {
         ArgumentNullException.ThrowIfNull(formats);
         var given = formats.ToHashSet(StringComparer.Ordinal);
-        return HdrFormats.Where(given.Contains).ToList();
+        return Names.HdrFormats.Where(given.Contains).ToList();
     }
 
     /// <summary>
     /// Reads one entry of a titles answer as catalog section 3.3 and video
-    /// section 3.1 say: null, to skip it, when it isn't an object whose key,
-    /// kind and library are strings, when the key isn't a canonical video
-    /// key, when its kind isn't the key's, or when it is an episode keyed by
-    /// its TMDB episode ID without a valid place. A member video adds of the
-    /// wrong type counts as absent; a bad entry of one of its lists is
-    /// skipped alone. Whether library is one asked for is the caller's to
-    /// check.
+    /// sections 3.1, 3.8, 3.9 and 3.10 say: null, to skip it, when it isn't
+    /// an object whose key, kind and library are strings, when the key isn't
+    /// a canonical video key of a known scheme, when its kind isn't the
+    /// key's, when it is a film, an episode or an extra whose copies isn't an
+    /// array or keeps no copy (<see cref="Copies.Read(JsonNode?)"/>), an
+    /// episode keyed by its TMDB episode ID without a valid place, or a local
+    /// film or series without a name. A member of the wrong type otherwise
+    /// counts as absent (null among them); a bad entry of one of its lists is
+    /// skipped alone; members a title may not carry are ignored. Whether
+    /// library is one asked for is the caller's to check.
     /// </summary>
-    /// <remarks>The entry is read as <see cref="StrictJson.ReadEntry(JsonNode?)"/> reads it, its nulls dropped in place.</remarks>
+    /// <remarks>The entry isn't changed.</remarks>
     public static VideoTitle? ReadTitle(JsonNode? entry)
     {
-        // hdr null is of the wrong type (core section 2.3): the picture
-        // counts as absent, which dropping the null would hide.
-        var hdrNull = entry is JsonObject e && e.TryGetPropertyValue("video", out var v) && v is JsonObject vo &&
-                      vo.TryGetPropertyValue("hdr", out var h) && h is null;
-        if (StrictJson.ReadEntry(entry) is not { } t)
-        {
-            return null;
-        }
-
-        string key, kind, library;
-        try
-        {
-            key = t.GetString("key") ?? "";
-            kind = t.GetString("kind") ?? "";
-            library = t.GetString("library") ?? "";
-        }
-        catch (ProtocolException)
+        if (entry is not JsonObject o ||
+            JsonMembers.AsString(o["key"]) is not { } key ||
+            JsonMembers.AsString(o["kind"]) is not { } kind ||
+            JsonMembers.AsString(o["library"]) is not { } library)
         {
             return null;
         }
@@ -358,43 +404,66 @@ public static partial class Video
             return null;
         }
 
-        IReadOnlyList<string> audio = [], subtitles = [], with = [];
-        Picture? picture = null;
-        Place? place = null;
-
-        // Languages for films and episodes only, with for episodes only.
-        if (k.Playable)
+        // Extras (section 3.9).
+        string extraType = "", name = "";
+        if (k.Kind == "extra")
         {
-            audio = CleanTags(Music.StringsOf(t["audio"]));
-            subtitles = CleanTags(Music.StringsOf(t["subtitles"]));
-            picture = hdrNull ? null : ReadPicture(t["video"]);
+            extraType = JsonMembers.AsString(o["extraType"]) is { } et && Names.ExtraTypes.Contains(et, StringComparer.Ordinal)
+                ? et
+                : "clip";
+            if (JsonMembers.AsString(o["name"]) is { } n)
+            {
+                name = Music.CleanText(n, MaxExtraName);
+            }
         }
 
-        if (k.Kind == "episode")
-        {
-            with = CleanWith(k, Music.StringsOf(t["with"]));
-        }
-
-        // An episode keyed by its TMDB ID is placed by place, required
-        // (video section 4.1); place on any other title is ignored.
-        if (k.ByEpisodeId && (place = ReadPlace(t["place"])) is null)
+        // The description of a local film or series (section 3.10).
+        LocalDescription? description = null;
+        if (k.Scheme == SchemeLocal && (k.Kind is "movie" or "series") &&
+            (description = CatalogRules.ReadDescription(o, DescriptionBounds.Local)) is null)
         {
             return null;
         }
 
-        var ids = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (k.Kind != "season" && t["ids"] is JsonObject o)
+        // An episode keyed by its TMDB episode ID can't be placed from its
+        // key: without a place, it is skipped (section 4.1).
+        Place? place = null;
+        if (k.EpisodeId > 0 && (place = ReadPlace(o["place"])) is null)
         {
-            foreach (var (scheme, value) in o)
+            return null;
+        }
+
+        IReadOnlyList<string> with = k.Kind == "episode" ? CleanWith(k, Copies.Strings(o["with"])) : [];
+
+        // ids (section 4.3): films, series and episodes of a public database.
+        var ids = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        if (o["ids"] is JsonObject idList && k.Scheme != SchemeLocal && k.Kind is not ("season" or "extra"))
+        {
+            foreach (var (scheme, v) in idList)
             {
-                if (JsonMembers.AsString(value) is { } s && OtherId(scheme, s))
+                if (JsonMembers.AsString(v) is { } value && OtherId(scheme, value))
                 {
-                    ids[scheme] = s;
+                    ids[scheme] = value;
                 }
             }
         }
 
-        return new VideoTitle(key, kind, library, audio, subtitles, picture, place, with, ids);
+        // Copies (sections 3.2 and 3.8).
+        IReadOnlyList<Copy> copies = [];
+        if (k.Playable)
+        {
+            if (o.TryGetPropertyValue("copies", out var list) && list is not JsonArray)
+            {
+                return null;
+            }
+
+            if ((copies = Copies.ReadList(list as JsonArray)).Count == 0)
+            {
+                return null;
+            }
+        }
+
+        return new VideoTitle(key, kind, library, copies, place, with, ids, extraType, name, description);
     }
 
     /// <summary>Reads one entry of a titles answer from its bytes, as <see cref="ReadTitle(JsonNode?)"/>; null too when they aren't I-JSON.</summary>
@@ -411,48 +480,19 @@ public static partial class Video
     }
 
     // Reads place as a receiver keeps it (video section 3.1): null unless it
-    // is an object whose season and episode are MSFP integers in range;
-    // other members are ignored.
+    // is an object whose season and episode are MSFP integers in range
+    // (core section 2.3: 1.0 and "1" aren't); other members are ignored.
     private static Place? ReadPlace(JsonNode? node)
     {
-        if (node is not JsonObject o)
+        if (node is not JsonObject o || !Copies.Integer(o["season"], 0, MaxSeason, out var season) ||
+            !Copies.Integer(o["episode"], 0, MaxEpisode, out var episode))
         {
             return null;
         }
 
-        var season = Music.IntegerIn(o["season"], 0, MaxSeason);
-        var episode = Music.IntegerIn(o["episode"], 0, MaxEpisode);
-        return season < 0 || episode < 0 ? null : new Place((int)season, (int)episode);
+        return new Place((int)season, (int)episode);
     }
 
-    // Reads video as a receiver keeps it (video section 3.1): null, absent,
-    // unless it is an object whose height is one of Heights as an MSFP
-    // integer, and whose hdr, when present, is a list; in hdr, an entry
-    // that isn't a string or a format of HdrFormats is skipped alone.
-    private static Picture? ReadPicture(JsonNode? node)
-    {
-        if (node is not JsonObject o)
-        {
-            return null;
-        }
-
-        var height = Music.IntegerIn(o["height"], 1, 4320);
-        if (!Heights.Contains((int)height))
-        {
-            return null;
-        }
-
-        IReadOnlyList<string> hdr = [];
-        if (o.TryGetPropertyValue("hdr", out var list))
-        {
-            if (list is not JsonArray)
-            {
-                return null;
-            }
-
-            hdr = CleanHdr(Music.StringsOf(list));
-        }
-
-        return new Picture((int)height, hdr);
-    }
+    // Whether a node is JSON true.
+    internal static bool True(JsonNode? node) => node is JsonValue v && v.GetValueKind() == JsonValueKind.True;
 }
