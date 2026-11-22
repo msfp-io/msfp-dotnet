@@ -165,9 +165,6 @@ public sealed class CatalogTests
         public ValueTask<TitlePage> TitlesAsync(IReadOnlyList<string> libraries, string after, int limit, CancellationToken ct) =>
             h.TitlesAsync(libraries, after, limit, ct);
 
-        public ValueTask<IReadOnlyList<Copy>> CopiesAsync(string key, IReadOnlyList<string> libraries, CancellationToken ct) =>
-            h.CopiesAsync(key, libraries, ct);
-
         public virtual ValueTask<long> SeqAsync(CancellationToken ct) => ValueTask.FromResult(Seq);
 
         public async ValueTask<ChangePage> ChangesAsync(IReadOnlyList<string> libraries, long since, string after, int limit, CancellationToken ct)
@@ -481,7 +478,7 @@ public sealed class CatalogTests
         Assert.Equal(["fr", "de", "en"], v.AudioLanguages());
         Assert.Equal(["fr"], v.SubtitleLanguages());
         var c = v.Copies[1];
-        Assert.Equal((2, 1000L, "e0", "Copy en"), (c.Chapters.Count, c.Size, c.ETag, c.Name));
+        Assert.Equal((2, 20L, "e0", "Copy en"), (c.Chapters.Count, c.Size, c.ETag, c.Name));
         Assert.All(v.Copies, x => Assert.StartsWith("ver_", x.Id, StringComparison.Ordinal));
         var body = s.Exchanges("titles")[^1].ResponseBody;
         Assert.DoesNotContain("movie/tmdb/1#", body, StringComparison.Ordinal);

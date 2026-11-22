@@ -140,7 +140,7 @@ public sealed class TitlesTests
         var b = target[..^"image".Length];
         Assert.Equal(404, await HostKit.GetAsync(s.A, b + "file"));
         Assert.Equal(404, await HostKit.GetAsync(s.A, b + "master.m3u8"));
-        Assert.Equal(404, await HostKit.GetAsync(s.A, target, "HEAD"));
+        Assert.Equal(405, await HostKit.GetAsync(s.A, target, "HEAD"));
         Assert.Equal(404, await HostKit.GetAsync(s.A, target, "GET", "Origin", "https://x.example"));
 
         // A title that isn't local, or isn't kept with an image: not asked.

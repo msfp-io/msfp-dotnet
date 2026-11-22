@@ -4,7 +4,7 @@ namespace Msfp.Tests;
 
 // What MSFP says for media servers other than Jellyfin (the spec's
 // api/platforms.md; msfp-go's platforms_test.go): a copy of several parts,
-// media servers' language codes, a marker whose end isn't known.
+// media servers' language codes.
 public sealed class PlatformTests
 {
     private const string Film = "movie/tmdb/949";
@@ -15,9 +15,12 @@ public sealed class PlatformTests
     public async Task SeveralPartsNeverFile()
     {
         var h = HostKit.FilmHost();
-        h.Info["movie/tmdb/949#0"].Parts = 2;
+        h.EditCopy(Film, 0, c => c with { Parts = [new CopyPart(10, 2_700_000), new CopyPart(10, 2_700_000)] });
         h.Protocol = "file";
         using var s = await Sharing.StartAsync(h);
+        // Asked as file: refused before the host is asked.
+        Assert.Equal(MsfpError.DeliveryRefused, (await Assert.ThrowsAsync<MsfpException>(() =>
+            s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film, AudioLanguage = "en", Delivery = Playback.DeliveryFile }))).Code);
         await Assert.ThrowsAsync<MsfpException>(() => s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film, AudioLanguage = "en" }));
         Assert.Equal(2, Assert.Single(h.Starts()).Parts);
         await s.A.WaitAsync();
@@ -48,11 +51,6 @@ public sealed class PlatformTests
                 AudioTracks = [c.AudioTracks[0] with { Language = codes[i] }, new CopyAudio("a1", "aac") { Language = new[] { "fra", "und" }[i] }],
                 SubtitleTracks = [new CopySubtitle("s0", "subrip") { Language = "ger" }, new CopySubtitle("s1", "subrip") { Language = "fre-ca" }],
             };
-            var copy = h.Copies[Film][i];
-            copy.Audio = [codes[i]];
-            var info = h.Info[copy.Handle];
-            info.AudioTracks = [new Track { Id = "a0", Label = "Audio", Language = codes[i], Default = true }];
-            info.SubtitleTracks = [new Track { Id = "s0", Label = "Deutsch", Language = "GER" }, new Track { Id = "s1", Label = "?", Language = "und" }];
         }
 
         using var s = await Sharing.StartAsync(h);
@@ -60,25 +58,14 @@ public sealed class PlatformTests
         Assert.Equal(["en", "fr"], kept.AudioLanguages());
         Assert.Equal(["de", "fr-CA"], kept.SubtitleLanguages());
         var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film, AudioLanguage = "fr", SubtitleLanguage = "de" });
-        Assert.Equal(Film + "#1", h.Starts()[0].Copy);
-        Assert.Equal("fr", pb.AudioTracks[0].Language);
+        // The first copy whose audio has the language: the English one's
+        // second track, fra (playback section 2.6).
+        Assert.Equal(Film + "#0", h.Starts()[0].Copy);
+        Assert.Equal(("a1", "fr"), (pb.AudioTrack, pb.AudioTracks[1].Language));
         Assert.Equal("s0", pb.SubtitleTrack);
-        Assert.Equal("de", pb.SubtitleTracks[0].Language);
-        Assert.True(string.IsNullOrEmpty(pb.SubtitleTracks[1].Language));
+        Assert.Equal(("de", "fr-CA"), (pb.SubtitleTracks[0].Language, pb.SubtitleTracks[1].Language));
         var body = s.Exchanges("play")[0].ResponseBody;
         Assert.DoesNotContain("\"fre\"", body, StringComparison.Ordinal);
         Assert.DoesNotContain("\"und\"", body, StringComparison.Ordinal);
-    }
-
-    // A marker whose end the host doesn't know ends at the copy's length
-    // (video section 5.3).
-    [Fact]
-    public async Task MarkerToTheEnd()
-    {
-        var h = HostKit.FilmHost();
-        h.Segments = [new Segment("intro", 0, 60_000), new Segment("outro", 5_300_000, 0)];
-        using var s = await Sharing.StartAsync(h);
-        var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film });
-        Assert.Equal([new Segment("intro", 0, 60_000), new Segment("outro", 5_300_000, 5_400_000)], pb.Segments);
     }
 }

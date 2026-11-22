@@ -234,7 +234,7 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
                 var pb = await engine.PlayAsync(peerAndKey[0], new Msfp.PlayRequest
                 {
                     Title = peerAndKey.Length > 1 ? peerAndKey[1] : "",
-                    Capabilities = new Capabilities
+                    Capabilities = new PlayCapabilities
                     {
                         Containers = ["mp4", "mkv", "webm", "ts"],
                         VideoCodecs = ["h264", "hevc", "vp9", "av1"],
@@ -411,11 +411,20 @@ internal sealed class AspNetHeaders(IHeaderDictionary headers) : IHeaderReader
 /// An answer of the engine's media written on ASP.NET Core's response: the
 /// status and only the headers MSFP needs, no content coding.
 /// </summary>
-internal sealed class AspNetSink(HttpResponse response) : IResponseSink
+internal sealed class AspNetSink(HttpResponse response) : IResponseSink, IETagSink
 {
+    private string _etag = "";
+
+    public void SetETag(string etag) => _etag = etag;
+
     public void Start(int status, string contentType, long length, string contentRange)
     {
         response.StatusCode = status;
+        if (status == 405)
+        {
+            response.Headers.Allow = "GET";
+        }
+
         if (contentType.Length > 0)
         {
             response.ContentType = contentType;
@@ -434,6 +443,10 @@ internal sealed class AspNetSink(HttpResponse response) : IResponseSink
         if (status is 200 or 206)
         {
             response.Headers.AcceptRanges = "bytes";
+            if (_etag.Length > 0)
+            {
+                response.Headers.ETag = "\"" + _etag + "\"";
+            }
         }
     }
 

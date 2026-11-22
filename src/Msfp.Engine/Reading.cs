@@ -288,37 +288,30 @@ public sealed partial class MsfpEngine
     // when they aren't an object of integers in range.
     private static Limits? ReadLimits(JsonNode? raw, bool music)
     {
-        if (raw is null || StrictJson.ReadEntry(raw.DeepClone()) is not { } w)
+        if (raw is null || Playback.ReadLimits(raw.DeepClone()) is not { HasStreams: true, HasTranscodes: true } k)
         {
             return null;
         }
 
+        var w = k.Limits;
+        var l = new Limits
+        {
+            Streams = w.Streams, Transcodes = w.Transcodes, BitrateKbps = w.BitrateKbps, Downloads = w.Downloads,
+            DownloadsPerDay = w.DownloadsPerDay, DownloadKbps = w.DownloadKbps, ScansPerDay = w.ScansPerDay,
+        };
+        if (music && k.HasAudioStreams && k.HasAudioTranscodes)
+        {
+            l.Audio = true;
+            l.AudioStreams = w.AudioStreams;
+            l.AudioTranscodes = w.AudioTranscodes;
+        }
+
         try
         {
-            var streams = w.GetInteger("streams");
-            var transcodes = w.GetInteger("transcodes");
-            var bitrate = w.GetInteger("bitrateKbps") ?? 0;
-            var audioStreams = w.GetInteger("audioStreams");
-            var audioTranscodes = w.GetInteger("audioTranscodes");
-            if (streams is null || transcodes is null || streams > int.MaxValue || transcodes > int.MaxValue || bitrate > int.MaxValue ||
-                streams < int.MinValue || transcodes < int.MinValue || bitrate < int.MinValue)
-            {
-                return null;
-            }
-
-            var l = new Limits { Streams = (int)streams, Transcodes = (int)transcodes, BitrateKbps = (int)bitrate };
-            if (music && audioStreams is { } s && audioTranscodes is { } t && s is >= int.MinValue and <= int.MaxValue &&
-                t is >= int.MinValue and <= int.MaxValue)
-            {
-                l.Audio = true;
-                l.AudioStreams = (int)s;
-                l.AudioTranscodes = (int)t;
-            }
-
             l.Check();
             return l;
         }
-        catch (Exception e) when (e is ProtocolException or MsfpException)
+        catch (MsfpException)
         {
             return null;
         }

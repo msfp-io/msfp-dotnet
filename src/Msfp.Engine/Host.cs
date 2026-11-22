@@ -296,8 +296,11 @@ public interface IOwnLogTx
 /// Films, episodes, extras and tracks carry their copies, described as their
 /// files are (MSFP video section 3.2, music section 3.3), so that a viewer's
 /// server lists them as files of its own before anyone plays; each copy's ID
-/// is the host's handle of it, the one CopiesAsync gives. Extras are titles
-/// of their own, keyed under their film, series or season
+/// is the host's handle of it, the one <see cref="IPlayback"/> and
+/// <see cref="IMedia"/> are given. play takes the title's copies as the
+/// catalog sends them (best first, the version IDs made of these handles):
+/// a copy is played only as it is described. Extras are titles of their
+/// own, keyed under their film, series or season
 /// ("movie/tmdb/348/x/&lt;opaque&gt;", kind "extra"), listed in its
 /// libraries. Titles no public database names are keyed under the local
 /// scheme ("movie/local/&lt;opaque&gt;"), with a name (and a year, an image)
@@ -322,18 +325,6 @@ public interface ICatalog
     /// <param name="limit">The most.</param>
     /// <param name="ct">Cancels.</param>
     ValueTask<TitlePage> TitlesAsync(IReadOnlyList<string> libraries, string after, int limit, CancellationToken ct);
-
-    /// <summary>
-    /// The copies of exactly this film, episode, extra or track in these
-    /// libraries (for an episode inside a copy holding several, the copy that
-    /// holds it), in the order of the title's Copies; none: the engine
-    /// answers 404.
-    /// </summary>
-    /// <remarks>B2: play may take its copies from the title's Copies instead.</remarks>
-    /// <param name="key">The title's key.</param>
-    /// <param name="libraries">The host's library IDs.</param>
-    /// <param name="ct">Cancels.</param>
-    ValueTask<IReadOnlyList<Copy>> CopiesAsync(string key, IReadOnlyList<string> libraries, CancellationToken ct);
 }
 
 /// <summary>
@@ -399,33 +390,60 @@ public interface ISeqBumper
 }
 
 /// <summary>
+/// What an <see cref="ICatalog"/> implements, besides ICatalog, when it
+/// shares the lyrics of its tracks (MSFP music section 6): the copies whose
+/// Lyrics says "plain" or "synced".
+/// </summary>
+public interface ILyrics
+{
+    /// <summary>
+    /// A copy's lyrics (its handle), at most 8 sets, times in milliseconds
+    /// (MSFP music section 6). The engine cleans them as a viewer's server
+    /// keeps them (<see cref="Music.ReadLyrics"/>) before they leave.
+    /// <see cref="MsfpError.NotFound"/> for none.
+    /// </summary>
+    /// <param name="copy">The copy's handle.</param>
+    /// <param name="ct">Cancels.</param>
+    ValueTask<IReadOnlyList<LyricsSet>> LyricsAsync(string copy, CancellationToken ct);
+}
+
+/// <summary>
 /// The owning side of a peer's playback here. The engine has checked the
-/// request, found the copies, picked the copy and refused what the
-/// pairing's limits refuse early; then it asks the host to describe the
-/// copy, chooses the tracks, and asks it to start.
+/// request (<see cref="Playback.ReadPlay"/>), found the title's copies as the
+/// catalog sends them, picked the copy and the tracks, refused what MSFP
+/// refuses of the delivery asked and what the pool's limits refuse early;
+/// then it asks the host how to serve the copy apart (Describe), and to
+/// start.
 /// </summary>
 public interface IPlayback
 {
-    /// <summary>The copy's tracks, for the engine to choose from.</summary>
+    /// <summary>
+    /// What the catalog doesn't say of a copy: its previews' layout, its
+    /// fonts, the subtitle tracks it can't serve apart.
+    /// </summary>
     /// <param name="copy">The copy's handle.</param>
     /// <param name="ct">Cancels.</param>
     ValueTask<CopyInfo> DescribeAsync(string copy, CancellationToken ct);
 
     /// <summary>
-    /// Starts serving the copy. The host chooses how (direct, remux,
-    /// transcode), then calls <see cref="StartRequest.Admit"/> before starting
-    /// any work. Errors: NotPlayable, ServerBusy, StreamLimitReached.
+    /// Starts serving the copy for its purpose and delivery. The host chooses
+    /// how when no delivery is asked (direct, remux, transcode), and serves
+    /// exactly the delivery asked otherwise; then it calls
+    /// <see cref="StartRequest.Admit"/> before starting any work. Errors:
+    /// NotPlayable, DeliveryRefused, ServerBusy, StreamLimitReached.
     /// </summary>
     /// <param name="request">What to start.</param>
     /// <param name="ct">Cancels.</param>
     ValueTask<Started> StartAsync(StartRequest request, CancellationToken ct);
 
-    /// <summary>Passes on a peer's progress, for the host's live view.</summary>
-    /// <param name="handle">The playback's handle.</param>
-    /// <param name="positionMs">Where it is.</param>
-    /// <param name="paused">It is paused.</param>
+    /// <summary>
+    /// Passes on a peer's progress or stop, for the host's live view and its
+    /// viewers' progress; a Late one is of a download's playback ended
+    /// already (the viewer watched offline).
+    /// </summary>
+    /// <param name="report">The report.</param>
     /// <param name="ct">Cancels.</param>
-    ValueTask ProgressAsync(string handle, long positionMs, bool paused, CancellationToken ct);
+    ValueTask ProgressAsync(Report report, CancellationToken ct);
 
     /// <summary>Ends a playback: once for each Start that succeeded.</summary>
     /// <param name="handle">The playback's handle.</param>
@@ -436,13 +454,20 @@ public interface IPlayback
 
 /// <summary>
 /// Serves the bytes of a live playback. The engine has checked the ticket,
-/// the request and the Range header's form, and cuts the response when the
-/// playback ends. Errors: NotFound, RangeNotSatisfiable, ServerBusy.
+/// the request and its Range header, and cuts the response when the
+/// playback ends. For <see cref="MediaKind.File"/> it has resolved the range
+/// against the copy's exact size (range null for the whole file, else First
+/// to Last, both within it), writes the status and headers itself (206 or
+/// 200, Content-Range, ETag, Accept-Ranges) and sends only those bytes: the
+/// host writes the copy's bytes from First, as they are, and its Start's
+/// content type alone is kept. Subtitles, ASS, pictures and fonts are read
+/// whole and rebuilt or checked before they leave; playlists are checked
+/// against MSFP's subset. Errors: NotFound, RangeNotSatisfiable, ServerBusy.
 /// </summary>
 public interface IMedia
 {
     /// <summary>Serves what path asks for, of the playback, to output.</summary>
-    /// <param name="handle">The playback's handle.</param>
+    /// <param name="handle">The playback's handle (a copy's, for <see cref="MediaPath.OfCopy"/>).</param>
     /// <param name="path">What is asked for.</param>
     /// <param name="range">The byte range asked for; null for the whole.</param>
     /// <param name="output">Where to write the answer.</param>
@@ -467,6 +492,19 @@ public interface IResponseSink
     /// <param name="data">The bytes.</param>
     /// <param name="ct">Cancels.</param>
     ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct);
+}
+
+/// <summary>
+/// What an <see cref="IResponseSink"/> a host gives
+/// <see cref="MsfpEngine.FetchAsync"/> implements besides, when it presents
+/// a copy as a file of its own: the file's ETag is given through it before
+/// Start, so that the host may give it to its clients.
+/// </summary>
+public interface IETagSink
+{
+    /// <summary>The file's etag (without quotes).</summary>
+    /// <param name="etag">The etag.</param>
+    void SetETag(string etag);
 }
 
 /// <summary>

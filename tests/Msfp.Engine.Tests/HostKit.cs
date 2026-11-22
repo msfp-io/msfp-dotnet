@@ -4,8 +4,13 @@ using Msfp.Protocol;
 namespace Msfp.Tests;
 
 /// <summary>An IResponseSink in memory (msfp-go's sink).</summary>
-internal sealed class MemorySink : IResponseSink
+internal sealed class MemorySink : IResponseSink, IETagSink
 {
+    /// <summary>The ETag the engine gave, "" for none.</summary>
+    public string ETag { get; private set; } = "";
+
+    public void SetETag(string etag) => ETag = etag;
+
     public int Status { get; private set; }
 
     public string ContentType { get; private set; } = "";
@@ -59,7 +64,7 @@ internal sealed class MemorySink : IResponseSink
 /// admits the method set (direct by default) and serves media from files
 /// set by name.
 /// </summary>
-internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages
+internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
 {
     private readonly object _lock = new();
 
@@ -67,8 +72,7 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages
 
     public Dictionary<string, Title> Titles { get; } = new(StringComparer.Ordinal);
 
-    public Dictionary<string, List<Copy>> Copies { get; } = new(StringComparer.Ordinal);
-
+    /// <summary>What Describe gives, by copy handle.</summary>
     public Dictionary<string, CopyInfo> Info { get; } = new(StringComparer.Ordinal);
 
     public string Method { get; set; } = "direct";
@@ -79,13 +83,27 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages
 
     public bool NoAdmit { get; set; }
 
-    public List<Segment>? Segments { get; set; }
+    /// <summary>Start prepares every queued track.</summary>
+    public bool Queue { get; set; }
 
     public List<StartRequest> StartedList { get; } = [];
 
     public Dictionary<string, EndReason> Stopped { get; } = new(StringComparer.Ordinal);
 
     public List<long> ProgressList { get; } = [];
+
+    public List<Report> ReportList { get; } = [];
+
+    /// <summary>What LyricsAsync gives, by copy handle.</summary>
+    public Dictionary<string, IReadOnlyList<LyricsSet>> Lyrics { get; } = new(StringComparer.Ordinal);
+
+    public ValueTask<IReadOnlyList<LyricsSet>> LyricsAsync(string copy, CancellationToken ct)
+    {
+        lock (_lock)
+        {
+            return Lyrics.TryGetValue(copy, out var l) ? ValueTask.FromResult(l) : throw new MsfpException(MsfpError.NotFound);
+        }
+    }
 
     public Dictionary<string, byte[]> Files { get; set; } = new(StringComparer.Ordinal);
 
@@ -117,8 +135,8 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages
 
     /// <summary>
     /// A film in library lib, with one copy per audio language given (handle
-    /// "&lt;key&gt;#&lt;n&gt;"), each with an audio track and a French subtitle
-    /// track (and a PGS one).
+    /// "&lt;key&gt;#&lt;n&gt;", size 20, the size of Files["file"]), each with
+    /// an audio track, a French text subtitle track and a French PGS one.
     /// </summary>
     public void Film(string lib, string key, params string[] audio)
     {
@@ -126,25 +144,35 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages
         {
             var t = new VideoTitle { Key = key, Kind = "movie", Libraries = [lib], Copies = [] };
             Titles[key] = t;
-            Copies[key] = [];
             for (var i = 0; i < audio.Length; i++)
             {
                 var a = audio[i];
                 var handle = key + "#" + i.ToString(CultureInfo.InvariantCulture);
-                t.Copies.Add(new Msfp.Protocol.Copy(handle, 5_400_000, "mkv", 1000 + i, "e" + i.ToString(CultureInfo.InvariantCulture),
+                t.Copies.Add(new Msfp.Protocol.Copy(handle, 5_400_000, "mkv", 20, "e" + i.ToString(CultureInfo.InvariantCulture),
                     [new CopyAudio("a0", "aac") { Language = a, Channels = 2, Default = true }])
                 {
                     Name = "Copy " + a,
                     SubtitleTracks = [new CopySubtitle("s0", "subrip") { Language = "fr" }, new CopySubtitle("s1", "pgs") { Language = "fr" }],
                 });
-                Copies[key].Add(new Copy { Handle = handle, Name = "Copy " + a, Audio = [a], Library = lib });
-                Info[handle] = new CopyInfo
-                {
-                    DurationMs = 5_400_000,
-                    AudioTracks = [new Track { Id = "a0", Label = "Audio " + a, Language = a, Channels = 2, Default = true }],
-                    SubtitleTracks = [new Track { Id = "s0", Label = "Français", Language = "fr" }, new Track { Id = "s1", Label = "PGS", Language = "fr", Pictures = true }],
-                };
             }
+        }
+    }
+
+    /// <summary>Changes copy n of a video title (msfp-go's copyOf).</summary>
+    public void EditCopy(string key, int n, Func<Msfp.Protocol.Copy, Msfp.Protocol.Copy> edit)
+    {
+        lock (_lock)
+        {
+            var copies = ((VideoTitle)Titles[key]).Copies!;
+            copies[n] = edit(copies[n]);
+        }
+    }
+
+    public List<Report> Reports()
+    {
+        lock (_lock)
+        {
+            return [.. ReportList];
         }
     }
 
@@ -153,7 +181,6 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages
         lock (_lock)
         {
             Titles.Remove(key);
-            Copies.Remove(key);
         }
     }
 
@@ -216,14 +243,6 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages
         }
     }
 
-    public ValueTask<IReadOnlyList<Copy>> CopiesAsync(string key, IReadOnlyList<string> libraries, CancellationToken ct)
-    {
-        lock (_lock)
-        {
-            return ValueTask.FromResult<IReadOnlyList<Copy>>(Copies.GetValueOrDefault(key, []).Where(c => libraries.Contains(c.Library)).ToList());
-        }
-    }
-
     public ValueTask<CopyInfo> DescribeAsync(string copy, CancellationToken ct)
     {
         lock (_lock)
@@ -239,10 +258,10 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages
         bool noAdmit;
         Task? hold;
         SemaphoreSlim? entered;
-        List<Segment>? segments;
+        bool queue;
         lock (_lock)
         {
-            (method, protocol, error, noAdmit, hold, entered, segments) = (Method, Protocol, StartError, NoAdmit, Hold, Entered, Segments);
+            (method, protocol, error, noAdmit, hold, entered, queue) = (Method, Protocol, StartError, NoAdmit, Hold, Entered, Queue);
         }
 
         if (hold is not null)
@@ -254,6 +273,20 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages
         if (error is not null)
         {
             throw error;
+        }
+
+        // A delivery asked is served as asked.
+        switch (request.Delivery)
+        {
+            case Playback.DeliveryFile:
+                (method, protocol) = ("direct", "file");
+                break;
+            case Playback.DeliveryRemux:
+                (method, protocol) = ("remux", "hls");
+                break;
+            case Playback.DeliveryTranscode:
+                (method, protocol) = ("transcode", "hls");
+                break;
         }
 
         if (!noAdmit)
@@ -268,16 +301,22 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages
             return new Started
             {
                 Handle = "h" + _handles.ToString(CultureInfo.InvariantCulture), Method = method, Protocol = protocol, MimeType = "video/mp4",
-                PositionMs = request.StartMs, Info = new PlaybackInfo { Container = "mp4" }, Segments = segments,
+                PositionMs = request.StartMs, Info = new PlaybackInfo { Container = "mp4" },
+                Queue = queue ? request.Queue.Select(q => new StartedEntry(q.Place, method, protocol, "audio/flac")).ToList() : null,
             };
         }
     }
 
-    public ValueTask ProgressAsync(string handle, long positionMs, bool paused, CancellationToken ct)
+    public ValueTask ProgressAsync(Report report, CancellationToken ct)
     {
         lock (_lock)
         {
-            ProgressList.Add(positionMs);
+            if (!report.Stop && !report.Late)
+            {
+                ProgressList.Add(report.PositionMs);
+            }
+
+            ReportList.Add(report);
         }
 
         return ValueTask.CompletedTask;
@@ -296,18 +335,27 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages
     // A MediaPath's name under the stream, as Files keys it.
     public static string MediaName(MediaPath p) => p.Kind switch
     {
-        MediaKind.Master => "master.m3u8",
-        MediaKind.File => "file",
-        MediaKind.Subtitles => $"subtitles/{p.Track}/{p.Part}",
-        MediaKind.Pictures => $"pictures/{p.Track}/{p.Part}",
+        MediaKind.Master => EntryOf(p) + "master.m3u8",
+        MediaKind.File => EntryOf(p) + "file",
+        MediaKind.Subtitles => $"subtitles/{p.Track}/{Part(p)}",
+        MediaKind.Ass => $"ass/{p.Track}/{Part(p)}",
+        MediaKind.Pictures => $"pictures/{p.Track}/{Part(p)}",
+        MediaKind.Font => $"fonts/{p.Font}",
         MediaKind.Sheet => $"trickplay/{p.Sheet}",
-        _ => p.Name,
+        _ => EntryOf(p) + p.Name,
     };
+
+    private static string Part(MediaPath p) => p.Whole ? "whole" : p.Part.ToString(CultureInfo.InvariantCulture);
+
+    // A queue entry's folder ("" for the playback's own stream).
+    private static string EntryOf(MediaPath p) => p.Entry == 0 ? "" : $"queue/{p.Entry - 1}/";
 
     private static string TypeOf(MediaPath p) => p.Kind switch
     {
         MediaKind.Master or MediaKind.Playlist => "application/vnd.apple.mpegurl",
         MediaKind.Subtitles => "text/vtt; charset=utf-8",
+        MediaKind.Ass => "text/x-ass",
+        MediaKind.Font => "font/ttf",
         MediaKind.Sheet => "image/jpeg",
         MediaKind.Pictures => "application/octet-stream",
         _ => "video/mp4",
@@ -484,11 +532,29 @@ internal static class HostKit
             headers.Add(new("Content-Range", sink.ContentRange));
         }
 
+        if (sink.Status is 200 or 206)
+        {
+            headers.Add(new("Accept-Ranges", "bytes"));
+            if (sink.ETag.Length > 0)
+            {
+                headers.Add(new("ETag", "\"" + sink.ETag + "\""));
+            }
+        }
+
+        if (sink.Status == 405)
+        {
+            headers.Add(new("Allow", "GET"));
+        }
+
         return new MsfpResponse { Status = sink.Status, Headers = headers, Body = sink.Body };
     }
 
     /// <summary>A GET on a server's stream route, as sent (nothing decoded), with headers in pairs: its status.</summary>
-    public static async Task<int> GetAsync(TestServer s, string target, string method = "GET", params string[] headers)
+    public static async Task<int> GetAsync(TestServer s, string target, string method = "GET", params string[] headers) =>
+        (await GetFullAsync(s, target, method, headers)).Status;
+
+    /// <summary>A request on a server's stream route, as sent (nothing decoded), with headers in pairs: its answer.</summary>
+    public static async Task<MsfpResponse> GetFullAsync(TestServer s, string target, string method = "GET", params string[] headers)
     {
         var h = new HeaderList();
         for (var i = 0; i + 1 < headers.Length; i += 2)
@@ -496,12 +562,11 @@ internal static class HostKit
             h.Add(headers[i], headers[i + 1]);
         }
 
-        var res = await StreamAsync(s.Engine, new MsfpRequest { Method = method, Target = target, Headers = h, Body = Stream.Null });
-        return res.Status;
+        return await StreamAsync(s.Engine, new MsfpRequest { Method = method, Target = target, Headers = h, Body = Stream.Null });
     }
 
     public const string Master = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-STREAM-INF:BANDWIDTH=5000000\nv0.m3u8\n";
-    public const string MediaList = "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:6.0,\nseg0.m4s\n#EXT-X-ENDLIST\n";
+    public const string MediaList = "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:6.0,\nseg0.m4s\n#EXT-X-ENDLIST\n";
 
     /// <summary>A host with one film, movie/tmdb/949, in English and French, and its media.</summary>
     public static FakeHost FilmHost()
@@ -514,10 +579,18 @@ internal static class HostKit
             ["v0.m3u8"] = System.Text.Encoding.UTF8.GetBytes(MediaList),
             ["init.mp4"] = "init"u8.ToArray(),
             ["seg0.m4s"] = "0123456789abcdefghij"u8.ToArray(),
+            ["file"] = "0123456789abcdefghij"u8.ToArray(),
             ["subtitles/s0/0"] = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<i>Bonjour</i>\n"u8.ToArray(),
         };
         return h;
     }
 
     public static byte[] Bytes(string s) => System.Text.Encoding.UTF8.GetBytes(s);
+
+    /// <summary>A track of the album 0c…0002, with one FLAC copy of handle copy, 20 bytes long (msfp-go's musicTrack).</summary>
+    public static MusicTitle MusicTrack(string key, string copy, string lyrics = "") => new()
+    {
+        Key = key, Kind = "track", Libraries = ["music"], Name = "x", Album = "album/mb/0b000000-0000-4000-8000-000000000002", Disc = 1, Number = 1,
+        Copies = [new MusicCopy { Id = copy, Name = "FLAC", DurationMs = 200_000, Container = "flac", Codec = "flac", Size = 20, Etag = "m-" + copy, Lyrics = lyrics }],
+    };
 }

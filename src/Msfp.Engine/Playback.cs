@@ -1,7 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Msfp.Protocol;
 
@@ -9,21 +8,42 @@ namespace Msfp;
 
 /// <summary>
 /// A peer's playback here, for the host's live view: the peer (never a
-/// person), the title played, how, since when, and whether it was used
-/// since it started ("started" or "active"). Handle is the host's own
-/// (<see cref="Started.Handle"/>), for a host that ends a playback from its
-/// side (<see cref="MsfpEngine.StopPlayback"/> with ID and its reason).
+/// person), the title played, how, for what purpose, since when, and
+/// whether it was used since it started ("started" or "active"). Handle is
+/// the host's own (<see cref="Started.Handle"/>), for a host that ends a
+/// playback from its side (<see cref="MsfpEngine.StopPlayback"/> with ID and
+/// its reason).
 /// </summary>
 /// <param name="Id">The playback's ID.</param>
 /// <param name="Peer">The peer's ID.</param>
 /// <param name="PeerName">The peer's name.</param>
 /// <param name="Title">The title's key.</param>
 /// <param name="Method">direct, remux or transcode.</param>
+/// <param name="Purpose">play, download or scan.</param>
 /// <param name="Handle">The host's handle.</param>
 /// <param name="Since">When it started.</param>
 /// <param name="State">"started" or "active".</param>
-public sealed record PlaybackView(string Id, string Peer, string PeerName, string Title, string Method, string Handle,
+public sealed record PlaybackView(string Id, string Peer, string PeerName, string Title, string Method, string Purpose, string Handle,
     DateTimeOffset Since, string State);
+
+/// <summary>How a subtitle track of a playback is served apart: as WebVTT (text), as ASS too (ass), or as PGS (pictures).</summary>
+internal readonly record struct SubtitleServed(bool Text, bool Ass, bool Pictures);
+
+/// <summary>
+/// A stream of a playback: its own (entry 0) or a queue entry's: how it is
+/// served, and for a file its exact size and etag.
+/// </summary>
+internal sealed record EntryServed(string Protocol, long Size, string Etag);
+
+/// <summary>
+/// A playback ended lately: whose, why, when; for a download, what its late
+/// reports need (playback section 7).
+/// </summary>
+internal sealed record EndedPlay(string Peer, EndReason Reason, DateTimeOffset At, string Purpose, string Title,
+    IReadOnlyList<string> Queue, string Handle, DateTimeOffset PlayedAt)
+{
+    public DateTimeOffset? LastAt { get; set; }
+}
 
 /// <summary>A peer's live playback here.</summary>
 internal sealed class LivePlayback
@@ -36,13 +56,17 @@ internal sealed class LivePlayback
 
     public string Title { get; init; } = "";
 
-    public string Library { get; init; } = "";
+    /// <summary>The request's queue, by place.</summary>
+    public IReadOnlyList<string> Queue { get; init; } = [];
+
+    /// <summary>The host's libraries holding the title, offered when it started.</summary>
+    public IReadOnlyList<string> Libraries { get; init; } = [];
 
     public string Handle { get; init; } = "";
 
     public string Method { get; init; } = "";
 
-    public string Protocol { get; init; } = "";
+    public string Purpose { get; init; } = "";
 
     public bool AudioOnly { get; init; }
 
@@ -52,10 +76,20 @@ internal sealed class LivePlayback
 
     public int Sheets { get; set; }
 
-    /// <summary>Track ID: pictures.</summary>
-    public Dictionary<string, bool> Subtitles { get; } = new(StringComparer.Ordinal);
+    public int Fonts { get; set; }
+
+    /// <summary>The copy's audio track IDs.</summary>
+    public HashSet<string> Audio { get; } = new(StringComparer.Ordinal);
+
+    public Dictionary<string, SubtitleServed> Subtitles { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>0: its own stream; n+1: queue entry n.</summary>
+    public Dictionary<int, EntryServed> Entries { get; } = [];
 
     public CountSlot Slot { get; init; } = null!;
+
+    /// <summary>A download's, at downloadKbps; null for none.</summary>
+    public Pacer? Pace { get; set; }
 
     /// <summary>Cancelled when it ends: its open responses are cut.</summary>
     public CancellationTokenSource Ended { get; } = new();
@@ -66,15 +100,23 @@ internal sealed class LivePlayback
     public bool Active { get; set; }
 
     public int Open { get; set; }
+
+    public DateTimeOffset? LastAt { get; set; }
+
+    public long ScanSent { get; set; }
+
+    public int ScanReads { get; set; }
 }
 
 /// <summary>
-/// A stream counted for a pairing (Admit), and, when transcode, one of its
-/// transcodes.
+/// What a play counted in a pool (Admit): a stream, and when transcode one
+/// of its transcodes; or a download; or a scan.
 /// </summary>
-internal sealed class CountSlot(Plays plays, string peer, bool audio, Limits limits) : ISlot
+internal sealed class CountSlot(Plays plays, Func<DateTimeOffset> now, string pool, string purpose, bool audio, Limits limits) : ISlot
 {
-    public string Peer { get; } = peer;
+    public string Pool { get; } = pool;
+
+    public string Purpose { get; } = purpose;
 
     public bool Audio { get; } = audio;
 
@@ -87,7 +129,7 @@ internal sealed class CountSlot(Plays plays, string peer, bool audio, Limits lim
     public (int Streams, int Transcodes) Caps() =>
         Audio ? (Limits.AudioStreams, Limits.AudioTranscodes) : (Limits.Streams, Limits.Transcodes);
 
-    /// <summary>Frees what was counted; once, however often it is called.</summary>
+    /// <summary>Frees what was counted; once, however often it is called. A download or a scan stays in the day's count it took.</summary>
     public void Release()
     {
         lock (plays)
@@ -98,15 +140,27 @@ internal sealed class CountSlot(Plays plays, string peer, bool audio, Limits lim
             }
 
             Released = true;
-            if (!plays.Counts.TryGetValue(Peer, out var c))
+            if (!plays.Counts.TryGetValue(Pool, out var c))
             {
                 return;
             }
 
-            c.Add(Audio, -1, Transcode ? -1 : 0);
+            switch (Purpose)
+            {
+                case Playback.PurposeDownload:
+                    c.Downloads--;
+                    break;
+                case Playback.PurposeScan:
+                    break;
+                default:
+                    c.Add(Audio, -1, Transcode ? -1 : 0);
+                    break;
+            }
+
+            c.Trim(now());
             if (c.Empty)
             {
-                plays.Counts.Remove(Peer);
+                plays.Counts.Remove(Pool);
             }
         }
     }
@@ -114,7 +168,8 @@ internal sealed class CountSlot(Plays plays, string peer, bool audio, Limits lim
     /// <summary>
     /// Counts a remux that turned out to re-encode the video as a transcode
     /// from then on (playback section 6); false when the pairing has none
-    /// left: the host then stops it.
+    /// left: the host then stops it. A download's or a scan's takes none of
+    /// the pool's (the server's budget is the host's).
     /// </summary>
     public bool Transcoding()
     {
@@ -130,8 +185,13 @@ internal sealed class CountSlot(Plays plays, string peer, bool audio, Limits lim
                 return false;
             }
 
+            if (Purpose != Playback.PurposePlay)
+            {
+                return true;
+            }
+
             var (_, most) = Caps();
-            var c = plays.CountsOf(Peer);
+            var c = plays.CountsOf(Pool);
             if (c.Of(Audio).Transcodes >= most)
             {
                 return false;
@@ -144,12 +204,23 @@ internal sealed class CountSlot(Plays plays, string peer, bool audio, Limits lim
     }
 }
 
-/// <summary>What a pairing uses of this server now.</summary>
+/// <summary>
+/// What a pool uses of this server now: its playbacks of purpose play (video
+/// and audio apart when its limits say so), its downloads, and when the
+/// downloads and scans of the last 24 hours started.
+/// </summary>
 internal sealed class UseCounts
 {
     private int _streams, _transcodes, _audioStreams, _audioTranscodes;
 
-    public bool Empty => _streams == 0 && _transcodes == 0 && _audioStreams == 0 && _audioTranscodes == 0;
+    public int Downloads { get; set; }
+
+    public List<DateTimeOffset> DownloadDay { get; } = [];
+
+    public List<DateTimeOffset> ScanDay { get; } = [];
+
+    public bool Empty => _streams == 0 && _transcodes == 0 && _audioStreams == 0 && _audioTranscodes == 0 && Downloads == 0 &&
+        DownloadDay.Count == 0 && ScanDay.Count == 0;
 
     public (int Streams, int Transcodes) Of(bool audio) => audio ? (_audioStreams, _audioTranscodes) : (_streams, _transcodes);
 
@@ -166,6 +237,13 @@ internal sealed class UseCounts
             _transcodes += transcodes;
         }
     }
+
+    /// <summary>Keeps of the day's times those of the 24 hours before now.</summary>
+    public void Trim(DateTimeOffset now)
+    {
+        DownloadDay.RemoveAll(t => now >= t + TimeSpan.FromHours(24));
+        ScanDay.RemoveAll(t => now >= t + TimeSpan.FromHours(24));
+    }
 }
 
 /// <summary>The peers' playbacks here, live, and those ended lately; locked on itself.</summary>
@@ -175,63 +253,157 @@ internal sealed class Plays
 
     public Dictionary<string, LivePlayback> ByTicket { get; } = new(StringComparer.Ordinal);
 
-    /// <summary>By peer, admitted slots included.</summary>
+    /// <summary>By pool, admitted slots included.</summary>
     public Dictionary<string, UseCounts> Counts { get; } = new(StringComparer.Ordinal);
 
-    public Dictionary<string, (string Peer, EndReason Reason, DateTimeOffset At)> Ended { get; } = new(StringComparer.Ordinal);
+    public Dictionary<string, EndedPlay> Ended { get; } = new(StringComparer.Ordinal);
 
     public DateTimeOffset Expired { get; set; }
 
-    public UseCounts CountsOf(string peer)
+    public UseCounts CountsOf(string pool)
     {
-        if (!Counts.TryGetValue(peer, out var c))
+        if (!Counts.TryGetValue(pool, out var c))
         {
             c = new UseCounts();
-            Counts[peer] = c;
+            Counts[pool] = c;
         }
 
         return c;
     }
 }
 
-// Playback, on the owning side (MSFP playback sections 2 to 6, video
+/// <summary>
+/// A copy of a title as the catalog sends it to a peer (cleaned, best first,
+/// its ID the version ID), with the host's handle of it.
+/// </summary>
+internal sealed record OfferedCopy
+{
+    public string Handle { get; init; } = "";
+
+    public string Id { get; init; } = "";
+
+    public string Name { get; init; } = "";
+
+    public string Etag { get; init; } = "";
+
+    public long Size { get; init; }
+
+    public int Parts { get; init; } = 1;
+
+    public int Bitrate { get; init; }
+
+    public long DurationMs { get; init; }
+
+    public long? StartMs { get; init; }
+
+    public bool Previews { get; init; }
+
+    public string Lyrics { get; init; } = "";
+
+    public IReadOnlyList<CopyAudio> Audio { get; init; } = [];
+
+    public IReadOnlyList<CopySubtitle> Subtitles { get; init; } = [];
+
+    /// <summary>What the choices of playback section 2.6 need of it.</summary>
+    public PlayCopy PlayCopy() => new()
+    {
+        Id = Id, Parts = Parts, BitrateKbps = Bitrate,
+        Audio = Audio.Select(a => new PlayCopyAudio(a.Id, a.Language ?? "", a.Role ?? "", a.Default)).ToList(),
+        Subtitles = Subtitles.Select(s => s.Id).ToList(),
+    };
+}
+
+/// <summary>
+/// Paces a download's bytes at its speed cap (playback section 7, media
+/// section 4.1): over any 10 seconds, never more than the cap allows, all
+/// its fetches together; it slows the body, never refuses. It lets a
+/// second's worth through at once and refills at nine tenths of the cap, so
+/// that a second's burst and nine seconds' refill stay within ten seconds'
+/// worth.
+/// </summary>
+internal sealed class Pacer(int kbps)
+{
+    private readonly double _rate = kbps * 1000.0 / 8; // bytes per second
+    private double _tokens = kbps * 1000.0 / 8;
+    private long _last = System.Diagnostics.Stopwatch.GetTimestamp();
+
+    /// <summary>Waits until n bytes may go, or ct is cancelled.</summary>
+    public Task TakeAsync(int n, CancellationToken ct)
+    {
+        double debt;
+        lock (this)
+        {
+            var now = System.Diagnostics.Stopwatch.GetTimestamp();
+            var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(_last, now).TotalSeconds;
+            _tokens = Math.Min(_rate, _tokens + (elapsed * _rate * 0.9));
+            _last = now;
+            _tokens -= n;
+            debt = -_tokens;
+        }
+
+        return debt <= 0 ? Task.CompletedTask : Task.Delay(TimeSpan.FromSeconds(debt / (_rate * 0.9)), ct);
+    }
+}
+
+// Playback, on the owning side (MSFP playback sections 2 to 8, video
 // section 5, music section 5): play, progress and stop from peers, the
-// choice of the copy and the tracks, the pairing's limits counted in one
-// step with the host's start (Admit), the playbacks' states, tickets and
-// endings. Playbacks live in memory: after a restart, a peer's progress
-// gets 410 and it starts again.
+// choice of the copy and the tracks among the title's copies as the catalog
+// sends them, the delivery and the purpose (a play, a download, a scan),
+// the pool's limits counted in one step with the host's start (Admit), the
+// playbacks' states, tickets and endings, and a download's late reports.
+// Playbacks live in memory: after a restart, a peer's progress gets 410 and
+// it starts again.
 public sealed partial class MsfpEngine
 {
-    // Bounds of play's members (playback section 2.1).
-    internal const long MaxPositionMs = 8_640_000_000; // 100 days
-    internal const long MaxKbps = 10_000_000;
-    private const int DefaultKbps = 120_000;
-
-    // Times of a playback (playback section 6.3): a playback with neither
-    // progress nor a media request for 2 minutes ends; expired playbacks
-    // are looked for every 30 seconds; why one ended is kept an hour; the
-    // host's Stop and Progress made in the background get 30 seconds.
-    internal static readonly TimeSpan ExpireAfter = TimeSpan.FromMinutes(2);
+    // Times of a playback (playback section 6.3): expired playbacks are
+    // looked for every 30 seconds; why one ended is kept an hour (a
+    // download's for its late reports); the host's Stop and Progress made in
+    // the background get 30 seconds.
     private static readonly TimeSpan ExpiryEvery = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan EndedKept = TimeSpan.FromHours(1);
     private static readonly TimeSpan HostTime = TimeSpan.FromSeconds(30);
 
     private readonly Plays _plays = new();
 
-    // Counts a stream (and for "transcode" a transcode) for peer, in one
-    // step no other play comes between (playback section 6.2).
-    private CountSlot AdmitStream(string peer, Limits l, bool audio, string method)
+    // Counts a playback of purpose in a pool, in one step no other play comes
+    // between (playback section 6.2): for a play, a stream (and for
+    // "transcode" a transcode); for a download, one of its downloads and of
+    // the day's; for a scan, one of the day's.
+    private CountSlot AdmitIn(string pool, Limits l, string purpose, bool audio, string method)
     {
         if (method is not ("direct" or "remux" or "transcode"))
         {
             throw new MsfpException(MsfpError.Internal, "admit of a method MSFP doesn't have");
         }
 
-        var s = new CountSlot(_plays, peer, audio && l.Audio, l);
-        var (most, mostTranscodes) = s.Caps();
+        var s = new CountSlot(_plays, Now, pool, purpose, audio && l.Audio, l);
         lock (_plays)
         {
-            var c = _plays.CountsOf(peer);
+            var c = _plays.CountsOf(pool);
+            var now = Now();
+            c.Trim(now);
+            switch (purpose)
+            {
+                case Playback.PurposeDownload:
+                    if (c.Downloads >= l.Downloads || (l.DownloadsPerDay > 0 && c.DownloadDay.Count >= l.DownloadsPerDay))
+                    {
+                        throw new MsfpException(MsfpError.StreamLimitReached);
+                    }
+
+                    c.Downloads++;
+                    c.DownloadDay.Add(now);
+                    return s;
+                case Playback.PurposeScan:
+                    if (c.ScanDay.Count >= l.ScansPerDay)
+                    {
+                        throw new MsfpException(MsfpError.StreamLimitReached);
+                    }
+
+                    c.ScanDay.Add(now);
+                    return s;
+            }
+
+            var (most, mostTranscodes) = s.Caps();
             var (streams, transcodes) = c.Of(s.Audio);
             if (streams >= most)
             {
@@ -250,96 +422,28 @@ public sealed partial class MsfpEngine
         return s;
     }
 
-    // How many streams a pairing uses now, of one kind.
-    private (int Used, int Most) InUse(string peer, Limits l, bool audio)
+    // Whether a pool has room for a playback of purpose now (Room), and
+    // whether its limits allow any at all (Open).
+    private (bool Room, bool Open) RoomIn(string pool, Limits l, string purpose, bool audio)
     {
-        var counted = audio && l.Audio;
-        var most = counted ? l.AudioStreams : l.Streams;
         lock (_plays)
         {
-            return (_plays.Counts.TryGetValue(peer, out var c) ? c.Of(counted).Streams : 0, most);
-        }
-    }
-
-    // The form of a language asked for: at most 12 characters of A-Z a-z 0-9 - (playback section 2.1).
-    [GeneratedRegex("^[A-Za-z0-9-]{0,12}$")]
-    private static partial Regex RequestTagRe();
-
-    // The values capabilities may hold (playback section 2.1, video section
-    // 5.1); others are ignored.
-    internal static readonly IReadOnlyDictionary<string, string[]> CapabilityValues = new Dictionary<string, string[]>
-    {
-        ["containers"] = ["mp4", "m4v", "mov", "webm", "mkv", "ts", "mp3", "aac", "m4a", "flac", "ogg", "opus", "wav"],
-        ["audioCodecs"] = ["aac", "mp3", "opus", "vorbis", "flac", "ac3", "eac3", "alac", "pcm_s16le"],
-        ["videoCodecs"] = ["h264", "hevc", "av1", "vp8", "vp9"],
-        ["hdr"] = ["hdr10", "hlg"],
-        ["subtitles"] = [],
-    };
-
-    // Reads play's capabilities as an owning server does: null (400) when it
-    // isn't an object, or a list isn't a list of strings, or a number isn't
-    // an integer in range; values MSFP doesn't list ignored, each once, sorted.
-    private static Capabilities? ReadCapabilities(JsonNode? raw)
-    {
-        if (raw is null)
-        {
-            return new Capabilities();
-        }
-
-        if (raw is not JsonObject c)
-        {
-            return null;
-        }
-
-        List<string>? List(string name)
-        {
-            if (!c.TryGetPropertyValue(name, out var v) || v is null)
+            _plays.Counts.TryGetValue(pool, out var c);
+            var now = Now();
+            switch (purpose)
             {
-                return [];
+                case Playback.PurposeDownload:
+                    var today = c?.DownloadDay.Count(t => now < t + TimeSpan.FromHours(24)) ?? 0;
+                    return ((c?.Downloads ?? 0) < l.Downloads && (l.DownloadsPerDay == 0 || today < l.DownloadsPerDay), l.Downloads > 0);
+                case Playback.PurposeScan:
+                    var scans = c?.ScanDay.Count(t => now < t + TimeSpan.FromHours(24)) ?? 0;
+                    return (scans < l.ScansPerDay, l.ScansPerDay > 0);
             }
 
-            if (v is not JsonArray a)
-            {
-                throw BadJson();
-            }
-
-            var output = new List<string>();
-            foreach (var e in a)
-            {
-                var s = JsonMembers.AsString(e) ?? throw BadJson();
-                if (CapabilityValues[name].Contains(s) && !output.Contains(s))
-                {
-                    output.Add(s);
-                }
-            }
-
-            output.Sort(StringComparer.Ordinal);
-            return output.Count > 0 ? output : null;
-        }
-
-        try
-        {
-            var output = new Capabilities
-            {
-                Containers = List("containers"), AudioCodecs = List("audioCodecs"), VideoCodecs = List("videoCodecs"),
-                Hdr = List("hdr"), Subtitles = List("subtitles"),
-            };
-            var channels = c.GetInteger("maxAudioChannels") ?? 0;
-            var height = c.GetInteger("maxHeight") ?? 0;
-            var kbps = c.GetInteger("maxBitrateKbps") ?? 0;
-            if (channels is < 0 or > 64 || height is < 0 or > 100_000 || kbps is < 0 or > MaxKbps)
-            {
-                return null;
-            }
-
-            output.MaxAudioChannels = (int)channels;
-            output.MaxHeight = (int)height;
-            output.MaxBitrateKbps = (int)kbps;
-            return output;
-        }
-        catch (ProtocolException)
-        {
-            return null;
+            var counted = audio && l.Audio;
+            var most = counted ? l.AudioStreams : l.Streams;
+            var used = c?.Of(counted).Streams ?? 0;
+            return (used < most, most > 0);
         }
     }
 
@@ -352,6 +456,92 @@ public sealed partial class MsfpEngine
     {
         var mac = HMACSHA256.HashData(OurKeys().Ids, Encoding.UTF8.GetBytes("version\n" + peer + "\n" + handle));
         return "ver_" + Base64UrlText.Encode(mac.AsSpan(0, 16));
+    }
+
+    // The copies of exactly that title the peer may play here, as the
+    // catalog sends them to it (playback section 2.2, step 3; video section
+    // 3.7: best first), and the host's libraries holding it among those
+    // offered; none when the title isn't sent to the peer.
+    private async Task<(List<OfferedCopy> Copies, List<string> Libraries)> OfferedCopiesAsync(PeerRecord p, string key, CancellationToken ct)
+    {
+        var none = (new List<OfferedCopy>(), new List<string>());
+        if (_cfg.Catalog is null)
+        {
+            return none;
+        }
+
+        var libs = Offered(p).Order(StringComparer.Ordinal).ToList();
+        if (await HostTitleAsync(key, libs, ct).ConfigureAwait(false) is not { } t)
+        {
+            return none;
+        }
+
+        var raw = await (await SenderForAsync(p, libs, ct).ConfigureAwait(false)).TitleAsync(t).ConfigureAwait(false);
+        if (raw is null)
+        {
+            return none;
+        }
+
+        var output = new List<OfferedCopy>();
+        switch (t)
+        {
+            case VideoTitle v:
+                var handles = (v.Copies ?? []).ToDictionary(c => VersionId(p.Id, c.Id), c => c.Id, StringComparer.Ordinal);
+                if (Video.ReadTitle(raw) is not { } sent)
+                {
+                    return none;
+                }
+
+                foreach (var c in sent.Copies)
+                {
+                    output.Add(new OfferedCopy
+                    {
+                        Handle = handles.GetValueOrDefault(c.Id, ""), Id = c.Id, Name = c.Name ?? "", Etag = c.ETag, Size = c.Size,
+                        Parts = Math.Max(c.Parts.Count, 1), Bitrate = (int)Math.Min(c.BitrateKbps ?? 0, int.MaxValue), DurationMs = c.DurationMs,
+                        StartMs = c.StartMs, Previews = c.Previews, Audio = c.AudioTracks, Subtitles = c.SubtitleTracks,
+                    });
+                }
+
+                break;
+            case MusicTitle m:
+                var mhandles = (m.Copies ?? []).ToDictionary(c => VersionId(p.Id, c.Id), c => c.Id, StringComparer.Ordinal);
+                if (Music.ReadTitle(raw) is not { } msent)
+                {
+                    return none;
+                }
+
+                foreach (var c in msent.Copies)
+                {
+                    output.Add(new OfferedCopy
+                    {
+                        Handle = mhandles.GetValueOrDefault(c.Id, ""), Id = c.Id, Name = c.Name, Etag = c.Etag, Size = c.Size, Parts = 1,
+                        Bitrate = c.BitrateKbps, DurationMs = c.DurationMs, Lyrics = c.Lyrics,
+                        Audio = [new CopyAudio("a0", c.Codec) { Channels = c.Channels == 0 ? null : c.Channels, Default = true }],
+                    });
+                }
+
+                break;
+        }
+
+        output.RemoveAll(c => c.Handle.Length == 0);
+        var held = (t.Libraries ?? []).Where(libs.Contains).Distinct(StringComparer.Ordinal).ToList();
+        return (output, held);
+    }
+
+    // A sender of titles to the peer, for these libraries.
+    private async Task<TitleSender> SenderForAsync(PeerRecord p, List<string> libs, CancellationToken ct)
+    {
+        var ids = await LibraryIdsAsync(ct).ConfigureAwait(false);
+        var pub = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var l in libs)
+        {
+            if (ids.TryGetValue(l, out var id))
+            {
+                pub[l] = id;
+            }
+        }
+
+        return new TitleSender(this, p, libs, LocalOffered(p), pub, ct);
     }
 
     // Whether a tag matches the one asked: exactly (compared without case)
@@ -372,65 +562,10 @@ public sealed partial class MsfpEngine
         return Base(tag) == Base(asked);
     }
 
-    // Picks the copy versionId names, else the first whose audio has the
-    // language (same tag, then same base language), else the first
-    // (playback section 2.6).
-    internal static int ChooseCopy(IReadOnlyList<Copy> copies, Func<Copy, string> version, string versionId, string language)
-    {
-        if (versionId.Length > 0)
-        {
-            for (var i = 0; i < copies.Count; i++)
-            {
-                if (version(copies[i]) == versionId)
-                {
-                    return i;
-                }
-            }
-        }
-
-        foreach (var exact in new[] { true, false })
-        {
-            for (var i = 0; i < copies.Count; i++)
-            {
-                if (Languages.SentTags(copies[i].Audio ?? []).Any(a => SameLanguage(a, language, exact)))
-                {
-                    return i;
-                }
-            }
-        }
-
-        return 0;
-    }
-
-    // Picks the audio track asked, if the copy has it; else the first of the
-    // title's own sound (no commentary, no description) in the language,
-    // same tag then same base language; else the track marked default, else
-    // the first (playback section 2.6).
-    internal static string ChooseAudio(IReadOnlyList<Track> tracks, string id, string language)
-    {
-        if (tracks.Any(t => t.Id == id))
-        {
-            return id;
-        }
-
-        foreach (var exact in new[] { true, false })
-        {
-            foreach (var t in tracks)
-            {
-                if (string.IsNullOrEmpty(t.Role) && SameLanguage(t.Language, language, exact))
-                {
-                    return t.Id;
-                }
-            }
-        }
-
-        return tracks.FirstOrDefault(t => t.Default)?.Id ?? tracks.FirstOrDefault()?.Id ?? "";
-    }
-
     // Picks the subtitles shown (video section 5.4): none for "off"; the
     // track asked, if the copy has it; else the first in the language (same
     // tag then same base language, forced ones last); else none.
-    internal static string ChooseSubtitles(IReadOnlyList<Track> tracks, string id, string language)
+    internal static string ChooseSubtitles(IReadOnlyList<CopySubtitle> tracks, string id, string language)
     {
         if (id == "off")
         {
@@ -461,7 +596,7 @@ public sealed partial class MsfpEngine
 
     // The forced subtitle track in the language of the audio played, when
     // the copy has one (video section 5.4).
-    internal static string ForcedFor(IReadOnlyList<Track> tracks, string? audio)
+    internal static string ForcedFor(IReadOnlyList<CopySubtitle> tracks, string? audio)
     {
         foreach (var exact in new[] { true, false })
         {
@@ -477,75 +612,46 @@ public sealed partial class MsfpEngine
         return "";
     }
 
-    // Keeps of the host's tracks those MSFP can send: an ID of the kind's
-    // form ("a<n>", "s<n>"), once; a label, cleaned. A role other than
-    // commentary or description is none.
-    internal static List<Track> CleanTracks(IEnumerable<Track>? tracks, char kind)
+    // How each subtitle format is served apart (video section 5.4).
+    internal static readonly string[] TextFormats = ["subrip", "webvtt", "mov_text", "ttml", "ass", "ssa"];
+    internal static readonly string[] AssFormats = ["ass", "ssa"];
+    internal static readonly string[] PictureFormats = ["pgs", "vobsub", "dvb"];
+
+    // How a subtitle track of format is served apart, unless the host says it can't.
+    private static SubtitleServed ServedAs(string format, bool notApart) => notApart
+        ? default
+        : new SubtitleServed(TextFormats.Contains(format), AssFormats.Contains(format), PictureFormats.Contains(format));
+
+    // A copy's previews' layout, in MSFP's bounds; null without, or out of them.
+    private static Protocol.Trickplay? TrickplayOf(Trickplay? tp)
     {
-        var output = new List<Track>();
-        foreach (var track in tracks ?? [])
+        if (tp is null)
         {
-            if (!Playback.TryTrackId(track.Id, kind, out _) || output.Any(o => o.Id == track.Id))
-            {
-                continue;
-            }
-
-            var t = track with { Label = Music.CleanText(track.Label ?? "", 64) };
-            if (t.Label.Length == 0)
-            {
-                continue;
-            }
-
-            Languages.TrySentTag(t.Language ?? "", out var tag);
-            t.Language = tag.Length > 0 ? tag : null;
-            if (t.Role is not ("commentary" or "description"))
-            {
-                t.Role = null;
-            }
-
-            if (t.Channels is < 0 or > 64)
-            {
-                t.Channels = 0;
-            }
-
-            if (kind == 'a')
-            {
-                t.Pictures = false;
-            }
-
-            output.Add(t);
+            return null;
         }
 
-        return output;
+        var t = new Protocol.Trickplay(tp.TileWidth, tp.TileHeight, tp.Columns, tp.Rows, tp.IntervalMs, tp.TileCount, 0);
+        t = t with { Sheets = t.SheetCount };
+        return t.InBounds ? t : null;
     }
 
-    // The skip markers MSFP has (video section 5.3).
-    private static readonly string[] SegmentKinds = ["intro", "outro", "recap", "preview", "commercial"];
+    // Writes the trickplay object of a layout, its sheets under base.
+    private static void WriteSheets(JsonOut o, Protocol.Trickplay t, string streamBase) =>
+        o.Integer("tileWidth", t.TileWidth).Integer("tileHeight", t.TileHeight).Integer("columns", t.Columns).Integer("rows", t.Rows)
+            .Integer("intervalMs", t.IntervalMs).Integer("tileCount", t.TileCount)
+            .Strings("sheets", Enumerable.Range(0, t.Sheets).Select(n => Playback.SheetUrl(streamBase, n)));
 
-    // Keeps skip markers of a known kind within 100 days, 32 at most; an end
-    // of 0 is durationMs (the host's markers; a peer's are given 0, and
-    // such a marker is dropped).
-    internal static List<Segment> CleanSegments(IEnumerable<Segment>? segments, long durationMs)
+    // A refusal of play, progress or stop as answered.
+    private static Answer RefusalOf(PlayRefusal r) => r.Problem switch
     {
-        var output = new List<Segment>();
-        foreach (var segment in segments ?? [])
-        {
-            // An end the host doesn't know: the copy's end (video section 5.3).
-            var s = segment.EndMs == 0 ? segment with { EndMs = durationMs } : segment;
-            if (output.Count < 32 && SegmentKinds.Contains(s.Kind) && s.StartMs >= 0 && s.EndMs > s.StartMs && s.EndMs <= MaxPositionMs)
-            {
-                output.Add(s);
-            }
-        }
-
-        return output;
-    }
-
-    internal static void WriteTrack(JsonOut w, Track t) =>
-        w.String("id", t.Id).String("label", t.Label).String("language", string.IsNullOrEmpty(t.Language) ? null : t.Language)
-            .Integer("channels", t.Channels != 0 ? t.Channels : null).String("role", string.IsNullOrEmpty(t.Role) ? null : t.Role)
-            .Bool("default", t.Default ? true : null).Bool("forced", t.Forced ? true : null)
-            .Bool("hearingImpaired", t.HearingImpaired ? true : null).Bool("pictures", t.Pictures ? true : null);
+        Playback.ProblemStreamLimit => Answer.Refuse(ProblemType.StreamLimit),
+        Playback.ProblemDeliveryRefused => Answer.Refuse(ProblemType.Delivery),
+        Playback.ProblemNotPlayable => Answer.Refuse(ProblemType.NotPlayable),
+        Playback.ProblemServerBusy => Answer.Refuse(ProblemType.ServerBusy),
+        Playback.ProblemStopped => Answer.Refuse(ProblemType.Stopped),
+        Playback.ProblemNotFound => Answer.Refuse(ProblemType.NotFound),
+        _ => Answer.Refuse(ProblemType.Invalid),
+    };
 
     private static void WriteStreamInfo(JsonOut w, StreamInfo s) =>
         w.String("codec", Nonempty(s.Codec)).String("profile", Nonempty(s.Profile)).Integer("width", NonZero(s.Width))
@@ -579,99 +685,97 @@ public sealed partial class MsfpEngine
             return Answer.Refuse(ProblemType.NotSupported);
         }
 
-        JsonObject body;
-        string? title;
-        long start, kbpsAsked;
-        string audioLanguage, audioTrack, versionId, subtitleLanguage, subtitleTrack;
+        // 1. The request, as MSFP reads it: a key of a content part on.
+        Protocol.PlayRequest @in;
         try
         {
-            body = StrictJson.ReadRequest(req.Body,
-                ["title", "capabilities", "startPositionMs", "maxBitrateKbps", "audioLanguage", "audioTrack", "versionId", "subtitleLanguage", "subtitleTrack"],
-                lenient: ["capabilities"]);
-            title = body.GetString("title");
-            start = body.GetInteger("startPositionMs") ?? 0;
-            kbpsAsked = body.GetInteger("maxBitrateKbps") ?? 0;
-            audioLanguage = body.GetString("audioLanguage") ?? "";
-            audioTrack = body.GetString("audioTrack") ?? "";
-            versionId = body.GetString("versionId") ?? "";
-            subtitleLanguage = body.GetString("subtitleLanguage") ?? "";
-            subtitleTrack = body.GetString("subtitleTrack") ?? "";
+            @in = Playback.ReadPlay(req.Body, t => KeyOn(p, t, out var tk) && tk.Playable);
         }
-        catch (ProtocolException)
+        catch (PlayRefusal e)
         {
-            return Answer.Refuse(ProblemType.Invalid);
+            return RefusalOf(e);
         }
 
-        if (title is null)
-        {
-            return Answer.Refuse(ProblemType.Invalid);
-        }
-
-        // 1. A key play takes, of a content part on; numbers and tags in range.
-        var keyOn = KeyOn(p, title, out var k);
-        var caps = ReadCapabilities(body["capabilities"]);
-        if (!keyOn || !k.Playable || caps is null || start is < 0 or > MaxPositionMs || kbpsAsked is < 0 or > MaxKbps ||
-            !RequestTagRe().IsMatch(audioLanguage))
-        {
-            return Answer.Refuse(ProblemType.Invalid);
-        }
-
+        TitleKey.TryParse(@in.Title, out var k);
         var video = k.Part == Versions.PartVideo;
-        if (video && !RequestTagRe().IsMatch(subtitleLanguage))
+        var audioOnly = k.Part == Versions.PartMusic;
+        IReadOnlyList<string> queue = [];
+        if (audioOnly)
         {
-            return Answer.Refuse(ProblemType.Invalid);
+            JsonNode? q;
+            try
+            {
+                q = JsonNode.Parse(req.Body)?["queue"];
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                return Answer.Refuse(ProblemType.Invalid);
+            }
+
+            if (!Music.TryCheckQueue(@in.Title, q, out queue))
+            {
+                return Answer.Refuse(ProblemType.Invalid);
+            }
         }
 
-        var audioOnly = k.Part == Versions.PartMusic;
-        // 2. No stream at all for this pairing.
-        if (!PoolRoom(p, audioOnly).Any)
+        if (!video)
+        {
+            // Members of another content part are ignored (playback section 2.4).
+            @in = @in with
+            {
+                SubtitleLanguage = "", SubtitleTrack = "",
+                Transcode = @in.Transcode is { } tt ? tt with { BurnSubtitle = "" } : null,
+            };
+        }
+
+        // 2. No room at all for this purpose in any of the link's pools.
+        if (!PoolRoom(p, @in.Purpose, audioOnly).Open)
         {
             return Answer.Refuse(ProblemType.StreamLimit);
         }
 
-        // 3. Copies of that key in the libraries offered to it: by hand and
-        // through its groups (MSFP groups section 9).
-        var offers = Offered(p);
-        if (_cfg.Catalog is null || _cfg.Playback is null || offers.Count == 0)
+        // 3. The title's copies, as the catalog sends them to it.
+        if (_cfg.Catalog is null || _cfg.Playback is null)
         {
             return Answer.Refuse(ProblemType.NotFound);
         }
 
-        List<Copy> copies;
+        List<OfferedCopy> copies;
+        List<string> libs;
         try
         {
-            copies = [.. await _cfg.Catalog.CopiesAsync(title, offers, ct).ConfigureAwait(false)];
+            (copies, libs) = await OfferedCopiesAsync(p, @in.Title, ct).ConfigureAwait(false);
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
-            _log.LogWarning(e, "msfp: the host's copies couldn't be read");
+            _log.LogWarning(e, "msfp: the host's title couldn't be read for a play");
             return Answer.Refuse(ProblemType.Internal);
         }
 
-        copies.RemoveAll(c => c.Library.Length > 0 && !offers.Contains(c.Library));
         if (copies.Count == 0)
         {
             return Answer.Refuse(ProblemType.NotFound);
         }
 
         // 4. The copy, then malformed track IDs refused.
-        string Version(Copy c) => VersionId(p.Id, c.Handle);
-        var chosen = copies[ChooseCopy(copies, Version, versionId, audioLanguage)];
-        if (audioTrack.Length > 0 && !Playback.TryTrackId(audioTrack, 'a', out _))
+        var chosen = copies[Playback.ChooseCopy(copies.Select(c => c.PlayCopy()).ToList(), @in.VersionId, @in.AudioLanguage)];
+        if (!@in.TrackIdsOk)
         {
             return Answer.Refuse(ProblemType.Invalid);
         }
 
-        if (video && subtitleTrack.Length > 0 && subtitleTrack != "off" && !Playback.TryTrackId(subtitleTrack, 's', out _))
-        {
-            return Answer.Refuse(ProblemType.Invalid);
-        }
-
-        // 5. The pairing's streams all in use: refused before any work (the
+        // 5. The purpose's limits all in use: refused before any work (the
         // count that matters is Admit's).
-        if (!PoolRoom(p, audioOnly).Room)
+        if (!PoolRoom(p, @in.Purpose, audioOnly).Room)
         {
             return Answer.Refuse(ProblemType.StreamLimit);
+        }
+
+        // 6 and 7. The bitrate cap, and the deliveries MSFP itself refuses.
+        var kbps = @in.BitrateCap(_cfg.MaxBitrateKbps, Generous(p).BitrateKbps);
+        if (Playback.RefuseDelivery(@in, chosen.PlayCopy(), kbps) is { } refused)
+        {
+            return RefusalOf(refused);
         }
 
         CopyInfo info;
@@ -684,43 +788,61 @@ public sealed partial class MsfpEngine
             return HostRefusal(e, "describe");
         }
 
-        var audioTracks = CleanTracks(info.AudioTracks, 'a');
-        var subtitles = video ? CleanTracks(info.SubtitleTracks, 's') : [];
-        var audio = ChooseAudio(audioTracks, audioTrack, audioLanguage);
-        var shown = "";
-        var forced = "";
+        var audio = Playback.ChooseAudio(chosen.PlayCopy().Audio, @in.AudioTrack, @in.AudioLanguage);
+        string shown = "", forced = "", burned = "";
         if (video)
         {
-            shown = ChooseSubtitles(subtitles, subtitleTrack, subtitleLanguage);
-            forced = ForcedFor(subtitles, audioTracks.FirstOrDefault(t => t.Id == audio)?.Language);
-        }
-
-        // 6. The bitrate cap: the lowest of the four, 120,000 without one.
-        var kbps = 0;
-        foreach (var c in new[] { (int)kbpsAsked, caps.MaxBitrateKbps, _cfg.MaxBitrateKbps, Generous(p).BitrateKbps })
-        {
-            if (c > 0 && (kbps == 0 || c < kbps))
+            shown = ChooseSubtitles(chosen.Subtitles, @in.SubtitleTrack, @in.SubtitleLanguage);
+            forced = ForcedFor(chosen.Subtitles, chosen.Audio.FirstOrDefault(a => a.Id == audio)?.Language);
+            if (@in.Transcode is { BurnSubtitle.Length: > 0 } t)
             {
-                kbps = c;
+                shown = burned = t.BurnSubtitle;
             }
         }
 
-        if (kbps == 0)
+        var start = @in.StartPositionMs;
+        if (@in.Purpose != Playback.PurposePlay)
         {
-            kbps = DefaultKbps;
+            start = 0;
+        }
+        else if (start == 0 && video && chosen.StartMs is { } episodeStart)
+        {
+            start = episodeStart;
         }
 
-        if (start == 0 && video && info.EpisodeStartMs > 0)
+        // The queue: each entry's first copy; one not offered keeps its place
+        // empty (music section 5.2).
+        var queued = new List<QueuedCopy>();
+        var queueCopies = new Dictionary<int, OfferedCopy>();
+        for (var n = 0; n < queue.Count; n++)
         {
-            start = info.EpisodeStartMs;
+            List<OfferedCopy> qc;
+            try
+            {
+                (qc, _) = await OfferedCopiesAsync(p, queue[n], ct).ConfigureAwait(false);
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                _log.LogWarning(e, "msfp: the host's title couldn't be read for a play's queue");
+                return Answer.Refuse(ProblemType.Internal);
+            }
+
+            if (qc.Count > 0)
+            {
+                queued.Add(new QueuedCopy(n, queue[n], qc[0].Handle));
+                queueCopies[n] = qc[0];
+            }
         }
 
-        // 7. The host starts it, admitted by the pairing's limits first.
+        // 8. The host starts it, admitted by the pool's limits first.
         CountSlot? slot = null;
+        var purpose = @in.Purpose;
         var sr = new StartRequest
         {
-            Copy = chosen.Handle, Title = title, AudioOnly = audioOnly, Parts = Math.Max(info.Parts, 1), Peer = new PeerRef(p.Id, p.Name),
-            AudioTrack = audio, SubtitleTrack = shown, StartMs = start, Capabilities = caps, MaxBitrateKbps = kbps,
+            Copy = chosen.Handle, Title = @in.Title, AudioOnly = audioOnly, Purpose = purpose, Delivery = @in.Delivery,
+            Container = @in.Container, Transcode = @in.Transcode, AudioRenditions = @in.AudioRenditions, Parts = chosen.Parts,
+            Peer = new PeerRef(p.Id, p.Name), AudioTrack = audio, SubtitleTrack = shown, StartMs = start,
+            Capabilities = @in.Capabilities ?? new PlayCapabilities(), MaxBitrateKbps = kbps, Queue = queued,
             Admit = method =>
             {
                 if (slot is not null)
@@ -728,7 +850,7 @@ public sealed partial class MsfpEngine
                     throw new MsfpException(MsfpError.Internal, "admit called twice");
                 }
 
-                slot = AdmitPools(p, audioOnly, method);
+                slot = AdmitPools(p, purpose, audioOnly, method);
                 return slot;
             },
         };
@@ -743,13 +865,21 @@ public sealed partial class MsfpEngine
             return HostRefusal(e, "start");
         }
 
+        if (StartedBreaks(@in, chosen, started, queueCopies) is { } why)
+        {
+            _log.LogWarning("msfp: the host started a playback MSFP doesn't allow; it is stopped: {Why}", why);
+            slot?.Release();
+            HostStop(started.Handle, EndReason.Stopped);
+            return Answer.Refuse(ProblemType.Internal);
+        }
+
         if (slot is null)
         {
             // A host that didn't ask: admitted now, its playback stopped when
             // the limits refuse it.
             try
             {
-                slot = AdmitPools(p, audioOnly, started.Method);
+                slot = AdmitPools(p, purpose, audioOnly, started.Method);
             }
             catch (MsfpException e)
             {
@@ -758,7 +888,7 @@ public sealed partial class MsfpEngine
             }
         }
 
-        var (pb, ticket) = Register(p, title, chosen, info, started, slot, audioOnly);
+        var (pb, ticket) = Register(p, @in, queue, libs, chosen, info, started, slot, queueCopies, audioOnly);
         if (pb is null)
         {
             return Answer.Refuse(ProblemType.Internal);
@@ -775,7 +905,7 @@ public sealed partial class MsfpEngine
                 return Answer.Refuse(ProblemType.NotFound);
             }
 
-            if (chosen.Library.Length > 0 && !Offered(q).Contains(chosen.Library))
+            if (!StillOffered(q, pb.Libraries))
             {
                 EndPlayback(pb, EndReason.NotOffered);
                 return Answer.Refuse(ProblemType.NotFound);
@@ -792,95 +922,180 @@ public sealed partial class MsfpEngine
             return Answer.Refuse(ProblemType.Internal);
         }
 
-        // 8. The answer.
-        var duration = info.DurationMs > 0 && info.DurationMs <= MaxPositionMs ? info.DurationMs : 0;
-        var streamBase = StreamBase(req) + ticket + "/";
+        // 9. The answer.
+        var root = StreamBase(req);
+        var streamBase = root + ticket + "/";
         var hls = started.Protocol == "hls";
-        var versions = copies.Select(c => (c, Name: Music.CleanText(c.Name ?? "", 64))).Where(x => x.Name.Length > 0)
-            .Select(x => new Version(Version(x.c), x.Name)).ToList();
         var cleanedInfo = CleanInfo(started.Info);
-        var segments = video ? CleanSegments(started.Segments, duration) : [];
+        var duration = chosen.DurationMs > 0 && chosen.DurationMs <= Playback.MaxPositionMs ? chosen.DurationMs : 0;
+        var videoOut = video && purpose != Playback.PurposeScan;
+        var subtitles = videoOut ? chosen.Subtitles : [];
         var forcedTracks = subtitles.Where(t => t.Forced).ToList();
-        void Subtitle(JsonOut w, Track t)
+        void Subtitle(JsonOut w, CopySubtitle t)
         {
-            WriteTrack(w, t);
-            w.String("url", Playback.SubtitleUrl(streamBase, t.Id, t.Pictures));
+            Copies.WriteSubtitle(w, t);
+            var how = pb.Subtitles.GetValueOrDefault(t.Id);
+            w.String("url", how.Text || how.Pictures ? Playback.SubtitleUrl(streamBase, t.Id, how.Pictures) : null)
+                .String("assUrl", how.Ass ? streamBase + "ass/" + t.Id : null);
         }
 
-        Action<JsonOut>? trickplay = null;
-        if (video && pb.Sheets > 0)
+        var tp = videoOut && pb.Sheets > 0 ? TrickplayOf(info.Trickplay) : null;
+        var entries = new List<QueueEntry>();
+        foreach (var e in started.Queue ?? [])
         {
-            var tp = info.Trickplay!;
-            trickplay = o => o.Integer("tileWidth", tp.TileWidth).Integer("tileHeight", tp.TileHeight).Integer("columns", tp.Columns)
-                .Integer("rows", tp.Rows).Integer("intervalMs", tp.IntervalMs).Integer("tileCount", tp.TileCount)
-                .Strings("sheets", Enumerable.Range(0, pb.Sheets).Select(n => Playback.SheetUrl(streamBase, n)));
+            var qc = queueCopies[e.Place];
+            var mime = e.Protocol == "hls" ? Playback.HlsType : Playback.RelayedMediaType(e.MimeType);
+            entries.Add(new QueueEntry(queue[e.Place], qc.Id, e.Method, new QueueStream(Music.QueueUrl(root, ticket, e.Place, e.Protocol), e.Protocol, mime),
+                qc.DurationMs > 0 && qc.DurationMs <= Music.MaxDurationMs ? qc.DurationMs : null));
         }
 
+        entries.Sort((a, b) => queue.ToList().IndexOf(a.Title).CompareTo(queue.ToList().IndexOf(b.Title)));
+        var fonts = videoOut ? Enumerable.Range(0, pb.Fonts).Select(n => streamBase + "fonts/" + n.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToList() : [];
         var output = JsonOut.Object(o => o.String("id", pb.Id).String("method", started.Method)
             .Object("stream", s => s.String("url", streamBase + (hls ? "master.m3u8" : "file")).String("protocol", hls ? "hls" : "file")
-                .String("mimeType", hls ? "application/vnd.apple.mpegurl" : Playback.RelayedMediaType(started.MimeType)))
+                .String("mimeType", hls ? Playback.HlsType : Playback.RelayedMediaType(started.MimeType)))
+            .String("etag", chosen.Etag)
             .Integer("positionMs", started.PositionMs).Integer("durationMs", NonZero(duration))
-            .Objects("versions", versions.Count > 0 ? versions : null, (w, v) => w.String("id", v.Id).String("name", v.Name))
-            .String("versionId", Version(chosen))
-            .Objects("audioTracks", audioTracks.Count > 0 ? audioTracks : null, WriteTrack)
-            .String("audioTrack", Nonempty(audio)).Integer("maxBitrateKbps", NonZero(kbps))
+            .Objects("versions", copies, (w, c) => w.String("id", c.Id).String("name", Nonempty(c.Name)))
+            .String("versionId", chosen.Id)
+            .Objects("audioTracks", chosen.Audio.Count > 0 ? chosen.Audio : null, Copies.WriteAudio)
+            .String("audioTrack", Nonempty(audio)).Integer("maxBitrateKbps", purpose == Playback.PurposePlay ? kbps : null)
             .Object("info", cleanedInfo is null ? null : w => WriteInfo(w, cleanedInfo))
-            .Objects("subtitleTracks", subtitles.Count > 0 ? subtitles : null, Subtitle).String("subtitleTrack", Nonempty(shown))
-            .Objects("forcedTracks", forcedTracks.Count > 0 ? forcedTracks : null, Subtitle).String("forcedTrack", Nonempty(forced))
+            .Objects("subtitleTracks", subtitles.Count > 0 ? subtitles : null, Subtitle)
+            .String("subtitleTrack", videoOut ? Nonempty(shown) : null).String("burnedTrack", videoOut ? Nonempty(burned) : null)
+            .Objects("forcedTracks", forcedTracks.Count > 0 ? forcedTracks : null, Subtitle)
+            .String("forcedTrack", videoOut ? Nonempty(forced) : null)
             .Integer("subtitleStretchSeconds", subtitles.Count > 0 ? WebVtt.StretchSeconds : null)
-            .Objects("segments", segments.Count > 0 ? segments : null, (w, s) => w.String("kind", s.Kind).Integer("startMs", s.StartMs).Integer("endMs", s.EndMs))
-            .Object("trickplay", trickplay));
-        _log.LogInformation("msfp: a peer's playback started: {Peer} {Playback} {Method}", p.Id, pb.Id, started.Method);
-        Notify(new PlaybackStarted(p.Id, p.Name, pb.Id, pb.Title, pb.Method));
+            .Strings("fonts", fonts.Count > 0 ? fonts : null)
+            .Object("trickplay", tp is { } sheets ? w => WriteSheets(w, sheets, streamBase) : null)
+            .Objects("queue", entries.Count > 0 ? entries : null, (w, e) => e.Write(w)));
+        _log.LogInformation("msfp: a peer's playback started: {Peer} {Playback} {Method} {Purpose}", p.Id, pb.Id, started.Method, purpose);
+        Notify(new PlaybackStarted(p.Id, p.Name, pb.Id, pb.Title, pb.Method, pb.Purpose));
         return Answer.Ok(output);
+    }
+
+    // Whether one of the libraries a playback's title was in is still
+    // offered to the peer.
+    private static bool StillOffered(PeerRecord p, IReadOnlyList<string> libs) => OfferedIn(libs, Offered(p));
+
+    // Whether one of libs is among those offered.
+    internal static bool OfferedIn(IReadOnlyList<string> libs, IEnumerable<string> offered) =>
+        libs.Count == 0 || libs.Any(offered.Contains);
+
+    // The method each delivery is served with.
+    internal static string MethodOf(string delivery) => delivery switch
+    {
+        Playback.DeliveryFile => "direct",
+        Playback.DeliveryRemux => "remux",
+        Playback.DeliveryTranscode => "transcode",
+        _ => "",
+    };
+
+    // What the host's start breaks of MSFP, null for nothing: a method or
+    // protocol MSFP doesn't have, another delivery than the one asked (file
+    // is direct as file; remux and transcode are hls), file of a copy of
+    // several parts, file played otherwise than direct; a queue entry of a
+    // place not asked, twice, or served against the same rules.
+    private static string? StartedBreaks(Protocol.PlayRequest @in, OfferedCopy c, Started s, Dictionary<int, OfferedCopy> asked)
+    {
+        string? Check(string method, string protocol, int parts)
+        {
+            if (method is not ("direct" or "remux" or "transcode") || protocol is not ("hls" or "file"))
+            {
+                return "a method or protocol MSFP doesn't have";
+            }
+
+            if (@in.Delivery.Length > 0 && method != MethodOf(@in.Delivery))
+            {
+                return "another method than the delivery asked";
+            }
+
+            if ((@in.Delivery == Playback.DeliveryFile && protocol != "file") ||
+                (@in.Delivery.Length > 0 && @in.Delivery != Playback.DeliveryFile && protocol == "file"))
+            {
+                return "another protocol than the delivery asked";
+            }
+
+            if (protocol == "file" && method != "direct")
+            {
+                return "a file that isn't played as it is";
+            }
+
+            return protocol == "file" && parts > 1 ? "a copy of several parts as file" : null;
+        }
+
+        if (Check(s.Method, s.Protocol, c.Parts) is { } why)
+        {
+            return why;
+        }
+
+        var seen = new HashSet<int>();
+        foreach (var q in s.Queue ?? [])
+        {
+            if (!asked.ContainsKey(q.Place) || !seen.Add(q.Place))
+            {
+                return "a queue entry of no place asked";
+            }
+
+            if (Check(q.Method, q.Protocol, 1) is { } qwhy)
+            {
+                return "a queue entry: " + qwhy;
+            }
+        }
+
+        return null;
     }
 
     // Makes a started playback live: its ID and its ticket, 128 bits and 256
     // bits of randomness, the ticket kept by its hash only (media section 1).
-    private (LivePlayback? Playback, string Ticket) Register(PeerRecord p, string title, Copy c, CopyInfo info, Started s, CountSlot slot, bool audioOnly)
+    // It gives the ticket's text, for the URLs only.
+    private (LivePlayback? Playback, string Ticket) Register(PeerRecord p, Protocol.PlayRequest @in, IReadOnlyList<string> queue, List<string> libs,
+        OfferedCopy c, CopyInfo info, Started s, CountSlot slot, Dictionary<int, OfferedCopy> queueCopies, bool audioOnly)
     {
-        if (s.Method is not ("direct" or "remux" or "transcode") || s.Protocol is not ("hls" or "file"))
-        {
-            _log.LogWarning("msfp: the host started a playback with a method or protocol MSFP doesn't have");
-            slot.Release();
-            HostStop(s.Handle, EndReason.Stopped);
-            return (null, "");
-        }
-
-        if (s.Protocol == "file" && info.Parts > 1)
-        {
-            // Media section 1: file is for a copy of one file only.
-            _log.LogWarning("msfp: the host started a copy of several parts as file; such a copy is served as hls");
-            slot.Release();
-            HostStop(s.Handle, EndReason.Stopped);
-            return (null, "");
-        }
-
         var id = NewId("play_", 16);
         var ticket = Base64UrlText.Encode(RandomBytes(32));
         var now = Now();
         var pb = new LivePlayback
         {
-            Id = id, Peer = p.Id, PeerName = p.Name, Title = title, Library = c.Library, Handle = s.Handle, Method = s.Method,
-            Protocol = s.Protocol, AudioOnly = audioOnly, Ticket = SHA256.HashData(Encoding.UTF8.GetBytes(ticket)), Started = now,
+            Id = id, Peer = p.Id, PeerName = p.Name, Title = @in.Title, Queue = queue, Libraries = libs, Handle = s.Handle, Method = s.Method,
+            Purpose = @in.Purpose, AudioOnly = audioOnly, Ticket = SHA256.HashData(Encoding.UTF8.GetBytes(ticket)), Started = now,
             Used = now, Slot = slot,
         };
-        if (info.Trickplay is { } tp && !audioOnly)
+        pb.Entries[0] = new EntryServed(s.Protocol, c.Size, c.Etag);
+        if (@in.Purpose == Playback.PurposeDownload && slot.Limits.DownloadKbps > 0)
         {
-            var t = new Protocol.Trickplay(tp.TileWidth, tp.TileHeight, tp.Columns, tp.Rows, tp.IntervalMs, tp.TileCount, 0);
-            t = t with { Sheets = t.SheetCount };
-            if (t.InBounds)
-            {
-                pb.Sheets = t.Sheets;
-            }
+            pb.Pace = new Pacer(slot.Limits.DownloadKbps);
         }
 
         if (!audioOnly)
         {
-            foreach (var t in CleanTracks(info.SubtitleTracks, 's'))
+            pb.Audio.UnionWith(c.Audio.Select(a => a.Id));
+        }
+
+        if (!audioOnly && @in.Purpose != Playback.PurposeScan)
+        {
+            if (TrickplayOf(info.Trickplay) is { } t && c.Previews && @in.Purpose == Playback.PurposePlay)
             {
-                pb.Subtitles[t.Id] = t.Pictures;
+                pb.Sheets = t.Sheets;
             }
+
+            var hasAss = false;
+            foreach (var st in c.Subtitles)
+            {
+                pb.Subtitles[st.Id] = ServedAs(st.Format, (info.NotApart ?? []).Contains(st.Id));
+                hasAss |= AssFormats.Contains(st.Format);
+            }
+
+            if (hasAss && info.Fonts is > 0 and <= 8)
+            {
+                pb.Fonts = info.Fonts;
+            }
+        }
+
+        foreach (var q in s.Queue ?? [])
+        {
+            var qc = queueCopies[q.Place];
+            pb.Entries[q.Place + 1] = new EntryServed(q.Protocol, qc.Size, qc.Etag);
         }
 
         lock (_plays)
@@ -942,6 +1157,8 @@ public sealed partial class MsfpEngine
             {
                 case MsfpError.NotPlayable:
                     return Answer.Refuse(ProblemType.NotPlayable);
+                case MsfpError.DeliveryRefused:
+                    return Answer.Refuse(ProblemType.Delivery);
                 case MsfpError.StreamLimitReached:
                     return Answer.Refuse(ProblemType.StreamLimit);
                 case MsfpError.ServerBusy:
@@ -978,15 +1195,6 @@ public sealed partial class MsfpEngine
         });
     }
 
-    // A peer's live playback by its ID; null when it isn't live, or isn't that peer's.
-    private LivePlayback? LiveOf(string peer, string id)
-    {
-        lock (_plays)
-        {
-            return _plays.ById.TryGetValue(id, out var pb) && pb.Peer == peer ? pb : null;
-        }
-    }
-
     // Ends a live playback, once: its ticket stops working at once, its open
     // responses are cut, its stream is freed, the host is told (playback
     // section 6.3).
@@ -1001,7 +1209,7 @@ public sealed partial class MsfpEngine
 
             _plays.ById.Remove(pb.Id);
             _plays.ByTicket.Remove(Convert.ToHexString(pb.Ticket));
-            _plays.Ended[pb.Id] = (pb.Peer, why, Now());
+            _plays.Ended[pb.Id] = new EndedPlay(pb.Peer, why, Now(), pb.Purpose, pb.Title, pb.Queue, pb.Handle, pb.Started) { LastAt = pb.LastAt };
         }
 
         pb.Ended.Cancel();
@@ -1027,8 +1235,10 @@ public sealed partial class MsfpEngine
     }
 
     // Ends the playbacks with neither progress nor a media request for 2
-    // minutes (an open response counts as use), and those longer than
-    // LongestPlayback; forgets endings over an hour old.
+    // minutes (an open response counts as use; never a download), those
+    // past their life (a download's 24 hours, a scan's 10 minutes) and those
+    // longer than LongestPlayback (a download's 24 hours stand instead);
+    // forgets endings past their time.
     private void ExpirePlaybacks(bool force)
     {
         var now = Now();
@@ -1049,11 +1259,18 @@ public sealed partial class MsfpEngine
                     pb.Used = now;
                 }
 
-                if (now - pb.Started >= _cfg.LongestPlayback)
+                var life = _cfg.LongestPlayback;
+                var l = Playback.Life(pb.Purpose);
+                if (l > TimeSpan.Zero && (pb.Purpose == Playback.PurposeDownload || l < life))
+                {
+                    life = l;
+                }
+
+                if (now - pb.Started >= life)
                 {
                     tooLong.Add(pb);
                 }
-                else if (now - pb.Used >= ExpireAfter)
+                else if (Playback.Idles(pb.Purpose) && now - pb.Used >= Playback.IdleEnd)
                 {
                     expired.Add(pb);
                 }
@@ -1061,7 +1278,7 @@ public sealed partial class MsfpEngine
 
             foreach (var (id, ended) in _plays.Ended.ToList())
             {
-                if (now - ended.At >= EndedKept)
+                if (ended.Purpose == Playback.PurposeDownload ? now - ended.PlayedAt > Playback.LateReports : now - ended.At >= EndedKept)
                 {
                     _plays.Ended.Remove(id);
                 }
@@ -1089,30 +1306,39 @@ public sealed partial class MsfpEngine
         }
     }
 
-    // Reads progress's or stop's request: the playback's ID and a position.
-    private static (string? Id, long Position, bool Paused) ReadPlayId(byte[] body, bool paused)
+    // The playback a report names as Protocol's rules see it, and the live
+    // playback when it is live: a playback of another pairing, or one never
+    // given, has no state.
+    private (PlaybackState State, LivePlayback? Live) PlayState(string peer, string id)
     {
-        try
+        lock (_plays)
         {
-            var o = StrictJson.ReadRequest(body, paused ? ["id", "positionMs", "paused"] : ["id", "positionMs"]);
-            var id = o.GetString("id");
-            var position = o.GetInteger("positionMs") ?? 0;
-            var p = paused && (o.GetBool("paused") ?? false);
-            if (id is null || !Playback.PlayId(id) || position is < 0 or > MaxPositionMs)
+            if (_plays.ById.TryGetValue(id, out var pb) && pb.Peer == peer)
             {
-                return (null, 0, false);
+                return (new PlaybackState
+                {
+                    State = pb.Active ? Playback.StateActive : Playback.StateStarted, Purpose = pb.Purpose, Title = pb.Title, Queue = pb.Queue,
+                    PlayedAt = pb.Started, LastAt = pb.LastAt,
+                }, pb);
             }
 
-            return (id, position, p);
-        }
-        catch (ProtocolException)
-        {
-            return (null, 0, false);
+            if (_plays.Ended.TryGetValue(id, out var ended) && ended.Peer == peer)
+            {
+                return (new PlaybackState
+                {
+                    State = Playback.StateEnded, Purpose = ended.Purpose, Title = ended.Title, Queue = ended.Queue,
+                    PlayedAt = ended.PlayedAt, LastAt = ended.LastAt,
+                }, null);
+            }
+
+            return (new PlaybackState(), null);
         }
     }
 
-    // A peer telling that a playback is still watched (playback section 3).
-    private async Task<Answer> ProgressAsync(CallRequest req, CancellationToken ct)
+    // Answers a peer's progress or stop (playback sections 3, 4 and 7): read
+    // as MSFP reads it, applied to the playback's state, kept reports passed
+    // on to the host; a stop ends a live playback.
+    private async Task<Answer> ReportAsync(CallRequest req, string call, CancellationToken ct)
     {
         var p = req.Peer;
         if (p is null || p.State != PeerState.Paired)
@@ -1125,70 +1351,73 @@ public sealed partial class MsfpEngine
             return Answer.Refuse(ProblemType.NotSupported);
         }
 
-        var (id, position, paused) = ReadPlayId(req.Body, true);
-        if (id is null)
-        {
-            return Answer.Refuse(ProblemType.Invalid);
-        }
-
-        if (LiveOf(p.Id, id) is not { } pb)
-        {
-            return Answer.Refuse(ProblemType.Stopped);
-        }
-
-        Used(pb);
+        var now = Now();
+        PlayReport r;
+        ReportOutcome outcome;
+        LivePlayback? pb;
         try
         {
-            await _cfg.Playback!.ProgressAsync(pb.Handle, position, paused, ct).ConfigureAwait(false);
+            r = Playback.ReadReport(call, req.Body, now);
+            PlaybackState state;
+            (state, pb) = PlayState(p.Id, r.Id);
+            outcome = state.Apply(call, r, now);
         }
-        catch (Exception e) when (e is not OperationCanceledException)
+        catch (PlayRefusal e)
         {
-            _log.LogInformation(e, "msfp: the host's Progress failed");
-        }
-
-        return Answer.Ok("{}"u8.ToArray());
-    }
-
-    // A peer telling that a playback is over (playback section 4): 200
-    // whether or not it was live; another pairing's changes nothing.
-    private async Task<Answer> StopAsync(CallRequest req, CancellationToken ct)
-    {
-        var p = req.Peer;
-        if (p is null || p.State != PeerState.Paired)
-        {
-            return Answer.Refuse(ProblemType.NotFound);
+            return RefusalOf(e);
         }
 
-        if (!On(p, Versions.PartPlayback))
+        if (pb is not null && call == Playback.CallProgress)
         {
-            return Answer.Refuse(ProblemType.NotSupported);
+            Used(pb);
         }
 
-        var (id, position, _) = ReadPlayId(req.Body, false);
-        if (id is null)
+        if (outcome.Effect is Playback.EffectRecorded or Playback.EffectRecordedAndEnded && _cfg.Playback is { } playback)
         {
-            return Answer.Refuse(ProblemType.Invalid);
-        }
-
-        if (LiveOf(p.Id, id) is { } pb)
-        {
-            if (position > 0)
+            var handle = "";
+            lock (_plays)
             {
-                try
+                if (pb is not null)
                 {
-                    await _cfg.Playback!.ProgressAsync(pb.Handle, position, false, ct).ConfigureAwait(false);
+                    pb.LastAt = outcome.At;
+                    handle = pb.Handle;
                 }
-                catch (Exception e) when (e is not OperationCanceledException)
+                else if (_plays.Ended.TryGetValue(r.Id, out var ended))
                 {
-                    _log.LogInformation(e, "msfp: the host's Progress failed");
+                    ended.LastAt = outcome.At;
+                    handle = ended.Handle;
                 }
             }
 
+            var hr = new Report
+            {
+                Handle = handle, Title = outcome.Title, PositionMs = outcome.PositionMs, HasPosition = outcome.HasPosition, Paused = r.Paused,
+                At = outcome.At, Stop = call == Playback.CallStop, Late = pb is null,
+            };
+            try
+            {
+                await playback.ProgressAsync(hr, ct).ConfigureAwait(false);
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                _log.LogInformation(e, "msfp: the host's Progress failed");
+            }
+        }
+
+        if (pb is not null && call == Playback.CallStop)
+        {
             EndPlayback(pb, EndReason.Stopped);
         }
 
         return Answer.Ok("{}"u8.ToArray());
     }
+
+    // A peer telling that a playback is still watched (playback section 3).
+    private Task<Answer> ProgressAsync(CallRequest req, CancellationToken ct) => ReportAsync(req, Playback.CallProgress, ct);
+
+    // A peer telling that a playback is over (playback section 4): 200
+    // whether or not it was live; another pairing's changes nothing.
+    private Task<Answer> StopAsync(CallRequest req, CancellationToken ct) => ReportAsync(req, Playback.CallStop, ct);
 
     /// <summary>
     /// Ends a peer's playback here from the host's side, for why (playback
@@ -1229,14 +1458,16 @@ public sealed partial class MsfpEngine
         lock (_plays)
         {
             return _plays.ById.Values
-                .Select(pb => new PlaybackView(pb.Id, pb.Peer, pb.PeerName, pb.Title, pb.Method, pb.Handle, pb.Started, pb.Active ? "active" : "started"))
+                .Select(pb => new PlaybackView(pb.Id, pb.Peer, pb.PeerName, pb.Title, pb.Method, pb.Purpose, pb.Handle, pb.Started,
+                    pb.Active ? "active" : "started"))
                 .OrderBy(v => v.Since).ThenBy(v => v.Id, StringComparer.Ordinal).ToList();
         }
     }
 
-    // Whether a peer may still use a playback here: paired, not suspended
-    // (media section 4). Read from storage at each media request, so an
-    // ending noticed only then still stops the ticket.
+    // Whether a peer may still use a playback here: paired, not suspended,
+    // its title's library still offered (media section 4). Read from storage
+    // at each media request, so an ending noticed only then still stops the
+    // ticket.
     private async Task<bool> PlayAllowedAsync(LivePlayback pb, CancellationToken ct)
     {
         PeerRecord p;
@@ -1260,7 +1491,7 @@ public sealed partial class MsfpEngine
             return false;
         }
 
-        if (pb.Library.Length > 0 && !Offered(p).Contains(pb.Library))
+        if (!StillOffered(p, pb.Libraries))
         {
             EndPlayback(pb, EndReason.NotOffered);
             return false;

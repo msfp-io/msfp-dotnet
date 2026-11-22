@@ -13,9 +13,8 @@ namespace Msfp;
 // image only for 10 minutes, and asked for as a viewer, the image checked
 // and re-encoded before the host gets it.
 //
-// B2: image tickets are kept here, apart from playbacks' tickets; the
-// ticket kinds of media section 4 (playback, download, scan, previews,
-// image) may move to one store of tickets with the previews call.
+// The short tickets of media section 4, of an image call and of a
+// previews call (Previews.cs), are kept here, apart from playbacks'.
 public sealed partial class MsfpEngine
 {
     internal const string CallImage = "image";
@@ -23,9 +22,15 @@ public sealed partial class MsfpEngine
     // How long an image ticket works (media section 4).
     private static readonly TimeSpan ImageTicketTime = TimeSpan.FromMinutes(10);
 
-    // What an image ticket opens: one title's image, for one peer, while the
-    // library it was sent in is still shared with it.
-    private sealed record ImageTicket(string Peer, string Key, DateTimeOffset Expires);
+    // What a short ticket opens, for one peer, for 10 minutes: of kind
+    // image, one title's image, while the library it was sent in is still
+    // shared with it; of kind previews, one copy's sheets (its handle, their
+    // count), while the title is still sent to it.
+    private sealed record ImageTicket(string Kind, string Peer, string Key, DateTimeOffset Expires, string Handle = "", int Sheets = 0);
+
+    // The kinds of short tickets.
+    private const string TicketImage = "image";
+    private const string TicketPreviews = "previews";
 
     // The live image tickets, by the SHA-256 of each (hex), and the locks of
     // the image calls made, by peer.
@@ -91,17 +96,7 @@ public sealed partial class MsfpEngine
             return null;
         }
 
-        var ids = await LibraryIdsAsync(ct).ConfigureAwait(false);
-        var pub = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var l in libs)
-        {
-            if (ids.TryGetValue(l, out var id))
-            {
-                pub[l] = id;
-            }
-        }
-
-        var raw = await new TitleSender(this, p, libs, local, pub, ct).TitleAsync(t).ConfigureAwait(false);
+        var raw = await (await SenderForAsync(p, libs, ct).ConfigureAwait(false)).TitleAsync(t).ConfigureAwait(false);
         if (raw is null)
         {
             return null;
@@ -150,7 +145,7 @@ public sealed partial class MsfpEngine
         }
 
         var ticket = Base64UrlText.Encode(RandomBytes(32));
-        AddImageTicket(ticket, new ImageTicket(p.Id, title, Now() + ImageTicketTime));
+        AddImageTicket(ticket, new ImageTicket(TicketImage, p.Id, title, Now() + ImageTicketTime));
         return Answer.Ok(JsonOut.Object(o => o.String("url", CatalogRules.ImageUrl(StreamBase(req), ticket))));
     }
 
@@ -165,9 +160,17 @@ public sealed partial class MsfpEngine
             return null;
         }
 
-        var h = request.Headers;
-        if (name != "image" || request.Method != "GET" || request.Target.Contains('?', StringComparison.Ordinal) ||
-            h.GetValues("Origin").Count > 0 || h.GetValues("Sec-Fetch-Site").Count > 0 || h.GetValues("Sec-Fetch-Mode").Count > 0)
+        if (MediaMethod(request, output) is { } refused)
+        {
+            return refused;
+        }
+
+        if (it.Kind == TicketPreviews)
+        {
+            return await ServePreviewSheetAsync(request, it, name, output, ct).ConfigureAwait(false);
+        }
+
+        if (name != "image" || !PlainMediaRequest(request))
         {
             return StreamOutcome.NotFound;
         }
@@ -270,22 +273,12 @@ public sealed partial class MsfpEngine
             throw new MsfpException(MsfpError.NotSupported);
         }
 
-        Title? t = null;
-        await _store.ReadAsync(async tx => t = await tx.PeerTitleAsync(peer, key).ConfigureAwait(false), ct).ConfigureAwait(false);
-        if (t is not (VideoTitle { Image: true } or MusicTitle { Image: true }))
+        if (await KeptTitleAsync(peer, key, ct).ConfigureAwait(false) is not (VideoTitle { Image: true } or MusicTitle { Image: true }))
         {
             throw new MsfpException(MsfpError.NotFound);
         }
 
-        SemaphoreSlim gate;
-        lock (_imageLocks)
-        {
-            if (!_imageLocks.TryGetValue(peer, out gate!))
-            {
-                gate = new SemaphoreSlim(1, 1);
-                _imageLocks[peer] = gate;
-            }
-        }
+        var gate = ImageLock(peer);
 
         await gate.WaitAsync(ct).ConfigureAwait(false);
         try

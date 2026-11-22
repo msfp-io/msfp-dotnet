@@ -12,8 +12,8 @@ namespace Msfp;
 // everything before a byte reaches the viewer.
 public sealed partial class MsfpEngine
 {
-    // The reading whole of a playlist, a subtitle part, a PGS part or a
-    // sheet gets 2 minutes; 4 of them (and 4 sheets) are held in memory at
+    // The reading whole of a playlist, a subtitle part, a PGS part, a font
+    // or a sheet gets 2 minutes; 4 of them (and 4 sheets) are held in memory at
     // once across the server (media section 2.4). A media fetch waits a
     // minute at most for the peer's headers.
     private static readonly TimeSpan SmallReadTime = TimeSpan.FromMinutes(2);
@@ -29,10 +29,14 @@ public sealed partial class MsfpEngine
 
     /// <summary>
     /// Serves a piece of a playback on a peer, for the viewer playing it: the
-    /// same <see cref="MediaPath"/> the owning side serves; range is the
-    /// viewer's Range header as received ("" for none), sent on for the file
-    /// and segments only, once well-formed. Content-Type is set by the
-    /// engine. A fetch is cut when its playback ends.
+    /// same <see cref="MediaPath"/> the owning side serves
+    /// (<see cref="MediaPath.Entry"/> for a queue entry's stream); range is
+    /// the viewer's Range header as received ("" for none), sent on for the
+    /// file and segments only, once well-formed. Content-Type is set by the
+    /// engine; an output that implements <see cref="IETagSink"/> is given the
+    /// file's ETag first. The file's answers are checked against the copy's
+    /// etag and exact size (a different one: the copy changed, NotFound, and
+    /// RestartAsync won't join it). A fetch is cut when its playback ends.
     /// </summary>
     /// <param name="id">The engine's ID of the playback.</param>
     /// <param name="path">What to fetch.</param>
@@ -41,7 +45,7 @@ public sealed partial class MsfpEngine
     /// <param name="ct">Cancelled when the viewer goes.</param>
     /// <exception cref="MsfpException">Nothing written then: <see cref="MsfpError.NotFound"/> (any failed
     /// fetch: the peer's body and headers never pass with a failure), <see cref="MsfpError.RangeNotSatisfiable"/>
-    /// (a malformed Range: nothing is fetched; or the peer's 416), <see cref="MsfpError.ServerBusy"/> (the bounds of
+    /// (a malformed Range: nothing is fetched; or the peer's 416, a scan's past its cap among them), <see cref="MsfpError.ServerBusy"/> (the bounds of
     /// fetches at once, or the peer's 503).</exception>
     public async Task FetchAsync(string id, MediaPath path, string range, IResponseSink output, CancellationToken ct = default)
     {
@@ -49,7 +53,7 @@ public sealed partial class MsfpEngine
         ArgumentNullException.ThrowIfNull(output);
         range ??= "";
         var rm = LiveRemote(id) ?? throw new MsfpException(MsfpError.NotFound);
-        if (path.Kind == MediaKind.Segment && IsPlaylist(rm, path.Name))
+        if (path.Kind == MediaKind.Segment && IsPlaylist(rm, path.Entry, path.Name))
         {
             path = path with { Kind = MediaKind.Playlist };
         }
@@ -176,7 +180,11 @@ public sealed partial class MsfpEngine
                     throw new MsfpException(MsfpError.NotFound);
             }
 
-            if (media)
+            if (path.Kind == MediaKind.File)
+            {
+                await RelayFileAsync(rm, path.Entry, res, headers, range, want, output, ct).ConfigureAwait(false);
+            }
+            else if (media)
             {
                 await RelayMediaAsync(rm, res, headers, want, output, ct).ConfigureAwait(false);
             }
@@ -187,29 +195,71 @@ public sealed partial class MsfpEngine
         }
     }
 
+    // The folder of a stream of a playback on a peer, under its base: its
+    // own, or a queue entry's (media section 1).
+    private static string EntryBase(int entry) => entry == 0 ? "" : "queue/" + (entry - 1).ToString(CultureInfo.InvariantCulture) + "/";
+
     // The name fetched under the peer's stream base for path; null for what
     // the playback doesn't have.
-    private static string? RelayName(RemotePlay rm, MediaPath path)
+    private string? RelayName(RemotePlay rm, MediaPath path)
     {
+        RemoteStream? entry;
+        lock (_remotes)
+        {
+            entry = rm.Entries.GetValueOrDefault(path.Entry);
+        }
+
         var v = rm.View;
         switch (path.Kind)
         {
             case MediaKind.File:
-                return v.Protocol == "file" ? "file" : null;
+                return entry is { Protocol: "file" } ? EntryBase(path.Entry) + "file" : null;
             case MediaKind.Master:
-                return v.Protocol == "hls" ? "master.m3u8" : null;
+                return entry is { Protocol: "hls" } ? EntryBase(path.Entry) + "master.m3u8" : null;
             case MediaKind.Playlist or MediaKind.Segment:
-                return v.Protocol == "hls" && Media.FileName(path.Name) && path.Name != "master.m3u8" ? path.Name : null;
-            case MediaKind.Subtitles or MediaKind.Pictures:
-                if (!rm.Subtitles.TryGetValue(path.Track, out var pictures) || pictures != (path.Kind == MediaKind.Pictures) ||
-                    path.Part is < 0 or > 9999)
+                return entry is { Protocol: "hls" } && Media.FileName(path.Name) && path.Name != "master.m3u8" ? EntryBase(path.Entry) + path.Name : null;
+            case MediaKind.Subtitles or MediaKind.Ass or MediaKind.Pictures:
+                if (!rm.Subtitles.TryGetValue(path.Track, out var how) || path.Entry != 0)
                 {
                     return null;
                 }
 
-                return Playback.SubtitleUrl("", path.Track, pictures) + "/" + path.Part.ToString(CultureInfo.InvariantCulture);
+                var served = path.Kind switch
+                {
+                    MediaKind.Subtitles => how.Text,
+                    MediaKind.Ass => how.Ass,
+                    _ => how.Pictures,
+                };
+                string part;
+                if (path.Whole)
+                {
+                    if (path.Kind == MediaKind.Pictures)
+                    {
+                        return null;
+                    }
+
+                    part = "whole";
+                }
+                else if (path.Part is < 0 or > 9999)
+                {
+                    return null;
+                }
+                else
+                {
+                    part = path.Part.ToString(CultureInfo.InvariantCulture);
+                }
+
+                var folder = path.Kind switch
+                {
+                    MediaKind.Subtitles => "subtitles/",
+                    MediaKind.Ass => "ass/",
+                    _ => "pictures/",
+                };
+                return served ? folder + path.Track + "/" + part : null;
+            case MediaKind.Font:
+                return path.Font >= 0 && path.Font < v.Fonts && path.Entry == 0 ? "fonts/" + path.Font.ToString(CultureInfo.InvariantCulture) : null;
             case MediaKind.Sheet:
-                return v.Trickplay is { } tp && path.Sheet >= 0 && path.Sheet < tp.Sheets ? Playback.SheetUrl("", path.Sheet) : null;
+                return v.Trickplay is { } tp && path.Sheet >= 0 && path.Sheet < tp.Sheets && path.Entry == 0 ? Playback.SheetUrl("", path.Sheet) : null;
         }
 
         return null;
@@ -310,9 +360,117 @@ public sealed partial class MsfpEngine
         return (n, ranges[0]);
     }
 
-    // Relays the file or a segment: a 206 only for the range asked, never
-    // more than its length, never a playlist under a media name, its type
-    // kept only when it is a plain video/ or audio/ one.
+    // An ETag header's value, when it is a strong entity tag of an etag's
+    // form; "" otherwise.
+    private static string StrongETag(string? h) =>
+        h is { Length: >= 2 } && h[0] == '"' && h[^1] == '"' && Playback.Id(h[1..^1]) ? h[1..^1] : "";
+
+    // Relays the file of a playback, or of a queue entry (media section
+    // 3.2): its answer checked against the copy's etag and exact size (learnt
+    // from the first answer when the catalog didn't give them), a 206 only
+    // for the range asked, never more than its length.
+    private async Task RelayFileAsync(RemotePlay rm, int entry, HttpResponseMessage res, ResponseHeaders headers, string range, ByteRange want,
+        IResponseSink output, CancellationToken ct)
+    {
+        RemoteStream ent;
+        lock (_remotes)
+        {
+            ent = rm.Entries[entry];
+        }
+
+        if (headers.GetValues("ETag").Count > 1 || headers.GetValues("Content-Length").Count > 1 || headers.GetValues("Content-Range").Count > 1)
+        {
+            throw new MsfpException(MsfpError.NotFound);
+        }
+
+        var status = (int)res.StatusCode;
+        var a = new MediaAnswer(status, headers.GetValues("ETag").FirstOrDefault(), headers.GetValues("Content-Range").FirstOrDefault(),
+            headers.GetValues("Content-Length").FirstOrDefault());
+        if (ent.Etag.Length == 0 || ent.Size < 0)
+        {
+            // Not known from the catalog: learnt from this first answer, then
+            // held to.
+            if (ent.Etag.Length == 0)
+            {
+                ent = ent with { Etag = StrongETag(a.ETag) };
+            }
+
+            if (ent.Size < 0)
+            {
+                if (status == 200 && long.TryParse(a.ContentLength, NumberStyles.None, CultureInfo.InvariantCulture, out var n))
+                {
+                    ent = ent with { Size = n };
+                }
+                else if (a.ContentRange is { } cr && ContentRangeRe().Match(cr) is { Success: true } m && m.Groups[3].Value != "*")
+                {
+                    ent = ent with { Size = long.Parse(m.Groups[3].Value, CultureInfo.InvariantCulture) };
+                }
+            }
+
+            if (ent.Etag.Length == 0 || ent.Size < 0)
+            {
+                throw new MsfpException(MsfpError.NotFound);
+            }
+        }
+
+        if (Media.CheckFileAnswer(range, ent.Size, ent.Etag, a) is { } why)
+        {
+            _log.LogInformation("msfp: a peer's file answer was refused: {Peer} {Why}", rm.Peer, why);
+            throw new MsfpException(MsfpError.NotFound);
+        }
+
+        lock (_remotes)
+        {
+            rm.Entries[entry] = ent;
+            if (entry == 0)
+            {
+                rm.View = rm.View with { Size = ent.Size };
+            }
+        }
+
+        long length = ent.Size;
+        var contentRange = "";
+        if (status == 206)
+        {
+            if (PartialLength(headers, want) is not { } partial)
+            {
+                throw new MsfpException(MsfpError.NotFound);
+            }
+
+            (length, contentRange) = partial;
+        }
+
+        (output as IETagSink)?.SetETag(ent.Etag);
+        output.Start(status, Playback.RelayedMediaType(headers.GetValues("Content-Type").FirstOrDefault()), length, contentRange);
+        await using var body = await res.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var buffer = new byte[64 << 10];
+            for (var left = length; left > 0;)
+            {
+                var n = await body.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, left)), ct).ConfigureAwait(false);
+                if (n == 0)
+                {
+                    break;
+                }
+
+                await output.WriteAsync(buffer.AsMemory(0, n), ct).ConfigureAwait(false);
+                left -= n;
+            }
+        }
+        catch (Exception e) when (e is IOException or HttpRequestException or OperationCanceledException && !rm.Ended.IsCancellationRequested)
+        {
+            throw new IOException("msfp: a relayed file was cut", e);
+        }
+        catch (OperationCanceledException)
+        {
+            // The playback ended: the answer stops there.
+        }
+    }
+
+    // Relays a segment: a 206 only for the range asked, never more than its
+    // length, never a playlist under a media name, its type kept only when it
+    // is a plain video/ or audio/ one.
     private async Task RelayMediaAsync(RemotePlay rm, HttpResponseMessage res, ResponseHeaders headers, ByteRange want, IResponseSink output,
         CancellationToken ct)
     {
@@ -391,17 +549,23 @@ public sealed partial class MsfpEngine
     }
 
     // Relays what is read whole: playlists checked and kept to the subset,
-    // WebVTT rebuilt, PGS checked, sheets checked and re-encoded (media
-    // section 3.1, video sections 6.2 to 6.4).
+    // complete, their renditions the playback's audio tracks; WebVTT and ASS
+    // rebuilt; PGS checked; fonts checked; sheets checked and re-encoded
+    // (media section 3.1, video sections 6.2 to 6.6).
     private async Task RelaySmallAsync(RemotePlay rm, MediaPath path, HttpResponseMessage res, IResponseSink output, CancellationToken ct)
     {
-        var limit = path.Kind switch
+        var limit = Media.MaxPlaylist;
+        Func<byte[], (byte[]? Body, string ContentType)>? rebuild = null;
+        switch (path.Kind)
         {
-            MediaKind.Subtitles => WebVtt.MaxWebVtt,
-            MediaKind.Pictures => Pgs.MaxPgs,
-            MediaKind.Sheet => Protocol.Trickplay.MaxSheetBytes,
-            _ => Media.MaxPlaylist,
-        };
+            case MediaKind.Subtitles or MediaKind.Ass or MediaKind.Pictures or MediaKind.Font:
+                (limit, rebuild) = SmallRules(path);
+                break;
+            case MediaKind.Sheet:
+                limit = Protocol.Trickplay.MaxSheetBytes;
+                break;
+        }
+
         if (res.Content.Headers.ContentLength > limit)
         {
             throw new MsfpException(MsfpError.NotFound);
@@ -422,13 +586,13 @@ public sealed partial class MsfpEngine
             throw new MsfpException(MsfpError.NotFound);
         }
 
-        var contentType = "application/vnd.apple.mpegurl";
+        var contentType = Playback.HlsType;
         switch (path.Kind)
         {
             case MediaKind.Master or MediaKind.Playlist:
                 try
                 {
-                    body = Media.FilterPlaylist(body, path.Kind == MediaKind.Master ? Media.MasterSubset : Media.MediaSubset, null); // B2: the playback's audio tracks, for a master's #EXT-X-MEDIA renditions
+                    body = Media.FilterPlaylist(body, path.Kind == MediaKind.Master ? Media.MasterSubset : Media.MediaSubset, rm.Audio.Contains);
                 }
                 catch (ProtocolException e)
                 {
@@ -439,30 +603,13 @@ public sealed partial class MsfpEngine
                 if (path.Kind == MediaKind.Master)
                 {
                     // What it names is fetched as a playlist, whatever its name.
+                    var entry = path.Entry.ToString(CultureInfo.InvariantCulture) + "/";
                     lock (_remotes)
                     {
-                        rm.Playlists.UnionWith(Media.UriLines(body));
+                        rm.Playlists.UnionWith(Media.UriLines(body).Select(n => entry + n));
                     }
                 }
 
-                break;
-            case MediaKind.Subtitles:
-                if (!WebVtt.TryRebuild(body, out var vtt))
-                {
-                    throw new MsfpException(MsfpError.NotFound);
-                }
-
-                body = vtt;
-                contentType = "text/vtt; charset=utf-8";
-                break;
-            case MediaKind.Pictures:
-                // An empty part is a stretch with no subtitles: relayed as such.
-                if (!Pgs.Valid(body))
-                {
-                    throw new MsfpException(MsfpError.NotFound);
-                }
-
-                contentType = "application/octet-stream";
                 break;
             case MediaKind.Sheet:
                 var tp = rm.View.Trickplay!;
@@ -483,23 +630,28 @@ public sealed partial class MsfpEngine
 
                 contentType = "image/jpeg";
                 break;
+            default:
+                // An empty PGS part is a stretch with no subtitles: relayed as such.
+                var (again, type) = rebuild!(body);
+                body = again ?? throw new MsfpException(MsfpError.NotFound);
+                contentType = type;
+                break;
         }
 
         output.Start(200, contentType, body.Length, "");
         await output.WriteAsync(body, ct).ConfigureAwait(false);
     }
 
-    // Whether a name of a playback was named by its master playlist, or
-    // ends in .m3u8: fetched and checked as a playlist.
-    private bool IsPlaylist(RemotePlay rm, string name)
+    // Whether a name of a playback's stream was named by its master
+    // playlist, or ends in .m3u8: fetched and checked as a playlist.
+    private bool IsPlaylist(RemotePlay rm, int entry, string name)
     {
         lock (_remotes)
         {
-            return rm.Playlists.Contains(name) || name.EndsWith(".m3u8", StringComparison.Ordinal);
+            return rm.Playlists.Contains(entry.ToString(CultureInfo.InvariantCulture) + "/" + name) || name.EndsWith(".m3u8", StringComparison.Ordinal);
         }
     }
 }
-
 /// <summary>Reads a JPEG's size from its header, before anything decodes it.</summary>
 internal static class Jpeg
 {

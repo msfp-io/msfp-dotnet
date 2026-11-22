@@ -1,49 +1,14 @@
-using System.Text.Json.Nodes;
 using Msfp.Protocol;
 
 namespace Msfp.Tests;
 
-// The tables of MSFP playback section 2.6 and video section 5.4, row by
-// row; what a device is said to play; ranges (msfp-go's choose_test.go).
+// The table of MSFP video section 5.4, row by row (playback section 2.6's,
+// of the copy and the audio, are Msfp.Protocol's: ChooseCopy, ChooseAudio);
+// what a device is said to play; ranges (msfp-go's choose_test.go).
 public sealed class ChoiceTests
 {
-    [Theory]
-    [InlineData("v-fr", "en", "fr")] // a version of the title: that copy, whatever the language
-    [InlineData("v-none", "fr", "fr")] // no copy has it: by language, same tag first
-    [InlineData("", "fr-CA", "frca")] // same tag
-    [InlineData("", "fr-FR", "frca")] // then same base language: the first
-    [InlineData("", "de", "en")] // none matches: the first
-    [InlineData("", "", "en")] // nothing asked: the first
-    [InlineData("v-none", "", "en")] // a version no copy has, no language
-    [InlineData("", "FR-ca", "frca")] // tags compared without case
-    [InlineData("v-frca", "", "frca")] // a version alone
-    [InlineData("V-fr", "", "en")] // version IDs compared exactly
-    public void ChooseCopy(string version, string language, string want)
-    {
-        Copy[] copies = [new() { Handle = "en", Audio = ["en"] }, new() { Handle = "frca", Audio = ["fr-CA"] }, new() { Handle = "fr", Audio = ["fr"] }];
-        Assert.Equal(want, copies[MsfpEngine.ChooseCopy(copies, c => "v-" + c.Handle, version, language)].Handle);
-    }
-
-    [Theory]
-    [InlineData("a3", "en", "a3")] // a track of the copy: that one, the language ignored
-    [InlineData("a9", "en", "a0")] // not a track of the copy: as if absent
-    [InlineData("", "fr", "a3")] // same tag, never a commentary
-    [InlineData("", "fr-FR", "a2")] // same base language: the first of the title's own sound
-    [InlineData("", "de", "a2")] // none matches: the default
-    [InlineData("", "", "a2")]
-    public void ChooseAudio(string track, string language, string want)
-    {
-        Track[] tracks = [new() { Id = "a0", Language = "en" }, new() { Id = "a1", Language = "fr", Role = "commentary" },
-            new() { Id = "a2", Language = "fr-CA", Default = true }, new() { Id = "a3", Language = "fr" }];
-        Assert.Equal(want, MsfpEngine.ChooseAudio(tracks, track, language));
-    }
-
-    [Fact]
-    public void ChooseAudioWithoutDefault() =>
-        Assert.Equal("a0", MsfpEngine.ChooseAudio([new Track { Id = "a0" }, new Track { Id = "a1" }], "", "de"));
-
-    private static readonly Track[] Subtitles = [new() { Id = "s0", Language = "en" }, new() { Id = "s1", Language = "fr", Forced = true },
-        new() { Id = "s2", Language = "fr-CA" }, new() { Id = "s3", Language = "de", Forced = true }];
+    private static readonly CopySubtitle[] Subtitles = [new("s0", "subrip") { Language = "en" }, new("s1", "subrip") { Language = "fr", Forced = true },
+        new("s2", "subrip") { Language = "fr-CA" }, new("s3", "subrip") { Language = "de", Forced = true }];
 
     [Theory]
     [InlineData("off", "en", "")] // off: none, the language ignored
@@ -64,18 +29,17 @@ public sealed class ChoiceTests
         Assert.Equal("", MsfpEngine.ForcedFor(Subtitles, "en"));
     }
 
-    private static JsonObject? Coarsened(Capabilities c) =>
-        MsfpEngine.Coarsen(c, true) is { } fill ? JsonNode.Parse(JsonOut.Object(fill))!.AsObject() : null;
-
     [Fact]
     public void Coarsen()
     {
-        var c = Coarsened(new Capabilities { Containers = ["MP4", "mkv", "mp4", "avi"], VideoCodecs = ["h264", "H265"], MaxAudioChannels = 7, MaxHeight = 1079, MaxBitrateKbps = 8999 })!;
-        Assert.Equal("{\"containers\":[\"mkv\",\"mp4\"],\"maxAudioChannels\":6,\"maxBitrateKbps\":8000,\"videoCodecs\":[\"h264\"],\"maxHeight\":720}", c.ToJsonString());
-        var low = Coarsened(new Capabilities { MaxAudioChannels = 1, MaxHeight = 100, MaxBitrateKbps = 999 })!;
-        Assert.Equal("{\"maxAudioChannels\":2,\"maxHeight\":480}", low.ToJsonString());
-        Assert.Null(Coarsened(new Capabilities()));
-        Assert.Equal((1000, 999, 0), (MsfpEngine.RoundKbps(1999), MsfpEngine.RoundKbps(999), MsfpEngine.RoundKbps(0)));
+        var c = MsfpEngine.Coarsen(new PlayCapabilities { Containers = ["MP4", "mkv", "mp4", "avi"], VideoCodecs = ["h264", "H265"], MaxAudioChannels = 7, MaxHeight = 1079, MaxBitrateKbps = 8999 }, true)!;
+        Assert.Equal(["avi", "mkv", "mp4"], c.Containers);
+        Assert.Equal((1, 6, 720, 8000), (c.VideoCodecs.Count, c.MaxAudioChannels, c.MaxHeight, c.MaxBitrateKbps));
+        var low = MsfpEngine.Coarsen(new PlayCapabilities { MaxAudioChannels = 1, MaxHeight = 100, MaxBitrateKbps = 999 }, true)!;
+        Assert.Equal((2, 480, 0), (low.MaxAudioChannels, low.MaxHeight, low.MaxBitrateKbps));
+        Assert.Null(MsfpEngine.Coarsen(new PlayCapabilities(), true));
+        // A track's, with video's members only: nothing said.
+        Assert.Null(MsfpEngine.Coarsen(new PlayCapabilities { VideoCodecs = ["h264"], MaxHeight = 1080 }, false));
     }
 
     [Theory]

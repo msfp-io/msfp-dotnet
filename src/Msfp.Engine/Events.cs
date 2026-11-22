@@ -308,7 +308,8 @@ public sealed record WantsGone(string Peer, string Name, IReadOnlyList<string> L
 /// <param name="Playback">The playback's ID.</param>
 /// <param name="Title">The title's key.</param>
 /// <param name="Method">"direct", "remux" or "transcode".</param>
-public sealed record PlaybackStarted(string Peer, string Name, string Playback, string Title, string Method) : MsfpEvent
+/// <param name="Purpose">"play", "download" or "scan".</param>
+public sealed record PlaybackStarted(string Peer, string Name, string Playback, string Title, string Method, string Purpose) : MsfpEvent
 {
     /// <inheritdoc/>
     public override string? PeerId => Peer;

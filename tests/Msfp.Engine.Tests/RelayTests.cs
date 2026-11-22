@@ -13,7 +13,7 @@ public sealed class RelayTests
 
     // A sharing whose owning side, A, rewrites its answers: the media of path
     // name (after the ticket), or of a call.
-    private sealed class Hostile
+    internal sealed class Hostile
     {
         private readonly Dictionary<string, Func<HeaderList, byte[], byte[]>> _rewrites = new(StringComparer.Ordinal);
 
@@ -81,10 +81,9 @@ public sealed class RelayTests
     {
         var h = HostKit.FilmHost();
         var sheet = Sheets.Jpeg20x10;
+        h.EditCopy(Film, 0, c => c with { Previews = true });
         h.Info["movie/tmdb/949#0"] = new CopyInfo
         {
-            AudioTracks = [new Track { Id = "a0", Label = "English", Language = "en" }],
-            SubtitleTracks = [new Track { Id = "s0", Label = "Français", Language = "fr" }, new Track { Id = "s1", Label = "PGS", Pictures = true }],
             Trickplay = new Trickplay { TileWidth = 10, TileHeight = 10, Columns = 2, Rows = 1, IntervalMs = 10_000, TileCount = 3 },
         };
         h.Files["pictures/s1/0"] = [];
@@ -124,7 +123,7 @@ public sealed class RelayTests
         // WebVTT rebuilt (a tag made of references never comes back); an
         // empty PGS part relayed empty.
         x.Body("subtitles/s0/0", "WEBVTT\nSTYLE\n::cue{}\n\n1\n00:00:01.000 --> 00:00:02.000 align:start\n<c.x>&lt;b&gt;hi</c>\n");
-        Assert.Equal("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhi\n", (await FetchAsync(s, pb.Id, new MediaPath { Kind = MediaKind.Subtitles, Track = "s0" })).Out?.Text);
+        Assert.Equal("WEBVTT\n\n00:00:01.000 --> 00:00:02.000 align:start\nhi\n", (await FetchAsync(s, pb.Id, new MediaPath { Kind = MediaKind.Subtitles, Track = "s0" })).Out?.Text);
         var pgs = (await FetchAsync(s, pb.Id, new MediaPath { Kind = MediaKind.Pictures, Track = "s1" })).Out;
         Assert.NotNull(pgs);
         Assert.Equal((200, 0, "application/octet-stream"), (pgs.Status, pgs.Body.Length, pgs.ContentType));
@@ -231,9 +230,8 @@ public sealed class RelayTests
 
         Edit(m =>
         {
-            m["audioTracks"] = JsonNode.Parse("[{\"id\":\"a0\",\"label\":\"Eng\\u202elish\\u0007\"},{\"id\":\"a01\",\"label\":\"x\"},{\"id\":\"a2\",\"label\":\"\"},{\"id\":\"a3\",\"label\":\"y\",\"role\":\"evil\"}]");
+            m["audioTracks"] = JsonNode.Parse("[{\"id\":\"a0\",\"language\":\"e\\u202en\"},{\"id\":\"../a1\"},{\"id\":\"a2\",\"channels\":\"2\"},{\"id\":\"a3\",\"role\":\"evil\"}]");
             m["versions"] = JsonNode.Parse("[{\"id\":\"../x\",\"name\":\"x\"},{\"id\":\"v1\",\"name\":\"<b>HD</b>\"}]");
-            m["segments"] = JsonNode.Parse("[{\"kind\":\"intro\",\"startMs\":0,\"endMs\":1000},{\"kind\":\"ad\",\"startMs\":0,\"endMs\":1}]");
             m["durationMs"] = 9_000_000_000;
             m["title"] = JsonNode.Parse("{\"name\":\"whatever\"}");
             var sheetUrl = ((string)m["stream"]!["url"]!)[..^"master.m3u8".Length] + "trickplay/0";
@@ -244,11 +242,11 @@ public sealed class RelayTests
             };
         });
         var pb = await x.PlayAsync();
-        Assert.Equal(2, pb.AudioTracks.Count);
-        Assert.Equal("English", pb.AudioTracks[0].Label);
-        Assert.True(string.IsNullOrEmpty(pb.AudioTracks[1].Role));
+        Assert.Equal(3, pb.AudioTracks.Count);
+        Assert.True(string.IsNullOrEmpty(pb.AudioTracks[0].Language));
+        Assert.Equal(0, pb.AudioTracks[1].Channels);
+        Assert.True(string.IsNullOrEmpty(pb.AudioTracks[2].Role));
         Assert.Equal("<b>HD</b>", Assert.Single(pb.Versions).Name);
-        Assert.Single(pb.Segments);
         Assert.Equal(0, pb.DurationMs);
         Assert.Null(pb.Trickplay);
     }
@@ -265,6 +263,12 @@ public sealed class RelayTests
         var v = Vectors.Load("media.json");
         var h = HostKit.FilmHost();
         h.Files["pictures/s1/0"] = [];
+        // The playback of the hls vectors: audio tracks a1 to a32 (32 at most
+        // in a copy).
+        h.EditCopy(Film, 0, c => c with
+        {
+            AudioTracks = Enumerable.Range(1, 32).Select(n => new CopyAudio("a" + n.ToString(System.Globalization.CultureInfo.InvariantCulture), "aac")).ToList(),
+        });
         using var s = await Sharing.StartAsync(h);
         var x = new Hostile(s);
         var pb = await x.PlayAsync();

@@ -22,11 +22,20 @@ internal sealed class AspNetHeaders(IHeaderDictionary headers) : IHeaderReader
 }
 
 /// <summary>An answer of the engine's media on ASP.NET Core's response.</summary>
-internal sealed class AspNetSink(HttpResponse response) : IResponseSink
+internal sealed class AspNetSink(HttpResponse response) : IResponseSink, IETagSink
 {
+    private string _etag = "";
+
+    public void SetETag(string etag) => _etag = etag;
+
     public void Start(int status, string contentType, long length, string contentRange)
     {
         response.StatusCode = status;
+        if (status == 405)
+        {
+            response.Headers.Allow = "GET";
+        }
+
         if (contentType.Length > 0)
         {
             response.ContentType = contentType;
@@ -45,6 +54,10 @@ internal sealed class AspNetSink(HttpResponse response) : IResponseSink
         if (status is 200 or 206)
         {
             response.Headers.AcceptRanges = "bytes";
+            if (_etag.Length > 0)
+            {
+                response.Headers.ETag = "\"" + _etag + "\"";
+            }
         }
     }
 

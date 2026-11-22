@@ -138,7 +138,7 @@ public sealed partial class MsfpEngine
         }
 
         await BumpLogAsync(ct).ConfigureAwait(false);
-        EndPlaybacks(pb => pb.Peer == peer && !keep.Contains(pb.Library), EndReason.NotOffered);
+        EndPlaybacks(pb => pb.Peer == peer && !OfferedIn(pb.Libraries, keep), EndReason.NotOffered);
     }
 
     /// <summary>
@@ -227,7 +227,7 @@ public sealed partial class MsfpEngine
         }
         finally
         {
-            EndPlaybacks(pb => pb.Library == id, EndReason.NotOffered);
+            EndPlaybacks(pb => pb.Libraries.Count > 0 && pb.Libraries.All(l => l == id), EndReason.NotOffered);
         }
     }
 
@@ -514,6 +514,13 @@ public sealed partial class MsfpEngine
     private static void WriteLimits(JsonOut w, Limits l, bool music)
     {
         w.Integer("streams", l.Streams).Integer("transcodes", l.Transcodes).Integer("bitrateKbps", l.BitrateKbps);
+        if (l.Downloads > 0)
+        {
+            w.Integer("downloads", l.Downloads).Integer("downloadsPerDay", NonZero(l.DownloadsPerDay))
+                .Integer("downloadKbps", NonZero(l.DownloadKbps));
+        }
+
+        w.Integer("scansPerDay", NonZero(l.ScansPerDay));
         if (music && l.Audio)
         {
             w.Integer("audioStreams", l.AudioStreams).Integer("audioTranscodes", l.AudioTranscodes);

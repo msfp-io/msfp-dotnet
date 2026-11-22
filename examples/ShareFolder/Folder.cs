@@ -50,7 +50,7 @@ internal sealed partial class Folder(string dir) : ICatalog, IPlayback, IMedia
     // video section 3.2): its size, an etag from its size and its time, its
     // container from its extension; its length and streams are left unknown
     // (the example reads no file), its subtitles from the .vtt files beside
-    // it. Its ID is the handle CopiesAsync gives.
+    // it. Its ID is the handle Playback and Media are given.
     private static Protocol.Copy? CopyOf(Film film, string handle)
     {
         var info = new FileInfo(film.File);
@@ -102,20 +102,8 @@ internal sealed partial class Folder(string dir) : ICatalog, IPlayback, IMedia
         return ValueTask.FromResult(new TitlePage(titles, more));
     }
 
-    public ValueTask<IReadOnlyList<Copy>> CopiesAsync(string key, IReadOnlyList<string> libraries, CancellationToken ct) =>
-        ValueTask.FromResult<IReadOnlyList<Copy>>(Scan().ContainsKey(key) ? [new Copy { Handle = key, Name = "File", Library = "films" }] : []);
-
-    public ValueTask<CopyInfo> DescribeAsync(string copy, CancellationToken ct)
-    {
-        var subs = Scan().TryGetValue(copy, out var film) ? film.Subs : [];
-        return ValueTask.FromResult(new CopyInfo
-        {
-            AudioTracks = [new Track { Id = "a0", Label = "Original", Default = true }],
-            SubtitleTracks = subs.Count > 0
-                ? subs.Select((s, i) => new Track { Id = "s" + i, Label = Language(s), Language = Language(s) }).ToList()
-                : null,
-        });
-    }
+    /// <summary>Tells what the catalog doesn't: no previews, no fonts; its .vtt files are served apart.</summary>
+    public ValueTask<CopyInfo> DescribeAsync(string copy, CancellationToken ct) => ValueTask.FromResult(new CopyInfo());
 
     /// <summary>
     /// Serves the file when the viewer plays its container, the HLS copy
@@ -130,7 +118,21 @@ internal sealed partial class Folder(string dir) : ICatalog, IPlayback, IMedia
 
         var ext = Path.GetExtension(film.File).TrimStart('.');
         var (method, protocol) = ("direct", "file");
-        if (request.Capabilities.Containers?.Contains(ext) != true)
+        switch (request.Delivery)
+        {
+            case Playback.DeliveryTranscode:
+                throw new MsfpException(MsfpError.DeliveryRefused);
+            case Playback.DeliveryRemux:
+                if (film.Hls is null)
+                {
+                    throw new MsfpException(MsfpError.DeliveryRefused);
+                }
+
+                (method, protocol) = ("remux", "hls");
+                break;
+        }
+
+        if (request.Delivery.Length == 0 && !request.Capabilities.Containers.Contains(ext))
         {
             if (film.Hls is null)
             {
@@ -151,7 +153,7 @@ internal sealed partial class Folder(string dir) : ICatalog, IPlayback, IMedia
         });
     }
 
-    public ValueTask ProgressAsync(string handle, long positionMs, bool paused, CancellationToken ct) => ValueTask.CompletedTask;
+    public ValueTask ProgressAsync(Report report, CancellationToken ct) => ValueTask.CompletedTask;
 
     public ValueTask StopAsync(string handle, EndReason reason, CancellationToken ct) => ValueTask.CompletedTask;
 

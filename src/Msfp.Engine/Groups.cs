@@ -531,7 +531,7 @@ public sealed partial class MsfpEngine
                 offers[p.Id] = Offered(p);
             }
         }, ct).ConfigureAwait(false);
-        EndPlaybacks(pb => offers.TryGetValue(pb.Peer, out var o) && pb.Library.Length > 0 && !o.Contains(pb.Library), EndReason.NotOffered);
+        EndPlaybacks(pb => offers.TryGetValue(pb.Peer, out var o) && !OfferedIn(pb.Libraries, o), EndReason.NotOffered);
     }
 
     /// <summary>Sets the pool this server lends a group: streams, transcodes and a bitrate cap shared by its members.</summary>
@@ -1089,31 +1089,33 @@ public sealed partial class MsfpEngine
     // The key a pool's playbacks are counted under.
     private static string PoolKey(PeerRecord p, GroupPool pool) => pool.Group.Length == 0 ? p.Id : "group:" + pool.Group;
 
-    // Whether one of a link's pools has a stream free now (Room), and
-    // whether one allows any stream at all (Any).
-    private (bool Room, bool Any) PoolRoom(PeerRecord p, bool audio)
+    // Whether one of a link's pools has room now for a playback of purpose
+    // (Room), and whether one allows any at all (Open).
+    private (bool Room, bool Open) PoolRoom(PeerRecord p, string purpose, bool audio)
     {
-        bool room = false, any = false;
+        bool room = false, open = false;
         foreach (var pool in PoolsOf(p))
         {
-            var (used, most) = InUse(PoolKey(p, pool), pool.Limits, audio);
-            any |= most > 0;
-            room |= used < most;
+            var (r, o) = RoomIn(PoolKey(p, pool), pool.Limits, purpose, audio);
+            room |= r;
+            open |= o;
         }
 
-        return (room, any);
+        return (room, open);
     }
 
-    // Admits a stream in the first of a link's pools with room: each
-    // playback counts against exactly one.
-    private CountSlot AdmitPools(PeerRecord p, bool audio, string method)
+    // Admits a playback of purpose in the first of a link's pools with room
+    // (groups section 9, playback section 5): each playback counts against
+    // exactly one, and a day's counts are kept in the pool it counted
+    // against.
+    private CountSlot AdmitPools(PeerRecord p, string purpose, bool audio, string method)
     {
         var error = new MsfpException(MsfpError.StreamLimitReached);
         foreach (var pool in PoolsOf(p))
         {
             try
             {
-                return AdmitStream(PoolKey(p, pool), pool.Limits, audio, method);
+                return AdmitIn(PoolKey(p, pool), pool.Limits, purpose, audio, method);
             }
             catch (MsfpException e) when (e.Code is MsfpError.StreamLimitReached or MsfpError.ServerBusy)
             {
@@ -1124,9 +1126,10 @@ public sealed partial class MsfpEngine
         throw error;
     }
 
-    // The most generous of a link's pools (what libraries tells it): the
-    // most streams and transcodes, and the highest bitrate cap (none, 0,
-    // above all).
+    // The most generous of a link's pools (what libraries tells it, groups
+    // section 9): the most streams, transcodes, downloads and scans, and the
+    // highest caps (none, 0, above all; a daily download cap only among pools
+    // that allow downloads).
     internal static Limits Generous(PeerRecord p)
     {
         var ps = PoolsOf(p);
@@ -1135,6 +1138,7 @@ public sealed partial class MsfpEngine
             return new Limits();
         }
 
+        static int Most(int a, int b) => a == 0 || b == 0 ? 0 : Math.Max(a, b);
         var output = ps[0].Limits with { };
         foreach (var l in ps.Skip(1).Select(x => x.Limits))
         {
@@ -1143,10 +1147,15 @@ public sealed partial class MsfpEngine
             output.AudioStreams = Math.Max(output.AudioStreams, l.AudioStreams);
             output.AudioTranscodes = Math.Max(output.AudioTranscodes, l.AudioTranscodes);
             output.Audio |= l.Audio;
-            if (output.BitrateKbps != 0 && (l.BitrateKbps == 0 || l.BitrateKbps > output.BitrateKbps))
+            output.BitrateKbps = Most(output.BitrateKbps, l.BitrateKbps);
+            output.DownloadKbps = Most(output.DownloadKbps, l.DownloadKbps);
+            if (l.Downloads != 0)
             {
-                output.BitrateKbps = l.BitrateKbps;
+                output.DownloadsPerDay = output.Downloads == 0 ? l.DownloadsPerDay : Most(output.DownloadsPerDay, l.DownloadsPerDay);
             }
+
+            output.Downloads = Math.Max(output.Downloads, l.Downloads);
+            output.ScansPerDay = Math.Max(output.ScansPerDay, l.ScansPerDay);
         }
 
         return output;

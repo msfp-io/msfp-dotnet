@@ -38,7 +38,7 @@ public sealed class PlaybackTests
         var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest
         {
             Title = Film, AudioLanguage = "fr", SubtitleLanguage = "fr",
-            Capabilities = new Capabilities { Containers = ["MP4"], MaxHeight = 1000, MaxBitrateKbps = 12345 },
+            Capabilities = new PlayCapabilities { Containers = ["MP4"], MaxHeight = 1000, MaxBitrateKbps = 12345 },
         });
         Assert.Equal(("direct", "hls", "a0", "s0"), (pb.Method, pb.Protocol, pb.AudioTrack, pb.SubtitleTrack));
         Assert.Equal(2, pb.Versions.Count);
@@ -50,7 +50,7 @@ public sealed class PlaybackTests
         var started = Assert.Single(h.Starts());
         Assert.Equal("movie/tmdb/949#1", started.Copy);
         Assert.Equal(12000, started.MaxBitrateKbps);
-        Assert.Single(started.Capabilities.Containers!);
+        Assert.Single(started.Capabilities.Containers);
         Assert.Equal(720, started.Capabilities.MaxHeight);
         var plays = s.Exchanges("play");
         Assert.Contains("\"containers\":[\"mp4\"]", plays[0].RequestBody, StringComparison.Ordinal);
@@ -66,7 +66,7 @@ public sealed class PlaybackTests
         Assert.Equal((206, "2345", "bytes 2-5/20", "video/mp4"), (o.Status, o.Text, o.ContentRange, o.ContentType));
         Assert.Equal(MsfpError.RangeNotSatisfiable, await FetchErrorAsync(s.B, pb.Id, new MediaPath { Kind = MediaKind.Segment, Name = "seg0.m4s" }, "bytes=0-1,4-5"));
         o = await FetchAsync(s.B, pb.Id, new MediaPath { Kind = MediaKind.Subtitles, Track = "s0" });
-        Assert.Equal("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nBonjour\n", o.Text);
+        Assert.Equal("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<i>Bonjour</i>\n", o.Text);
         Assert.Equal("text/vtt; charset=utf-8", o.ContentType);
         Assert.Equal(MsfpError.NotFound, await FetchErrorAsync(s.B, pb.Id, new MediaPath { Kind = MediaKind.Subtitles, Track = "s1" }));
         // Progress and stop.
@@ -109,7 +109,7 @@ public sealed class PlaybackTests
         // Unknown values and members ignored; a track the copy hasn't, as absent.
         Assert.Equal(200, await CallAsync(s, "play", "{\"title\":\"movie/tmdb/949\",\"capabilities\":{\"containers\":[\"MP4\",\"x\"]},\"audioTrack\":\"a7\",\"other\":1}"));
         var got = h.Starts()[0];
-        Assert.Null(got.Capabilities.Containers);
+        Assert.Empty(got.Capabilities.Containers);
         Assert.Equal("a0", got.AudioTrack);
         var url = (string)JsonNode.Parse(s.Exchanges("play")[^1].ResponseBody)!["stream"]!["url"]!;
         Assert.StartsWith(s.A.Address + "/api/v1/stream/", url, StringComparison.Ordinal);
@@ -120,7 +120,9 @@ public sealed class PlaybackTests
         {
             (target + "?x=1", "GET", [], 404), (target, "GET", ["Origin", "https://example.org"], 404),
             (target, "GET", ["Sec-Fetch-Mode", "cors"], 404), (target, "GET", ["Sec-Fetch-Site", "same-origin"], 404),
-            (target, "POST", [], 404), (target, "HEAD", [], 404), (streamBase + "file", "GET", [], 404),
+            (target, "POST", [], 405), (target, "HEAD", [], 405), (streamBase + "file", "GET", [], 404),
+            (streamBase + "subtitles/s0/whole", "HEAD", [], 405), (streamBase + "fonts/0", "GET", [], 404), (streamBase + "ass/s0/0", "GET", [], 404),
+            (streamBase + "queue/0/master.m3u8", "GET", [], 404),
             (streamBase + "%2e%2e/x", "GET", [], 404), (streamBase + "seg0.m4s", "GET", ["Range", "bytes=-"], 416),
             (streamBase + "seg0.m4s", "GET", ["Range", "bytes=0-1,3-4"], 416), (streamBase + "seg0.m4s", "GET", ["Range", "bytes=0-3"], 206),
             (streamBase + "seg0.m4s", "GET", ["Range", "bytes=40-"], 416), (streamBase + "v0.m3u8", "GET", ["Range", "bytes=0-3"], 200),
@@ -300,11 +302,10 @@ public sealed class PlaybackTests
     {
         var h = new FakeHost { Libs = [new Library { Id = "music", Name = "Music", Kind = "music" }], Protocol = "file" };
         const string Track = "track/mb/0c000000-0000-4000-8000-000000000003";
-        h.Titles[Track] = new MusicTitle { Key = Track, Kind = "track", Libraries = ["music"], Name = "x" };
-        h.Copies[Track] = [new Copy { Handle = "t", Name = "FLAC", Library = "music" }];
+        h.Titles[Track] = HostKit.MusicTrack(Track, "t");
         h.Info["t"] = new CopyInfo
         {
-            AudioTracks = [new Track { Id = "a0", Label = "Audio" }], SubtitleTracks = [new Track { Id = "s0", Label = "x" }],
+            Fonts = 2,
             Trickplay = new Trickplay { TileWidth = 10, TileHeight = 10, Columns = 1, Rows = 1, IntervalMs = 1000, TileCount = 1 },
         };
         using var s = await Sharing.StartAsync(h, c => c with { NewPairing = new Limits { Streams = 0, Audio = true, AudioStreams = 1 } });
@@ -367,8 +368,11 @@ public sealed class PlaybackTests
         Assert.Equal(200, await CallAsync(s, "stop", "{\"id\":\"" + theirs + "\"}"));
         Assert.Equal(410, await CallAsync(s, "progress", "{\"id\":\"" + theirs + "\"}"));
         await s.B.Engine.StopAsync(pb.Id, -1);
-        // A response held open: cut when the playback ends.
+        // A response held open: cut when the playback ends (the copy long
+        // enough that its bytes don't end first).
         var cut = new TaskCompletionSource();
+        h.EditCopy(Film, 0, c => c with { Size = 1L << 40 });
+        h.EditCopy(Film, 1, c => c with { Size = 1L << 40 });
         lock (h.Lock)
         {
             h.Protocol = "file";
@@ -391,7 +395,7 @@ public sealed class PlaybackTests
             };
         }
 
-        pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film, Capabilities = new Capabilities { Containers = ["mp4"] } });
+        pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film, Capabilities = new PlayCapabilities { Containers = ["mp4"] } });
         var done = s.B.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.File }, "", new MemorySink());
         await Task.Delay(100);
         if (s.A.Engine.Playbacks() is [var v])
@@ -400,7 +404,14 @@ public sealed class PlaybackTests
         }
 
         await cut.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await done.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            // The relay is cut too; what it says of the cut answer doesn't matter.
+            await done.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (MsfpException)
+        {
+        }
     }
 
     // The viewer's side tells the owning server where its viewer is at the

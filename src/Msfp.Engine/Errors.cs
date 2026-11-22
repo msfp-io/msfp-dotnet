@@ -40,6 +40,18 @@ public enum MsfpError
     /// <summary>The playback is over.</summary>
     PlaybackStopped,
 
+    /// <summary>
+    /// The owning server won't serve the delivery asked of that copy (MSFP
+    /// playback section 2.5): ask again with another delivery, or without one.
+    /// </summary>
+    DeliveryRefused,
+
+    /// <summary>
+    /// A restart's copy isn't the one being read any more (another etag): its
+    /// bytes can't follow; read the title again.
+    /// </summary>
+    CopyChanged,
+
     /// <summary>The peer asked this server to wait; calls hold until then.</summary>
     RateLimited,
 
@@ -237,6 +249,7 @@ internal static class ProblemType
     internal const string Rotation = "rotation-refused";
     internal const string StreamLimit = "stream-limit-reached";
     internal const string NotPlayable = "not-playable";
+    internal const string Delivery = "delivery-refused";
     internal const string Stopped = "playback-stopped";
     internal const string RateLimited = "rate-limited";
     internal const string Internal = "internal-error";
@@ -259,6 +272,7 @@ internal static class Problems
             [ProblemType.Rotation] = (409, "Rotation refused"),
             [ProblemType.StreamLimit] = (409, "Too many streams on this account"),
             [ProblemType.NotPlayable] = (409, "This item can't be played"),
+            [ProblemType.Delivery] = (409, "This delivery isn't served"),
             [ProblemType.Stopped] = (410, "Playback was stopped"),
             [ProblemType.RateLimited] = (429, "Too many requests"),
             [ProblemType.Internal] = (500, "Internal error"),
@@ -278,6 +292,7 @@ internal static class Problems
         400 => new MsfpException(MsfpError.InvalidRequest),
         409 when type == ProblemType.Rotation => new MsfpException(MsfpError.RotationRefused),
         409 when type == ProblemType.NotPlayable => new MsfpException(MsfpError.NotPlayable),
+        409 when type == ProblemType.Delivery => new MsfpException(MsfpError.DeliveryRefused),
         409 => new MsfpException(MsfpError.StreamLimitReached),
         410 => new MsfpException(MsfpError.PlaybackStopped),
         429 => new MsfpException(MsfpError.RateLimited),

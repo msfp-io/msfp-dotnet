@@ -62,7 +62,8 @@ public sealed class HostTypesTests
     [Fact]
     public void ProblemStatuses()
     {
-        Assert.Equal(10, Problems.ByType.Count);
+        Assert.Equal(11, Problems.ByType.Count);
+        Assert.Equal((409, "This delivery isn't served"), Problems.ByType[ProblemType.Delivery]);
         Assert.Equal((409, "Rotation refused"), Problems.ByType[ProblemType.Rotation]);
         Assert.Equal(503, Problems.ByType[ProblemType.ServerBusy].Status);
     }
