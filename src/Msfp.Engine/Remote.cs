@@ -10,7 +10,8 @@ namespace Msfp;
 /// <summary>
 /// What the host asks of a peer's title for one viewer session: one
 /// playback serves one viewer session, never two (MSFP playback section
-/// 2.7).
+/// 2.7). The host chooses the copy and its tracks: it has every copy's facts
+/// in the catalog and knows its device.
 /// </summary>
 public sealed record PlayRequest
 {
@@ -29,21 +30,24 @@ public sealed record PlayRequest
 
     /// <summary>
     /// <see cref="Playback.DeliveryFile"/>, <see cref="Playback.DeliveryRemux"/>
-    /// (into <see cref="Container"/>), <see cref="Playback.DeliveryTranscode"/>
-    /// (to <see cref="Transcode"/>'s targets, codecs as ffmpeg names them;
-    /// those left out take the baseline's) or "": the peer then serves the
-    /// baseline, H.264 and AAC in complete HLS (AAC alone for a track), which
-    /// every viewer's server must play (MSFP playback section 2.7). The host
-    /// chooses it from the copy's facts in the catalog and what its device
-    /// plays: a copy with a value it doesn't know (a codec, a container) is
-    /// one it can't play as it is (core section 8.5). A delivery refused is
-    /// <see cref="MsfpError.DeliveryRefused"/>: ask again with another one, or
-    /// none.
+    /// (into <see cref="MediaType"/>: video/mp2t or video/mp4, audio/… for a
+    /// copy with no video), <see cref="Playback.DeliveryTranscode"/> (to
+    /// <see cref="Transcode"/>'s targets: registry tokens or
+    /// <see cref="Names.Copy"/> for a stream served unchanged, the range sdr
+    /// or keep; those left out take the baseline's) or "": the peer then
+    /// serves the baseline, H.264 High 4.1 8-bit SDR and AAC-LC stereo in
+    /// complete HLS (AAC alone for a copy with no video), which every viewer's
+    /// server must play (MSFP playback section 2.7). The host chooses it from
+    /// the copy's facts and what its device plays: a copy whose mediaType,
+    /// codec or threeD it doesn't know, or whose codecs it can't read
+    /// (<see cref="Rfc6381.Read"/>), is one it can't play as it is (core
+    /// section 8.5). A delivery refused is <see cref="MsfpError.DeliveryRefused"/>:
+    /// ask again with another one, or none.
     /// </summary>
     public string Delivery { get; init; } = "";
 
-    /// <summary>The container of a remux: mpegts or mp4.</summary>
-    public string Container { get; init; } = "";
+    /// <summary>The media type of a remux: video/mp2t or video/mp4 (audio/mp2t or audio/mp4 for a copy with no video).</summary>
+    public string MediaType { get; init; } = "";
 
     /// <summary>The targets of a transcode.</summary>
     public TranscodeTargets? Transcode { get; init; }
@@ -61,26 +65,23 @@ public sealed record PlayRequest
     /// <summary>The viewer's cap (0: none).</summary>
     public int MaxBitrateKbps { get; init; }
 
-    /// <summary>The audio language wished.</summary>
-    public string AudioLanguage { get; init; } = "";
-
-    /// <summary>An audio track of a former <see cref="RemotePlayback"/> of the same title, or of the title's copies kept.</summary>
+    /// <summary>
+    /// The audio track to play, of the copy's (without it, the file's
+    /// default). Which subtitles a viewer sees is the host's choice, among the
+    /// copy's tracks and those the answer serves apart; a subtitle is named
+    /// only to burn it in (<see cref="TranscodeTargets.BurnSubtitle"/>).
+    /// </summary>
     public string AudioTrack { get; init; } = "";
 
-    /// <summary>The subtitle language wished.</summary>
-    public string SubtitleLanguage { get; init; } = "";
-
-    /// <summary>A subtitle track of a former <see cref="RemotePlayback"/> of the same title, or "off".</summary>
-    public string SubtitleTrack { get; init; } = "";
-
-    /// <summary>A version of a former <see cref="RemotePlayback"/> of the same title, or of the title's copies kept.</summary>
+    /// <summary>The copy to play, of the title's copies kept (without it, the peer's first, its preferred).</summary>
     public string VersionId { get; init; } = "";
 
     /// <summary>
-    /// For a track, the track keys to play after it, at most 5 (MSFP music
-    /// section 5.2): prepared under the same playback.
+    /// For a track, the tracks to play after it, at most 5 (MSFP music
+    /// section 5.2), each with its copy and its own delivery when it names
+    /// them: prepared under the same playback.
     /// </summary>
-    public IReadOnlyList<string> Queue { get; init; } = [];
+    public IReadOnlyList<QueuedTrack> Queue { get; init; } = [];
 
     /// <summary>
     /// A RemotePlayback of the same viewer to stop first: to change the
@@ -92,70 +93,36 @@ public sealed record PlayRequest
 }
 
 /// <summary>
-/// An audio or subtitle track of a playback on a peer, cleaned: its ID
-/// (a&lt;n&gt;, s&lt;n&gt;), language tag, channels, role (a token of the
-/// DASH role scheme, known or not: main, dub, commentary, description…; ""
-/// for none; one the host doesn't know is never the title's own sound),
-/// flags; for subtitles, its format (ffmpeg's codec_name, open), whether it is beside the video (External), and how it is fetched
-/// apart: Text as <see cref="MediaKind.Subtitles"/> (WebVTT), Ass as
-/// <see cref="MediaKind.Ass"/> too, Pictures as <see cref="MediaKind.Pictures"/>
-/// (PGS); none of them, only within the file or burned in.
+/// An entry of a music play's queue (MSFP music section 5.2): a track's key,
+/// the copy it plays ("": its first), and its own delivery with its own
+/// MediaType or Transcode ("": the request's). Go's QueueEntry
+/// (wire.QueueAsk); named apart from <see cref="Protocol.QueueEntry"/>, an
+/// answer's entry.
 /// </summary>
-public sealed record Track
+public sealed record QueuedTrack
 {
-    /// <summary>Its ID.</summary>
-    [JsonPropertyName("id")]
-    public string Id { get; set; } = "";
+    /// <summary>The track's key.</summary>
+    public required string Title { get; init; }
 
-    /// <summary>A language tag.</summary>
-    [JsonPropertyName("language"), OmitEmpty]
-    public string? Language { get; set; }
+    /// <summary>The copy to play; "" for its first.</summary>
+    public string VersionId { get; init; } = "";
 
-    /// <summary>Audio channels.</summary>
-    [JsonPropertyName("channels"), OmitEmpty]
-    public int Channels { get; set; }
+    /// <summary>Its own delivery; "" for the request's.</summary>
+    public string Delivery { get; init; } = "";
 
-    /// <summary>A token of the DASH role scheme (main, dub, commentary, description…), known or not.</summary>
-    [JsonPropertyName("role"), OmitEmpty]
-    public string? Role { get; set; }
+    /// <summary>Its own remux's media type (audio/mp2t or audio/mp4).</summary>
+    public string MediaType { get; init; } = "";
 
-    /// <summary>The track the file marks as default.</summary>
-    [JsonPropertyName("default"), OmitEmpty]
-    public bool Default { get; set; }
-
-    /// <summary>Forced subtitles.</summary>
-    [JsonPropertyName("forced"), OmitEmpty]
-    public bool Forced { get; set; }
-
-    /// <summary>Subtitles for the hearing impaired.</summary>
-    [JsonPropertyName("hearingImpaired"), OmitEmpty]
-    public bool HearingImpaired { get; set; }
-
-    /// <summary>A subtitle track's format, ffmpeg's codec_name (subrip, webvtt, ass, hdmv_pgs_subtitle…), open.</summary>
-    [JsonPropertyName("format"), OmitEmpty]
-    public string? Format { get; set; }
-
-    /// <summary>A subtitle track beside the video.</summary>
-    [JsonPropertyName("external"), OmitEmpty]
-    public bool External { get; set; }
-
-    /// <summary>Fetched apart as WebVTT.</summary>
-    [JsonPropertyName("text"), OmitEmpty]
-    public bool Text { get; set; }
-
-    /// <summary>Fetched apart as ASS too.</summary>
-    [JsonPropertyName("ass"), OmitEmpty]
-    public bool Ass { get; set; }
-
-    /// <summary>Fetched apart as PGS.</summary>
-    [JsonPropertyName("pictures"), OmitEmpty]
-    public bool Pictures { get; set; }
+    /// <summary>Its own transcode's targets.</summary>
+    public TranscodeTargets? Transcode { get; init; }
 }
 
 /// <summary>
 /// A playback on a peer, as the host shows it: its answer checked and
-/// cleaned. It holds no URL: the host serves the media at its own route,
-/// and asks the engine for each piece (<see cref="MsfpEngine.FetchAsync"/>).
+/// cleaned, with what the catalog says of its copy. It holds no URL: the host
+/// serves the media at its own route, and asks the engine for each piece
+/// (<see cref="MsfpEngine.FetchAsync"/>), whose URL the engine builds from the
+/// peer's stream root and the answer's ticket.
 /// </summary>
 public sealed record RemotePlayback
 {
@@ -180,7 +147,7 @@ public sealed record RemotePlayback
     /// <summary>hls or file.</summary>
     public string Protocol { get; init; } = "";
 
-    /// <summary>For a file, its type.</summary>
+    /// <summary>For a file, the copy's mediaType from the catalog: what it is relayed as.</summary>
     public string MimeType { get; init; } = "";
 
     /// <summary>The copy's etag (the answer's).</summary>
@@ -199,17 +166,17 @@ public sealed record RemotePlayback
     /// <summary>Where it starts.</summary>
     public long PositionMs { get; init; }
 
-    /// <summary>Its length; 0 when unknown.</summary>
+    /// <summary>The copy's length, from the catalog; 0 when not known.</summary>
     public long DurationMs { get; init; }
 
-    /// <summary>The bitrate cap in effect, for a play.</summary>
+    /// <summary>The bitrate cap in effect, for a play (0: none).</summary>
     public int MaxBitrateKbps { get; init; }
 
-    /// <summary>The copy played: the title's copies are in the catalog.</summary>
-    public string VersionId { get; init; } = "";
+    /// <summary>A scan's cap: the bytes its ticket may read in all.</summary>
+    public long ScanBytes { get; init; }
 
-    /// <summary>The audio tracks.</summary>
-    public IReadOnlyList<Track> AudioTracks { get; init; } = [];
+    /// <summary>The copy played: its tracks are in the catalog.</summary>
+    public string VersionId { get; init; } = "";
 
     /// <summary>The audio track played.</summary>
     public string AudioTrack { get; init; } = "";
@@ -218,36 +185,25 @@ public sealed record RemotePlayback
     public bool AudioRenditions { get; init; }
 
     /// <summary>
-    /// Subtitles, video only: fetch a track's stretches, each covering
-    /// <see cref="SubtitleStretchSeconds"/>, or the whole track
-    /// (<see cref="MediaPath.Whole"/>).
+    /// Video only: the tracks of the copy served apart, each fetched by its
+    /// form (text: <see cref="MediaKind.Subtitles"/>, WebVTT, and
+    /// <see cref="MediaKind.Ass"/> when Ass; picture: <see cref="MediaKind.Pictures"/>,
+    /// PGS), in stretches of <see cref="WebVtt.StretchSeconds"/> or whole
+    /// (<see cref="MediaPath.Whole"/>; text only). A track of the copy not
+    /// among them reaches a viewer only in the copy played as it is, or
+    /// burned in.
     /// </summary>
-    public IReadOnlyList<Track> SubtitleTracks { get; init; } = [];
-
-    /// <summary>The subtitles shown.</summary>
-    public string SubtitleTrack { get; init; } = "";
-
-    /// <summary>The track burned into the picture.</summary>
-    public string BurnedTrack { get; init; } = "";
-
-    /// <summary>The forced tracks.</summary>
-    public IReadOnlyList<Track> ForcedTracks { get; init; } = [];
-
-    /// <summary>The forced track shown with the audio played.</summary>
-    public string ForcedTrack { get; init; } = "";
-
-    /// <summary>How long each subtitle part covers.</summary>
-    public int SubtitleStretchSeconds { get; init; }
+    public IReadOnlyList<ServedSubtitle> Subtitles { get; init; } = [];
 
     /// <summary>How many fonts the copy's ASS tracks use, fetched as <see cref="MediaKind.Font"/> 0 to Fonts-1.</summary>
     public int Fonts { get; init; }
 
     /// <summary>
-    /// The copy's previews, with the number of sheets to fetch (MediaPath
-    /// Sheet); null when the peer sent none, or out of bounds, or this server
-    /// has no <see cref="MsfpConfig.SheetEncoder"/>.
+    /// How many seek-bar preview sheets the playback's ticket opens (MediaPath
+    /// Sheet): the sheet count of the copy's previewLayout in the catalog; 0
+    /// for none, for a download, or without a <see cref="MsfpConfig.SheetEncoder"/>.
     /// </summary>
-    public Trickplay? Trickplay { get; init; }
+    public int Sheets { get; init; }
 
     /// <summary>
     /// The queued tracks the peer prepared (music section 5.2), each fetched
@@ -258,14 +214,15 @@ public sealed record RemotePlayback
 
 /// <summary>
 /// A queued track of a playback on a peer: its place in the request's queue,
-/// its key, its copy, how it is served, its length (0 when not known).
+/// its key, its copy, how it is served, its length from the catalog (0 when
+/// not known), and for a file the copy's mediaType.
 /// </summary>
 /// <param name="Place">Its place in the request's queue.</param>
 /// <param name="Title">Its key.</param>
 /// <param name="VersionId">Its copy.</param>
 /// <param name="Method">direct, remux or transcode.</param>
 /// <param name="Protocol">hls or file.</param>
-/// <param name="MimeType">For a file, its type.</param>
+/// <param name="MimeType">For a file, the copy's mediaType.</param>
 /// <param name="DurationMs">Its length; 0 when not known.</param>
 public sealed record RemoteEntry(int Place, string Title, string VersionId, string Method, string Protocol, string MimeType, long DurationMs);
 
@@ -283,9 +240,10 @@ public sealed record OfflineReport(long PositionMs, DateTimeOffset At, string Ti
 /// <summary>
 /// A stream of a playback on a peer: its own (0) or a queue entry's (n+1),
 /// its protocol, and for a file the size and etag its answers are checked
-/// against (-1 and "": learnt from the first).
+/// against (-1 and "": learnt from the first), and its media type (the
+/// copy's, from the catalog).
 /// </summary>
-internal sealed record RemoteStream(string Protocol, long Size, string Etag);
+internal sealed record RemoteStream(string Protocol, long Size, string Etag, string MediaType);
 
 /// <summary>A download on a peer, kept for its late reports (playback section 7) after it stopped here.</summary>
 internal sealed record PastDownload(string Peer, string TheirId, string Title, IReadOnlyList<string> Queue, DateTimeOffset PlayedAt);
@@ -310,6 +268,9 @@ internal sealed class RemotePlay
     public HashSet<string> Audio { get; } = new(StringComparer.Ordinal);
 
     public Dictionary<string, SubtitleServed> Subtitles { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>The copy's previews' layout, when the playback's ticket opens its sheets.</summary>
+    public PreviewLayout? Layout { get; set; }
 
     public CancellationTokenSource Ended { get; } = new();
 
@@ -381,7 +342,7 @@ public sealed partial class MsfpEngine
         }
 
         output = output with { MaxHeight = Protocol.Video.StepHeight(output.MaxHeight) };
-        return video ? output : output with { VideoCodec = "", MaxHeight = 0, BurnSubtitle = "" };
+        return video ? output : output with { VideoCodec = "", MaxHeight = 0, Range = "", BurnSubtitle = "" };
     }
 
     /// <summary>
@@ -422,10 +383,9 @@ public sealed partial class MsfpEngine
             (request.Delivery.Length > 0 && MethodOf(request.Delivery).Length == 0) ||
             !Playback.PurposeAllows(purpose, request.Delivery, request.Transcode) ||
             (request.Transcode is not null && request.Delivery != Playback.DeliveryTranscode) ||
-            (request.Container.Length > 0) != (request.Delivery == Playback.DeliveryRemux) ||
-            (request.Container.Length > 0 && !Names.IsToken(request.Container)) ||
-            (request.Transcode is { } tt && ((tt.VideoCodec.Length > 0 && !Names.IsToken(tt.VideoCodec)) ||
-                (tt.AudioCodec.Length > 0 && !Names.IsToken(tt.AudioCodec)))))
+            (request.MediaType.Length > 0) != (request.Delivery == Playback.DeliveryRemux) ||
+            (request.MediaType.Length > 0 && !Names.IsMediaType(request.MediaType)) ||
+            (request.Transcode is { } tt && !TargetsWellFormed(tt)))
         {
             throw new MsfpException(MsfpError.InvalidRequest, "a purpose, delivery or transcode MSFP doesn't allow");
         }
@@ -472,39 +432,65 @@ public sealed partial class MsfpEngine
         var targets = TargetsAsSent(request.Transcode, !audioOnly);
         var start = purpose == Playback.PurposePlay ? Math.Min(Math.Max(request.StartMs, 0), Playback.MaxPositionMs) : 0;
         var kbps = Math.Min(Math.Max(request.MaxBitrateKbps, 0), Playback.MaxKbps);
-        string? subtitleLanguage = null, subtitleTrack = null;
-        IReadOnlyList<string>? queue = null;
-        if (!audioOnly)
+        JsonArray? queue = null;
+        IReadOnlyList<QueueAsk> asked = [];
+        if (audioOnly && request.Queue.Count > 0)
         {
-            subtitleLanguage = Languages.ValidTag(request.SubtitleLanguage) ? request.SubtitleLanguage : null;
-            subtitleTrack = Playback.TryTrackId(request.SubtitleTrack, 's', out _) || request.SubtitleTrack == "off" ? request.SubtitleTrack : null;
-        }
-        else if (request.Queue.Count > 0)
-        {
-            // P17b: queue entries are objects since proposal 17.
-            var asked = new JsonArray(request.Queue.Select(q => (JsonNode?)new JsonObject { ["title"] = q }).ToArray());
-            try
+            queue = [];
+            foreach (var q in request.Queue)
             {
-                Music.CheckQueue(new JsonObject { ["title"] = request.Title, ["queue"] = asked });
-            }
-            catch (PlayRefusal)
-            {
-                throw new MsfpException(MsfpError.InvalidRequest, "a queue MSFP doesn't allow");
+                var e = new JsonObject { ["title"] = q.Title };
+                if (q.VersionId.Length > 0)
+                {
+                    e["versionId"] = q.VersionId;
+                }
+
+                if (q.Delivery.Length > 0)
+                {
+                    e["delivery"] = q.Delivery;
+                }
+
+                if (q.MediaType.Length > 0)
+                {
+                    e["mediaType"] = q.MediaType;
+                }
+
+                if (TargetsAsSent(q.Transcode, false) is { } qt)
+                {
+                    e["transcode"] = JsonNode.Parse(JsonOut.Object(qt.Write));
+                }
+
+                queue.Add(e);
             }
 
-            queue = request.Queue;
+            try
+            {
+                var check = new JsonObject { ["title"] = request.Title, ["queue"] = queue.DeepClone() };
+                if (request.Delivery.Length > 0)
+                {
+                    check["delivery"] = request.Delivery;
+                }
+
+                asked = Music.CheckQueue(check);
+                foreach (var e in queue)
+                {
+                    Playback.ReadQueueEntry(check, e);
+                }
+            }
+            catch (PlayRefusal e)
+            {
+                throw new MsfpException(MsfpError.InvalidRequest, "a queue MSFP doesn't allow: " + e.Why);
+            }
         }
 
         var body = JsonOut.Object(o => o.String("title", request.Title)
             .String("purpose", purpose != Playback.PurposePlay ? purpose : null)
-            .String("delivery", Nonempty(request.Delivery)).String("container", Nonempty(request.Container))
+            .String("delivery", Nonempty(request.Delivery)).String("mediaType", Nonempty(request.MediaType))
             .Object("transcode", targets is { } t ? t.Write : null).Bool("audioRenditions", request.AudioRenditions ? true : null)
             .Integer("startPositionMs", NonZero(start)).Integer("maxBitrateKbps", NonZero(kbps))
-            .String("audioLanguage", Languages.ValidTag(request.AudioLanguage) ? request.AudioLanguage : null)
             .String("audioTrack", Playback.TryTrackId(request.AudioTrack, 'a', out _) ? request.AudioTrack : null)
             .String("versionId", Playback.Id(request.VersionId) ? request.VersionId : null)
-            .String("subtitleLanguage", subtitleLanguage).String("subtitleTrack", subtitleTrack)
-            .Objects("queue", queue, (w, q) => w.String("title", q))); // P17b
+            .Node("queue", queue));
         Reply r;
         try
         {
@@ -539,7 +525,7 @@ public sealed partial class MsfpEngine
                 throw new MsfpException(MsfpError.NotPlayable, "refused", Problems.RefusalError(r.Status, r.Problem ?? ""));
         }
 
-        var (rm, why) = await ReadPlayAsync(p, r.Body, request, purpose, audioOnly, ct).ConfigureAwait(false);
+        var (rm, why) = await ReadPlayAsync(p, r.Body, request, asked, purpose, audioOnly, ct).ConfigureAwait(false);
         if (rm is null)
         {
             _log.LogWarning("msfp: a peer's play answer broke MSFP's rules; it is stopped: {Peer} {Why}", p.Id, why);
@@ -612,68 +598,79 @@ public sealed partial class MsfpEngine
     }
 
     // Checks and cleans a peer's play answer (playback section 2.3, video
-    // sections 5.3 and 5.5, music section 5.2): null, and why, when it breaks
-    // a "must".
-    private async Task<(RemotePlay? Remote, string Why)> ReadPlayAsync(PeerRecord p, byte[] raw, PlayRequest req, string purpose, bool audioOnly,
-        CancellationToken ct)
+    // section 5.3, music section 5.2), its URLs built from the peer's stream
+    // root and the answer's ticket: null, and why, when it breaks a "must".
+    private async Task<(RemotePlay? Remote, string Why)> ReadPlayAsync(PeerRecord p, byte[] raw, PlayRequest req, IReadOnlyList<QueueAsk> asked,
+        string purpose, bool audioOnly, CancellationToken ct)
     {
         var root = PeerStreamRoot(p);
-        if (Playback.ReadPlayAnswer(raw, new PlayAsked { Purpose = purpose, Delivery = req.Delivery, Video = !audioOnly }) is not { } a) // P17b
+        var ask = new PlayAsked { Purpose = purpose, Delivery = req.Delivery, Video = !audioOnly };
+        if (Playback.ReadPlayAnswer(raw, ask) is not { } a)
         {
             return (null, "the playback's members break MSFP's rules");
         }
 
-        JsonObject o;
-        try
+        // The copy as the catalog gave it: its etag, size, length, media type,
+        // tracks and previews.
+        var c = await CatalogCopyAsync(p.Id, req.Title, a.VersionId, ct).ConfigureAwait(false);
+        if (c is not null)
         {
-            o = StrictJson.ReadAnswer(raw, keepNestedNulls: true);
-        }
-        catch (ProtocolException)
-        {
-            return (null, "not an object");
-        }
-
-        // P17b: the URLs are built from the ticket, and the tracks are the
-        // catalog's, since proposal 17.
-        var streamBase = MediaUrls.Base(root, a.Ticket);
-        var ticket = a.Ticket;
-        var rm = new RemotePlay { Peer = p.Id, PeerName = p.Name, TheirId = a.Id, Base = streamBase, AudioOnly = audioOnly };
-        // The copy as the catalog gave it: its etag and size.
-        var (catalogEtag, size) = await CatalogCopyAsync(p.Id, req.Title, a.VersionId.Length > 0 ? a.VersionId : req.VersionId, ct)
-            .ConfigureAwait(false);
-        var changed = catalogEtag != a.Etag;
-        var view = new RemotePlayback
-        {
-            // P17b: the media type, the length and the tracks are the catalog's since proposal 17.
-            Peer = p.Id, Title = req.Title, Purpose = purpose, Delivery = req.Delivery, Method = a.Method, Protocol = a.Protocol,
-            MimeType = "",
-            Etag = a.Etag, Size = changed ? -1 : size, CopyChanged = changed,
-            PositionMs = a.PositionMs, DurationMs = 0, MaxBitrateKbps = a.MaxBitrateKbps ?? 0,
-            VersionId = a.VersionId, AudioTrack = a.AudioTrack, AudioRenditions = a.AudioRenditions,
-            AudioTracks = [],
-        };
-        rm.Entries[0] = new RemoteStream(view.Protocol, view.Size, view.Etag);
-        if (!audioOnly)
-        {
-            var (v, why) = ReadVideoAnswer(o, rm, view, streamBase, root, ticket);
-            if (v is null)
+            if (Playback.ReadPlayAnswer(raw, ask with { CatalogEtag = c.ETag, Subtitles = c.SubtitleTracks }) is not { } again)
             {
-                return (null, why);
+                return (null, "the playback's members break MSFP's rules");
             }
 
-            view = v;
+            a = again;
         }
-        else if (req.Queue.Count > 0)
+
+        var rm = new RemotePlay { Peer = p.Id, PeerName = p.Name, TheirId = a.Id, Base = MediaUrls.Base(root, a.Ticket), AudioOnly = audioOnly };
+        var changed = c is null || a.ReadTitleAgain;
+        var view = new RemotePlayback
         {
-            var entries = new List<RemoteEntry>();
-            // P17b: entries carry no URL, media type nor length since proposal 17.
-            var asked = req.Queue.Select(q => new QueueAsk(q, "", req.Delivery, false)).ToList();
-            foreach (var q in Music.ReadQueue(o["queue"], asked))
+            Peer = p.Id, Title = req.Title, Purpose = purpose, Delivery = req.Delivery, Method = a.Method, Protocol = a.Protocol,
+            MimeType = c is not null && a.Protocol == Playback.ProtocolFile ? Media.RelayFileType(c.MediaType) : "",
+            Etag = a.Etag, Size = changed ? -1 : c!.Size, CopyChanged = changed,
+            PositionMs = a.PositionMs, DurationMs = c?.DurationMs ?? 0, MaxBitrateKbps = a.MaxBitrateKbps ?? 0, ScanBytes = a.ScanBytes,
+            VersionId = a.VersionId, AudioTrack = a.AudioTrack, AudioRenditions = a.AudioRenditions,
+        };
+        if (c is not null && !audioOnly)
+        {
+            rm.Audio.UnionWith(c.AudioTracks.Select(t => t.Id));
+        }
+
+        rm.Entries[0] = new RemoteStream(view.Protocol, view.Size, view.Etag, c?.MediaType ?? "");
+        if (!audioOnly)
+        {
+            foreach (var st in a.Subtitles)
             {
-                var place = q.Place;
-                entries.Add(new RemoteEntry(place, q.Title, q.VersionId, q.Method, q.Protocol, "", 0));
-                var (etag, qsize) = await CatalogCopyAsync(p.Id, q.Title, q.VersionId, ct).ConfigureAwait(false);
-                rm.Entries[place + 1] = new RemoteStream(q.Protocol, etag.Length == 0 ? -1 : qsize, etag);
+                rm.Subtitles[st.Id] = new SubtitleServed(st.Form == Video.FormText, st.Ass, st.Form == Video.FormPicture);
+            }
+
+            view = view with { Subtitles = a.Subtitles, Fonts = a.FontCount };
+            if (c?.PreviewLayout is { } l && !changed && purpose == Playback.PurposePlay && _cfg.SheetEncoder is not null)
+            {
+                rm.Layout = l;
+                view = view with { Sheets = l.Sheets };
+            }
+        }
+        else if (asked.Count > 0)
+        {
+            JsonNode? queue = null;
+            try
+            {
+                queue = StrictJson.ReadAnswer(raw, keepNestedNulls: true)["queue"];
+            }
+            catch (ProtocolException)
+            {
+            }
+
+            var entries = new List<RemoteEntry>();
+            foreach (var q in Music.ReadQueue(queue, asked))
+            {
+                var ec = await CatalogCopyAsync(p.Id, q.Title, q.VersionId, ct).ConfigureAwait(false);
+                entries.Add(new RemoteEntry(q.Place, q.Title, q.VersionId, q.Method, q.Protocol,
+                    ec is not null && q.Protocol == Playback.ProtocolFile ? Media.RelayFileType(ec.MediaType) : "", ec?.DurationMs ?? 0));
+                rm.Entries[q.Place + 1] = new RemoteStream(q.Protocol, ec?.Size ?? -1, ec?.ETag ?? "", ec?.MediaType ?? "");
             }
 
             view = view with { Queue = entries };
@@ -683,9 +680,14 @@ public sealed partial class MsfpEngine
         return (rm, "");
     }
 
-    // The etag and size of a peer's copy as its catalog gave them; "" when
-    // the title or the copy isn't kept.
-    private async Task<(string Etag, long Size)> CatalogCopyAsync(string peer, string key, string id, CancellationToken ct)
+    // Whether a transcode's targets are of their forms (playback section
+    // 2.7): codecs and the range tokens.
+    private static bool TargetsWellFormed(TranscodeTargets t) =>
+        new[] { t.VideoCodec, t.AudioCodec, t.Range }.All(x => x.Length == 0 || Names.IsToken(x));
+
+    // A peer's copy as its catalog gave it (a track's as a copy with no
+    // video); null when the title or the copy isn't kept.
+    private async Task<Copy?> CatalogCopyAsync(string peer, string key, string id, CancellationToken ct)
     {
         Title? t;
         try
@@ -694,120 +696,15 @@ public sealed partial class MsfpEngine
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
-            return ("", -1);
+            return null;
         }
 
-        switch (t)
+        return t switch
         {
-            case VideoTitle v when (v.Copies ?? []).FirstOrDefault(c => c.Id == id) is { } c:
-                return (c.ETag, c.Size);
-            case MusicTitle m when (m.Copies ?? []).FirstOrDefault(c => c.Id == id) is { } c:
-                return (c.Etag, c.Size);
-        }
-
-        return ("", -1);
-    }
-
-    // Reads video's members of a play answer (video sections 5.3, 5.5 and
-    // 6.1): its subtitle tracks, their URLs exactly those of their track
-    // under the stream's base, its fonts, its previews; null and why when it
-    // is refused.
-    private (RemotePlayback? View, string Why) ReadVideoAnswer(JsonObject o, RemotePlay rm, RemotePlayback v, string streamBase, string root,
-        string ticket)
-    {
-        string? bad = null;
-        List<Track> Tracks(string name)
-        {
-            var output = new List<Track>();
-            if (!o.TryGetPropertyValue(name, out var raw))
-            {
-                return output;
-            }
-
-            if (raw is not JsonArray list || list.Any(e => e is not JsonObject))
-            {
-                bad = name + " isn't an array of objects";
-                return output;
-            }
-
-            foreach (var m in list.Cast<JsonObject>())
-            {
-                var id = JsonMembers.AsString(m["id"]) ?? "";
-                if (!Playback.Id(id) || output.Count == Copies.MaxSubtitleTracks)
-                {
-                    continue;
-                }
-
-                static bool Flag(JsonNode? n) => n is JsonValue jv && jv.GetValueKind() == JsonValueKind.True;
-                var t = new Track
-                {
-                    Id = id, Default = Flag(m["default"]), Forced = Flag(m["forced"]), HearingImpaired = Flag(m["hearingImpaired"]),
-                    External = Flag(m["external"]),
-                };
-                if (JsonMembers.AsString(m["language"]) is { } l && Languages.ValidTag(l))
-                {
-                    t.Language = l;
-                }
-
-                if (Names.Token(m["format"]) is { } f)
-                {
-                    t.Format = f;
-                }
-
-                if (m.TryGetPropertyValue("url", out var u))
-                {
-                    // A text format's URL is its WebVTT, a picture format's its
-                    // PGS; a format MSFP's table doesn't name may be served
-                    // either way (video section 5.4).
-                    var s = JsonMembers.AsString(u);
-                    bool text = s == streamBase + "subtitles/" + id, pictures = s == streamBase + "pictures/" + id; // P17b
-                    var format = t.Format ?? "";
-                    if ((TextFormats.Contains(format) && !text) || (PictureFormats.Contains(format) && !pictures) || (!text && !pictures))
-                    {
-                        bad = "a subtitle URL that isn't its track's";
-                        return output;
-                    }
-
-                    t.Text = text;
-                    t.Pictures = pictures;
-                }
-
-                if (m.TryGetPropertyValue("assUrl", out var au))
-                {
-                    if (JsonMembers.AsString(au) != streamBase + "ass/" + id || !AssFormats.Contains(t.Format ?? ""))
-                    {
-                        bad = "an ASS URL that isn't its track's";
-                        return output;
-                    }
-
-                    t.Ass = true;
-                }
-
-                rm.Subtitles[id] = new SubtitleServed(t.Text, t.Ass, t.Pictures);
-                output.Add(t);
-            }
-
-            return output;
-        }
-
-        var subtitles = Tracks("subtitleTracks");
-        var forced = Tracks("forcedTracks");
-        if (bad is not null)
-        {
-            return (null, bad);
-        }
-
-        string Id(string name) => JsonMembers.AsString(o[name]) is { } s && Playback.Id(s) ? s : "";
-        var fonts = Video.ReadFontCount(o["fontCount"]); // P17b: fontCount since proposal 17
-
-        v = v with
-        {
-            SubtitleTracks = subtitles, ForcedTracks = forced, SubtitleTrack = Id("subtitleTrack"), ForcedTrack = Id("forcedTrack"),
-            BurnedTrack = Id("burnedTrack"), SubtitleStretchSeconds = subtitles.Count + forced.Count > 0 ? WebVtt.StretchSeconds : 0,
-            Fonts = fonts,
+            VideoTitle v => (v.Copies ?? []).FirstOrDefault(c => c.Id == id),
+            MusicTitle m => (m.Copies ?? []).FirstOrDefault(c => c.Id == id) is { } mc ? AsCopy(mc) : null,
+            _ => null,
         };
-        // P17b: the previews' layout is the catalog's since proposal 17 (previewLayout).
-        return (v, "");
     }
 
     /// <summary>
@@ -965,8 +862,7 @@ public sealed partial class MsfpEngine
         rm.Told = now;
         rm.ToldPaused = rm.Paused;
         rm.Fresh = false;
-        return JsonOut.Object(o => o.String("id", rm.TheirId).Integer("positionMs", rm.Position).Bool("paused", rm.Paused ? true : null)
-            .String("title", Nonempty(rm.Track)));
+        return JsonOut.Object(o => o.String("id", rm.TheirId).Integer("positionMs", rm.Position).String("title", Nonempty(rm.Track)));
     }
 
     // Sends progress for the playbacks on peers the host reported since they

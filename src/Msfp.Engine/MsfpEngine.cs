@@ -17,28 +17,32 @@ namespace Msfp;
 /// <remarks>
 /// <para>
 /// To share, the host gives a catalog (its libraries and titles, each film,
-/// episode, extra and track with its copies described, in its order of
-/// preference, with ffmpeg's names and exact values), a playback and a
-/// media. The engine maps no names: a value MSFP doesn't list is sent and
-/// kept as it is, any token (MSFP core section 8.5). What the owning side
-/// chooses when a peer's play names nothing, and what names and track
-/// titles say, are hooks with the recommended defaults
-/// (<see cref="MsfpConfig.ChooseCopy"/>, <see cref="MsfpConfig.ChooseTracks"/>,
-/// <see cref="MsfpConfig.CopyName"/>, <see cref="MsfpConfig.TrackTitle"/>:
-/// <see cref="MsfpDefaults"/>); <see cref="MsfpConfig.Encoders"/> lists the
-/// codecs its transcodes make. Its operator chooses what each peer is
-/// offered (<see cref="SetOffersAsync"/>), whether local titles go too
+/// episode, extra and track with its copies described as facts, in its
+/// order of preference: the file's media type, the MSFP registry's codec
+/// and subtitle tokens, RFC 6381 codecs strings, H.273 colour, exact values,
+/// the layout of its previews), a playback and a media. The engine maps no
+/// names: a value it doesn't know is sent and kept as it is (MSFP core
+/// section 8.5). The owning side chooses nothing: a peer's play plays the
+/// copy and the audio it names, else the first copy and the file's default
+/// audio, and the engine decides what is served for the delivery asked
+/// (<see cref="Served"/>; without one, the defined baseline, each stream
+/// within it left unchanged); <see cref="MsfpConfig.Encoders"/> says what its
+/// transcoder makes. Its operator chooses what each peer is offered
+/// (<see cref="SetOffersAsync"/>), whether local titles go too
 /// (<see cref="SetLocalAsync"/>, <see cref="SetGroupLocalAsync"/>) and what
-/// it may use (<see cref="SetLimitsAsync"/>: streams, downloads, scans and
-/// the bytes a scan reads). Its viewers play, download or scan a peer's
-/// title through
+/// it may use (<see cref="SetLimitsAsync"/>: streams, downloads, scans and a
+/// pool's scan cap). Its viewers play, download or scan a peer's title
+/// through
 /// <see cref="PlayAsync(string, PlayRequest, CancellationToken)"/>, <see cref="Progress"/>,
 /// <see cref="StopAsync(string, long, CancellationToken)"/>
-/// and <see cref="FetchAsync"/> (the host names the copy and the delivery,
-/// from the copy's facts and its device; without a delivery, the baseline:
-/// H.264 and AAC in HLS); <see cref="ReportOfflineAsync"/> sends a
-/// download's late reports, which count for 30 days across restarts
-/// (<see cref="IDownloadsTx"/>).
+/// and <see cref="FetchAsync"/> (the host names the copy, the audio and the
+/// delivery, from the copy's facts and its device; without a delivery, the
+/// baseline: H.264 and AAC in HLS); <see cref="PreviewSheetAsync"/> fetches
+/// a copy's seek-bar previews on demand; <see cref="ReportOfflineAsync"/>
+/// sends a download's late reports, which count for 30 days across restarts
+/// (<see cref="IDownloadsTx"/>). Every media URL is built from the peer's
+/// stream root and a ticket its answer gave: no address a peer wrote is
+/// ever fetched.
 /// </para>
 /// <para>
 /// The engine checks what leaves before it leaves: titles and copies cleaned

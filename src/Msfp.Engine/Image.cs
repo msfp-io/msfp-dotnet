@@ -106,8 +106,8 @@ public sealed partial class MsfpEngine
         return JsonNode.Parse(raw)?["image"] is JsonValue v && v.TryGetValue<bool>(out var image) && image ? t : null;
     }
 
-    // Answers a paired peer's image call (catalog section 4.4): the URL of a
-    // local title's image, under a ticket of its own.
+    // Answers a paired peer's image call (catalog section 4.4): a ticket of
+    // its own for a local title's image.
     private async Task<Answer> ImageAsync(CallRequest req, CancellationToken ct)
     {
         var p = req.Peer;
@@ -147,7 +147,9 @@ public sealed partial class MsfpEngine
 
         var ticket = Base64UrlText.Encode(RandomBytes(32));
         AddImageTicket(ticket, new ImageTicket(TicketImage, p.Id, title, Now() + ImageTicketTime));
-        return Answer.Ok(JsonOut.Object(o => o.String("url", CatalogRules.ImageUrl(StreamBase(req), ticket))));
+        // The caller builds its URL, <stream root><ticket>/image (catalog
+        // section 4.4): the answer carries none.
+        return Answer.Ok(CatalogRules.WriteImageAnswer(ticket));
     }
 
     // Serves an image ticket's one URL, <ticket>/image, checked as every
@@ -291,7 +293,7 @@ public sealed partial class MsfpEngine
             }
 
             var root = PeerStreamRoot(p);
-            if (!CatalogRules.TryReadImageAnswer(r.Body, out var ticket)) // P17b: {"ticket"} since proposal 17
+            if (!CatalogRules.TryReadImageAnswer(r.Body, out var ticket))
             {
                 throw new MsfpException(MsfpError.Unreachable, "an image answer without a ticket");
             }

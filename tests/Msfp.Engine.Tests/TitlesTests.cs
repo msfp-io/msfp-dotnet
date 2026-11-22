@@ -87,7 +87,7 @@ public sealed class TitlesTests
         Assert.Equal(["movie/tmdb/1", "movie/tmdb/1/x/Th3me", "movie/tmdb/1/x/Tr7aQ1"], Keys(await s.PeerTitlesAsync()));
         Assert.Equal(MsfpError.NotFound, (await Assert.ThrowsAsync<MsfpException>(() => s.B.Engine.TitleImageAsync(s.OnB, local))).Code);
         var x = (VideoTitle)(await s.PeerTitlesAsync())["movie/tmdb/1/x/Tr7aQ1"];
-        Assert.Equal(("trailer", "Teaser", 1), (x.ExtraType, x.Name, x.Copies!.Count));
+        Assert.Equal(("trailer", null, 1), (x.ExtraType, x.Name, x.Copies!.Count)); // an extra carries no name
 
         await s.A.Engine.SetLocalAsync(s.OnA, true);
         Assert.True((await s.A.Engine.PeerAsync(s.OnA)).Local);
@@ -131,9 +131,9 @@ public sealed class TitlesTests
         Assert.Equal(Pixels(Png(4, 3)), Pixels(img));
         var calls = s.Exchanges("federation/image");
         Assert.Equal(200, Assert.Single(calls).Status);
-        var url = (string)JsonNode.Parse(calls[0].ResponseBody)!["url"]!;
-        Assert.EndsWith("/image", url, StringComparison.Ordinal);
-        var target = url[url.IndexOf("/api/v1/stream/", StringComparison.Ordinal)..];
+        var ticket = (string)JsonNode.Parse(calls[0].ResponseBody)!["ticket"]!;
+        Assert.DoesNotContain("url", calls[0].ResponseBody, StringComparison.Ordinal);
+        var target = MediaUrls.Image("/api/v1/stream/", ticket);
         Assert.Equal(200, await HostKit.GetAsync(s.A, target));
 
         // The ticket opens that image only: another name, a HEAD, a browser.
@@ -175,31 +175,6 @@ public sealed class TitlesTests
         Assert.Equal(MsfpError.NotFound, (await Assert.ThrowsAsync<MsfpException>(() => s.B.Engine.TitleImageAsync(s.OnB, local))).Code);
         Assert.Equal(404, await HostKit.GetAsync(s.A, target));
     }
-
-    // A copy's names and track titles as sent (video section 3.6): labels
-    // only, never a file's or a release's name.
-    [Theory]
-    [InlineData("Director's Cut", "Director's Cut")]
-    [InlineData("4K HDR", "4K HDR")]
-    [InlineData("Film.2160p.WEB-DL-GRP.mkv", "")]
-    [InlineData("movie.mkv", "")]
-    [InlineData("[GRP] Film", "")]
-    [InlineData("Film BluRay", "")]
-    [InlineData("Film x264", "")]
-    [InlineData("Extended-GRP", "")]
-    [InlineData(" Copy\ten ", "Copy en")]
-    public void CopyLabels(string name, string want) => Assert.Equal(want, MsfpDefaults.CopyName(name));
-
-    [Theory]
-    [InlineData("Commentary", "Commentary")]
-    [InlineData("Signs & Songs", "Signs & Songs")]
-    [InlineData("SDH", "SDH")]
-    [InlineData("Commentaire du réalisateur", "")]
-    [InlineData("Forcés", "Forcés")]
-    [InlineData("Stereo 5.1", "Stereo 5.1")]
-    [InlineData("German DTS-HD by GRP", "")]
-    [InlineData("", "")]
-    public void TrackTitles(string title, string want) => Assert.Equal(want, MsfpDefaults.TrackTitle(title));
 
     // A PNG of PngImage's re-encoding: each filter undone, an interlaced one
     // kept so, what isn't a PNG refused.

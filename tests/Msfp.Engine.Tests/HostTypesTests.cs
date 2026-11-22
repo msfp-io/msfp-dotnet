@@ -118,18 +118,18 @@ public sealed class HostTypesTests
     }
 
     // Titles with their copies, as the Go engine writes them (msfp-go's
-    // MarshalTitle at the revision of version 0): read as they are, written
+    // MarshalTitle after proposal 17): read as they are, written
     // back the same, member for member.
     [Theory]
-    [InlineData("""{"video":{"key":"movie/tmdb/1","kind":"movie","libraries":["L1"],"copies":[{"id":"ver_x","name":"4K","durationMs":1000,"startMs":5,"container":"mkv","size":9,"etag":"e1","video":{"codec":"hevc","width":3840,"height":2160,"hdr":["dv"]},"audioTracks":[{"id":"a0","language":"fr","channels":6,"default":true,"codec":"eac3"}],"subtitleTracks":[{"id":"s0","language":"en","forced":true,"format":"subrip"}],"chapters":[{"startMs":0,"name":"One"}]}]}}""")]
-    [InlineData("""{"music":{"key":"track/mb/x","kind":"track","libraries":null,"name":"Song","copies":[{"id":"ver_y","durationMs":1000,"container":"flac","codec":"flac","size":9,"etag":"e2","sampleRate":44100}]}}""")]
+    [InlineData("""{"video":{"key":"movie/tmdb/1","kind":"movie","libraries":["L1"],"copies":[{"id":"ver_x","durationMs":1000,"startMs":5,"mediaType":"video/matroska","size":9,"etag":"e1","video":{"codec":"hevc","width":3840,"height":2160,"hdr":["dv"]},"audioTracks":[{"id":"a0","language":"fr","channels":6,"default":true,"codec":"eac3"}],"subtitleTracks":[{"id":"s0","language":"en","forced":true,"format":"subrip"}],"chapters":[{"startMs":0,"name":"One"}]}]}}""")]
+    [InlineData("""{"music":{"key":"track/mb/x","kind":"track","libraries":null,"name":"Song","copies":[{"id":"ver_y","durationMs":1000,"mediaType":"audio/flac","codec":"flac","size":9,"etag":"e2","sampleRate":44100}]}}""")]
     public void TitlesWithCopies(string go)
     {
         var t = TitleJson.Unmarshal(System.Text.Encoding.UTF8.GetBytes(go));
         if (t is VideoTitle v)
         {
             var c = Assert.Single(v.Copies!);
-            Assert.Equal(("ver_x", 5L, "e1", 2160), (c.Id, c.StartMs, c.ETag, c.Video!.Height)); // P17b: no name since proposal 17
+            Assert.Equal(("ver_x", 5L, "e1", 2160), (c.Id, c.StartMs, c.ETag, c.Video!.Height));
             Assert.Equal(6, c.AudioTracks[0].Channels);
             Assert.True(c.SubtitleTracks[0].Forced);
             Assert.Equal("One", c.Chapters[0].Name);

@@ -37,12 +37,12 @@ public sealed class PlaybackTests
         using var s = await Sharing.StartAsync(h);
         var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest
         {
-            Title = Film, AudioLanguage = "fr", SubtitleLanguage = "fr", MaxBitrateKbps = 12345,
+            Title = Film, VersionId = await PlatformTests.CopyIdAsync(s, Film, 1), MaxBitrateKbps = 12345,
         });
-        Assert.Equal(("direct", "hls", "a0", "s0"), (pb.Method, pb.Protocol, pb.AudioTrack, pb.SubtitleTrack));
+        Assert.Equal(("direct", "hls", "a0", 5_400_000L), (pb.Method, pb.Protocol, pb.AudioTrack, pb.DurationMs));
         Assert.NotEmpty(pb.VersionId);
-        Assert.Equal(2, pb.SubtitleTracks.Count);
-        Assert.Equal(120, pb.SubtitleStretchSeconds);
+        Assert.Equal(2, pb.Subtitles.Count);
+        Assert.Equal(Video.FormPicture, pb.Subtitles[1].Form);
         Assert.False(pb.Id.StartsWith("play_", StringComparison.Ordinal));
         // A heard the French copy and the cap, as asked; nothing of the device.
         var started = Assert.Single(h.Starts());
@@ -71,7 +71,7 @@ public sealed class PlaybackTests
         await s.B.WaitAsync();
         var progress = Assert.Single(s.Exchanges("progress"));
         Assert.Equal(200, progress.Status);
-        Assert.Contains("\"paused\":true", progress.RequestBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("paused", progress.RequestBody, StringComparison.Ordinal);
         var view = Assert.Single(s.A.Engine.Playbacks());
         Assert.Equal(("active", Film), (view.State, view.Title));
         Assert.NotEmpty(view.PeerName);
@@ -94,9 +94,10 @@ public sealed class PlaybackTests
         {
             "{}", "{\"title\":7}", "{\"title\":\"series/tmdb/1399\"}", "{\"title\":\"movie/tmdb/0949\"}",
             "{\"title\":\"movie/tmdb/949\",\"startPositionMs\":-1}", "{\"title\":\"movie/tmdb/949\",\"audioTrack\":\"a01\"}",
-            "{\"title\":\"movie/tmdb/949\",\"subtitleTrack\":\"s007\"}", "{\"title\":\"movie/tmdb/949\",\"delivery\":\"File\"}",
-            "{\"title\":\"movie/tmdb/949\",\"delivery\":\"remux\",\"container\":\"\"}",
-            "{\"title\":\"movie/tmdb/949\",\"audioLanguage\":\"fr_CA\"}", "{\"title\":\"movie/tmdb/949\",\"maxBitrateKbps\":10000001}",
+            "{\"title\":\"movie/tmdb/949\",\"delivery\":\"transcode\",\"transcode\":{\"burnSubtitle\":\"s007\"}}",
+            "{\"title\":\"movie/tmdb/949\",\"delivery\":\"File\"}",
+            "{\"title\":\"movie/tmdb/949\",\"delivery\":\"remux\",\"mediaType\":\"video/MP4\"}", "{\"title\":\"movie/tmdb/949\",\"delivery\":\"remux\"}",
+            "{\"title\":\"movie/tmdb/949\",\"maxBitrateKbps\":10000001}",
         })
         {
             Assert.True(await CallAsync(s, "play", body) == 400, body);
@@ -104,13 +105,16 @@ public sealed class PlaybackTests
 
         Assert.Equal(404, await CallAsync(s, "play", "{\"title\":\"movie/tmdb/9999999999\"}"));
         // Unknown values and members ignored; a track the copy hasn't, as absent.
-        Assert.Equal(200, await CallAsync(s, "play", "{\"title\":\"movie/tmdb/949\",\"capabilities\":{\"containers\":[\"MP4\",\"x\"]},\"audioTrack\":\"a7\",\"other\":1}"));
+        Assert.Equal(200, await CallAsync(s, "play", "{\"title\":\"movie/tmdb/949\",\"capabilities\":{\"containers\":[\"MP4\",\"x\"]},\"audioTrack\":\"a7\",\"other\":1," +
+            "\"audioLanguage\":\"fr_CA\",\"subtitleTrack\":\"s007\",\"container\":\"x\"}"));
         Assert.Equal("a0", h.Starts()[0].AudioTrack);
-        var url = (string)JsonNode.Parse(s.Exchanges("play")[^1].ResponseBody)!["stream"]!["url"]!;
-        Assert.StartsWith(s.A.Address + "/api/v1/stream/", url, StringComparison.Ordinal);
-        var target = url[s.A.Address.Length..];
+        var target = HostKit.StreamPath(s.Exchanges("play")[^1].ResponseBody);
+        Assert.DoesNotContain("url", s.Exchanges("play")[^1].ResponseBody, StringComparison.Ordinal);
         var streamBase = target[..^"master.m3u8".Length];
         Assert.Equal(200, await HostKit.GetAsync(s.A, target));
+        // A name no playlist gave yet: not served (media section 1).
+        Assert.Equal(404, await HostKit.GetAsync(s.A, streamBase + "seg0.m4s"));
+        Assert.Equal(200, await HostKit.GetAsync(s.A, streamBase + "v0.m3u8"));
         var cases = new (string Target, string Method, string[] Headers, int Want)[]
         {
             (target + "?x=1", "GET", [], 404), (target, "GET", ["Origin", "https://example.org"], 404),
@@ -262,7 +266,7 @@ public sealed class PlaybackTests
         var h = HostKit.FilmHost();
         using var s = await Sharing.StartAsync(h);
         var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film });
-        var url = ((string)JsonNode.Parse(s.Exchanges("play")[^1].ResponseBody)!["stream"]!["url"]!)[s.A.Address.Length..];
+        var url = HostKit.StreamPath(s.Exchanges("play")[^1].ResponseBody);
         var first = await HostKit.GetFullAsync(s.A, url);
         Assert.Equal((200, HostKit.Master), (first.Status, first.Text()));
         h.Files["master.m3u8"] = HostKit.Bytes("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nother.m3u8\n");
@@ -282,15 +286,14 @@ public sealed class PlaybackTests
     public async Task SheetsReencoded()
     {
         var h = HostKit.FilmHost();
-        h.EditCopy(Film, 0, c => c with { PreviewLayout = new PreviewLayout(10, 10, 2, 1, 10_000, 4) }); // P17b
-        h.Info["movie/tmdb/949#0"] = new CopyInfo { Trickplay = new Trickplay { TileWidth = 10, TileHeight = 10, Columns = 2, Rows = 1, IntervalMs = 10_000, TileCount = 4 } };
+        h.EditCopy(Film, 0, c => c with { PreviewLayout = new PreviewLayout(10, 10, 2, 1, 10_000, 4) });
         h.Files["trickplay/0"] = [.. Sheets.Jpeg20x10, .. HostKit.Bytes("trailing bytes")];
         h.Files["trickplay/1"] = Sheets.Jpeg21x10;
         using (var s = await Sharing.StartAsync(h))
         {
             var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film });
-            Assert.NotNull(pb.Trickplay);
-            var url = ((string)JsonNode.Parse(s.Exchanges("play")[^1].ResponseBody)!["stream"]!["url"]!)[s.A.Address.Length..];
+            Assert.Equal(2, pb.Sheets);
+            var url = HostKit.StreamPath(s.Exchanges("play")[^1].ResponseBody);
             var streamBase = url[..^"master.m3u8".Length];
             var sheet = await HostKit.GetFullAsync(s.A, streamBase + "trickplay/0");
             Assert.Equal((200, "image/jpeg"), (sheet.Status, sheet.Header("Content-Type")));
@@ -302,8 +305,8 @@ public sealed class PlaybackTests
 
         using (var s = await Sharing.StartAsync(h, c => c with { SheetEncoder = null }))
         {
-            await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film });
-            Assert.DoesNotContain("trickplay", s.Exchanges("play")[^1].ResponseBody, StringComparison.Ordinal);
+            Assert.Equal(0, (await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film })).Sheets);
+            Assert.Null(((VideoTitle)(await s.PeerTitlesAsync())[Film]).Copies![0].PreviewLayout); // the layout doesn't leave
             Assert.Equal(404, await CallAsync(s, "previews", "{\"title\":\"movie/tmdb/949\",\"versionId\":\"" +
                 ((VideoTitle)(await s.PeerTitlesAsync())[Film]).Copies![0].Id + "\"}"));
         }
@@ -357,20 +360,15 @@ public sealed class PlaybackTests
     [Fact]
     public async Task MusicPlay()
     {
-        var h = new FakeHost { Libs = [new Library { Id = "music", Name = "Music", Kind = "music" }] };
+        var h = new FakeHost { Libs = [new Library { Id = "music", Name = "Music" }] };
         const string Track = "track/mb/0c000000-0000-4000-8000-000000000003";
         h.Titles[Track] = HostKit.MusicTrack(Track, "t");
-        h.Info["t"] = new CopyInfo
-        {
-            Fonts = 2,
-            Trickplay = new Trickplay { TileWidth = 10, TileHeight = 10, Columns = 1, Rows = 1, IntervalMs = 1000, TileCount = 1 },
-        };
+        h.Info["t"] = new CopyInfo { Fonts = 2 };
         using var s = await Sharing.StartAsync(h, c => c with { NewPairing = new Limits { Streams = 0, Audio = true, AudioStreams = 1 } });
-        var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Track, SubtitleTrack = "s0", Delivery = Playback.DeliveryFile });
+        var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Track, Delivery = Playback.DeliveryFile });
         Assert.True(h.Starts()[0].AudioOnly);
-        Assert.Empty(pb.SubtitleTracks);
-        Assert.Null(pb.Trickplay);
-        Assert.Equal("file", pb.Protocol);
+        Assert.Empty(pb.Subtitles);
+        Assert.Equal((0, 0, "file", "audio/flac"), (pb.Sheets, pb.Fonts, pb.Protocol, pb.MimeType));
         Assert.DoesNotContain("subtitle", s.Exchanges("play")[0].ResponseBody, StringComparison.Ordinal);
         Assert.DoesNotContain("subtitle", s.Exchanges("play")[0].RequestBody, StringComparison.Ordinal);
         // One audio stream: a second track waits for the first's stop.

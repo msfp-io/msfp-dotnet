@@ -13,7 +13,7 @@ public sealed partial class MsfpEngine
 {
     private static readonly string[] GroupSyncMembers = ["group", "have", "mail"];
     private static readonly string[] GroupPushMembers = ["group", "events", "mail"];
-    private static readonly string[] GroupPairMembers = ["group", "answers", "address", "name", "nextCommitment", "inbound"];
+    private static readonly string[] GroupPairMembers = ["group", "answers", "address", "nextCommitment", "inbound"];
     private static readonly string[] GroupJoinMembers = ["secretHash", "proof"];
 
     // A mail ID already used by a group-pair: its 409.
@@ -236,7 +236,9 @@ public sealed partial class MsfpEngine
                 var pins = Pins.Clean(opened.Certificates ?? []);
                 req = new GroupRequest
                 {
-                    Mail = m.Id, From = m.From, Name = "", Address = opened.Address, // P17b: the mail carries no name since proposal 17: the member's profile's
+                    // The mail carries no name: the member's profile's (groups section 5).
+                    Mail = m.Id, From = m.From, Name = Music.CleanText(s.Members.GetValueOrDefault(m.From)?.Name ?? "", PairingCode.MaxGroupName),
+                    Address = opened.Address,
                     NextCommitment = Base64UrlText.Decode(opened.NextCommitment, 32), Inbound = opened.Inbound,
                     Pins = pins.Count > 0 ? pins : null, Received = Now(),
                 };
@@ -676,7 +678,6 @@ public sealed partial class MsfpEngine
     private async Task<Answer> GroupPairServedAsync(CallRequest req, CancellationToken ct)
     {
         string id, answers, address;
-        string? name;
         byte[] commitment;
         bool inbound;
         try
@@ -686,7 +687,6 @@ public sealed partial class MsfpEngine
             answers = body.GetString("answers") ?? throw StrictJsonBad();
             address = body.GetString("address") ?? throw StrictJsonBad();
             Address.Check(address);
-            name = body.GetString("name");
             commitment = body.GetBytes("nextCommitment", 32) ?? throw StrictJsonBad();
             inbound = body.GetBool("inbound") ?? true;
         }
@@ -710,9 +710,11 @@ public sealed partial class MsfpEngine
             return PairRefused(req);
         }
 
-        await LinkThroughAsync(id, key, address, name, commitment, inbound, [], ct).ConfigureAwait(false);
-        return Answer.Ok(JsonOut.Object(o => o.String("name", Name()).Bytes("nextCommitment", OurKeys().Commitment)
-            .Bool("inbound", !SaysUncallable())));
+        // No name either way: each side knows the other's from its profile
+        // (groups section 8.3).
+        await LinkThroughAsync(id, key, address, await MemberNameAsync(id, member, ct).ConfigureAwait(false), commitment, inbound, [], ct)
+            .ConfigureAwait(false);
+        return Answer.Ok(JsonOut.Object(o => o.Bytes("nextCommitment", OurKeys().Commitment).Bool("inbound", !SaysUncallable())));
     }
 
     // Finds, for a group-pair from key, the mail it answers: one this server
@@ -816,7 +818,7 @@ public sealed partial class MsfpEngine
         var key = await WithStateAsync(id, (_, s) =>
             s.Members.TryGetValue(member, out var m) && Base64UrlText.Decode(m.Key, 32) is { } k ? k : throw new MsfpException(MsfpError.NotMember), ct)
             .ConfigureAwait(false);
-        var body = JsonOut.Object(o => o.String("group", id).String("answers", mailId).String("address", Named()).String("name", Name())
+        var body = JsonOut.Object(o => o.String("group", id).String("answers", mailId).String("address", Named())
             .Bytes("nextCommitment", OurKeys().Commitment).Bool("inbound", !SaysUncallable()));
         var tmp = new PeerRecord { Key = key, Address = address, Inbound = Inbound.Yes, Pins = [.. pins] };
         var r = await ExchangeAsync(tmp, CallGroupPair, body, Current(), ct).ConfigureAwait(false);
@@ -825,18 +827,23 @@ public sealed partial class MsfpEngine
             throw new MsfpException(MsfpError.Unreachable, $"group-pair: {r.Status} {r.Problem}");
         }
 
-        string? name;
         try
         {
-            name = ReadAnswerBody(r.Body).GetString("name");
+            ReadAnswerBody(r.Body);
         }
         catch (ProtocolException e)
         {
             throw new MsfpException(MsfpError.Unreachable, e.Message, e);
         }
 
-        await LinkThroughAsync(id, key, address, name, commitment, inbound, pins, ct).ConfigureAwait(false);
+        await LinkThroughAsync(id, key, address, await MemberNameAsync(id, member, ct).ConfigureAwait(false), commitment, inbound, pins, ct)
+            .ConfigureAwait(false);
     }
+
+    // A member's name in a group: its latest profile's, or its joined's
+    // until its profile arrives (groups section 3.3); "" when not known.
+    private Task<string> MemberNameAsync(string id, string member, CancellationToken ct) =>
+        WithStateAsync(id, (_, s) => s.Members.GetValueOrDefault(member)?.Name ?? "", ct);
 
     // ---- joining (groups section 4) --------------------------------------------
 

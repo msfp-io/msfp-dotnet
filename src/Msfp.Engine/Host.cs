@@ -435,18 +435,18 @@ public interface ILyrics
 /// <summary>
 /// The owning side of a peer's playback here. The engine has checked the
 /// request (<see cref="Playback.ReadPlay(ReadOnlySpan{byte}, Func{string, bool}?)"/>), found the title's copies as the
-/// catalog sends them, picked the copy and the tracks (those the request
-/// names, else <see cref="MsfpConfig.ChooseCopy"/>'s and
-/// <see cref="MsfpConfig.ChooseTracks"/>'), refused what MSFP
-/// refuses of the delivery asked and what the pool's limits refuse early;
+/// catalog sends them, picked the copy and the audio (those the request
+/// names, else the first copy and the file's default audio), decided what is
+/// served (<see cref="StartRequest.Served"/>), refused what MSFP refuses of the delivery asked and what the pool's limits refuse early;
 /// then it asks the host how to serve the copy apart (Describe), and to
 /// start.
 /// </summary>
 public interface IPlayback
 {
     /// <summary>
-    /// What the catalog doesn't say of a copy: its previews' layout, its
-    /// fonts, the subtitle tracks it can't serve apart.
+    /// What the catalog doesn't say of a copy: its fonts, the subtitle tracks
+    /// it can't serve apart, the forms of those of formats video section 5.4
+    /// doesn't list.
     /// </summary>
     /// <param name="copy">The copy's handle.</param>
     /// <param name="ct">Cancels.</param>
@@ -454,10 +454,11 @@ public interface IPlayback
 
     /// <summary>
     /// Starts serving the copy for its purpose and delivery. Without a
-    /// delivery it serves the baseline, H.264 and AAC in complete HLS (method
-    /// direct or remux when the copy's streams already are those, transcode
-    /// otherwise; never the file); it serves exactly the delivery asked
-    /// otherwise; then it calls
+    /// delivery it serves the baseline in complete HLS, as
+    /// <see cref="StartRequest.Served"/> says (method remux when each stream
+    /// is within the baseline and left unchanged, transcode otherwise; never
+    /// the file); it serves exactly the delivery asked otherwise; then it
+    /// calls
     /// <see cref="StartRequest.Admit"/> before starting any work. Errors:
     /// NotPlayable, DeliveryRefused, ServerBusy, StreamLimitReached.
     /// </summary>

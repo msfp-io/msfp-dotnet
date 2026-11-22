@@ -14,9 +14,8 @@ public sealed record GroupMemberShows(string Member, string Name, string Peer, I
 /// <summary>A library and whether it is shown.</summary>
 /// <param name="Id">Its public ID.</param>
 /// <param name="Name">Its name.</param>
-/// <param name="Kind">Its kind.</param>
 /// <param name="Shown">Whether the group shows it here.</param>
-public sealed record ShownLibrary(string Id, string Name, string Kind, bool Shown);
+public sealed record ShownLibrary(string Id, string Name, bool Shown);
 
 // What this server shows from a group (its members' libraries, as one
 // choice for the whole group): everything its members offer it, but the
@@ -40,7 +39,7 @@ public sealed partial class MsfpEngine
             {
                 var p = peers.FirstOrDefault(p => IsMember(m, p) && p.Groups?.Contains(id) == true);
                 var libs = p is null ? [] : (p.Wants ?? []).Where(w => !w.Gone)
-                    .Select(w => new ShownLibrary(w.Id, w.Name, w.Kind, g.Hidden?.Contains(new HiddenLibrary(m.Id, w.Id)) != true)).ToList();
+                    .Select(w => new ShownLibrary(w.Id, w.Name, g.Hidden?.Contains(new HiddenLibrary(m.Id, w.Id)) != true)).ToList();
                 members.Add(new GroupMemberShows(m.Id, m.Name, p?.Id ?? "", libs));
             }
         }, ct).ConfigureAwait(false);

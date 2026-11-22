@@ -235,7 +235,7 @@ public sealed class GroupTests
     {
         var net = new Network();
         var h = HostKit.FilmHost();
-        h.Libs = [new Library { Id = "films", Name = "Films", Kind = "movies" }];
+        h.Libs = [new Library { Id = "films", Name = "Films" }];
         var (a, b, n, g) = await TrioAsync(net, c => c with { Catalog = h, Playback = h, Media = h, SheetEncoder = new TestSheets() });
         using var _a = a;
         using var _b = b;
@@ -266,7 +266,7 @@ public sealed class GroupTests
     {
         var net = new Network();
         var (h, local, _) = TitlesTests.LocalHost();
-        h.Libs = [new Library { Id = "films", Name = "Films", Kind = "movies" }];
+        h.Libs = [new Library { Id = "films", Name = "Films" }];
         var (a, b, n, g) = await TrioAsync(net, c => c with { Catalog = h, Playback = h, Media = h, SheetEncoder = new TestSheets() });
         using var _a = a;
         using var _b = b;
@@ -323,7 +323,7 @@ public sealed class GroupTests
     {
         var net = new Network();
         var h = HostKit.FilmHost();
-        h.Libs = [new Library { Id = "films", Name = "Films", Kind = "movies" }];
+        h.Libs = [new Library { Id = "films", Name = "Films" }];
         var (a, b, n, g) = await TrioAsync(net, c => c with { Catalog = h, Playback = h, Media = h, SheetEncoder = new TestSheets() });
         using var _a = a;
         using var _b = b;

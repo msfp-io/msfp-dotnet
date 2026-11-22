@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Msfp.Protocol;
 
@@ -118,26 +119,18 @@ internal sealed class GuardedSink(IResponseSink inner, CancellationToken ct, Pac
 }
 
 /// <summary>
-/// The sink of the file: the engine's status and headers (the host's content
-/// type alone kept), at most left bytes, paced for a download.
+/// The sink of the file: the engine's status and headers (the copy's media
+/// type from the catalog, never the host's), at most left bytes, paced for a
+/// download.
 /// </summary>
-internal sealed class FileSink(IResponseSink inner, CancellationToken ct, string etag, long left, Pacer? pace, int status, string contentRange)
-    : IResponseSink
+internal sealed class FileSink(IResponseSink inner, CancellationToken ct, string etag, string mediaType, long left, Pacer? pace, int status,
+    string contentRange) : IResponseSink
 {
-    private string _contentType = "";
-
     public bool Started { get; private set; }
 
     public long Left { get; private set; } = left;
 
-    public void Start(int status_, string contentType, long length, string contentRange_)
-    {
-        if (!Started)
-        {
-            _contentType = contentType;
-            Begin();
-        }
-    }
+    public void Start(int status_, string contentType, long length, string contentRange_) => Begin();
 
     // Writes the status and headers, once.
     public void Begin()
@@ -149,7 +142,7 @@ internal sealed class FileSink(IResponseSink inner, CancellationToken ct, string
 
         Started = true;
         (inner as IETagSink)?.SetETag(etag);
-        inner.Start(status, Playback.RelayedMediaType(_contentType), Left, contentRange);
+        inner.Start(status, Media.RelayFileType(mediaType), Left, contentRange);
     }
 
     public async ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken token)
@@ -401,10 +394,11 @@ public sealed partial class MsfpEngine
 
     // What a request asks of a peer's playback here: false for anything its
     // ticket doesn't open (media section 4: a scan's opens the file only; a
-    // download's the stream, its subtitles and fonts) or the playback doesn't
-    // serve (another protocol's names, a queue entry it hasn't, a track it
-    // doesn't serve apart, a sheet or font past the count).
-    private static bool MediaPathOf(string rest, LivePlayback pb, out MediaPath path)
+    // download's the stream, its subtitles and fonts; a queue entry's stream
+    // a play's only) or the playback doesn't serve (another protocol's names,
+    // a playlist or segment no playlist served gave, a queue entry it hasn't,
+    // a track it doesn't serve apart, a sheet or font past the count).
+    internal static bool MediaPathOf(string rest, LivePlayback pb, out MediaPath path)
     {
         if (!MediaPath.TryParse(rest, out path))
         {
@@ -415,9 +409,19 @@ public sealed partial class MsfpEngine
         {
             case MediaKind.File or MediaKind.Master or MediaKind.Playlist or MediaKind.Segment:
                 if (!pb.Entries.TryGetValue(path.Entry, out var entry) ||
-                    (pb.Purpose == Playback.PurposeScan && (path.Kind != MediaKind.File || path.Entry != 0)))
+                    (pb.Purpose == Playback.PurposeScan && (path.Kind != MediaKind.File || path.Entry != 0)) ||
+                    (path.Entry > 0 && pb.Purpose != Playback.PurposePlay))
                 {
                     return false;
+                }
+
+                if (path.Kind is MediaKind.Playlist or MediaKind.Segment)
+                {
+                    // Exactly the names its playlists gave (media section 1).
+                    lock (pb.Names)
+                    {
+                        return entry.Protocol == "hls" && pb.Names.Contains(path.Entry.ToString(CultureInfo.InvariantCulture) + "/" + path.Name);
+                    }
                 }
 
                 return entry.Protocol == "file" == (path.Kind == MediaKind.File);
@@ -496,7 +500,7 @@ public sealed partial class MsfpEngine
         try
         {
             var ranged = h.Length > 0;
-            var sink = new FileSink(output, ct, entry.Etag, end - start + 1, pb.Pace, ranged ? 206 : 200,
+            var sink = new FileSink(output, ct, entry.Etag, entry.MediaType, end - start + 1, pb.Pace, ranged ? 206 : 200,
                 ranged ? Media.ContentRange(start, end, size) : "");
             Exception? error = null;
             try
@@ -636,6 +640,23 @@ public sealed partial class MsfpEngine
             return StreamOutcome.Served;
         }
 
+        if (path.Kind == MediaKind.Master && path.Entry == 0)
+        {
+            (kept, var missing) = MasterPlaylist.Fill(kept, pb.Facts);
+            if (missing.Count > 0)
+            {
+                _log.LogWarning("msfp: the host's master playlist lacks attributes MSFP asks for: {Missing}", string.Join(',', missing));
+            }
+        }
+
+        lock (pb.Names)
+        {
+            foreach (var n in PlaylistNames(kept))
+            {
+                pb.Names.Add(path.Entry.ToString(CultureInfo.InvariantCulture) + "/" + n);
+            }
+        }
+
         lock (_plays)
         {
             if (pb.Playlists.TryGetValue(key, out var other))
@@ -651,6 +672,15 @@ public sealed partial class MsfpEngine
 
         return await WritePlaylistAsync(output, kept, ct).ConfigureAwait(false);
     }
+
+    // The URI= values of a playlist's tags.
+    [GeneratedRegex("URI=\"([^\"]*)\"")]
+    private static partial Regex UriValues();
+
+    // The names a checked playlist gives: its URI lines and the URI= values
+    // of its tags (renditions, EXT-X-MAP).
+    internal static IEnumerable<string> PlaylistNames(byte[] kept) =>
+        Media.UriLines(kept).Concat(UriValues().Matches(System.Text.Encoding.UTF8.GetString(kept)).Select(m => m.Groups[1].Value));
 
     // Bounds of the playlists a playback keeps, to serve them the same.
     private const int PlaylistsKept = 16;
@@ -680,7 +710,7 @@ public sealed partial class MsfpEngine
         await _sheetGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var buffer = new BoundedSink(PreviewLayout.MaxSheetBytes); // P17b
+            var buffer = new BoundedSink(PreviewLayout.MaxSheetBytes);
             Exception? error = null;
             try
             {
@@ -924,7 +954,7 @@ public sealed partial record MediaPath
         switch (parts.Length)
         {
             case 2 when parts[0] == "trickplay":
-                if (!Number(parts[1], PreviewLayout.MaxSheets - 1, out var sheet)) // P17b
+                if (!Number(parts[1], PreviewLayout.MaxSheets - 1, out var sheet))
                 {
                     return false;
                 }

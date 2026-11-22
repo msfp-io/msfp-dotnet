@@ -38,10 +38,6 @@ public sealed partial class MsfpEngine
     private long _seqSeen;
     private bool _logKept;
 
-    // A library's kind as sent and kept (catalog section 2): a token, known
-    // or not; "" (absent) for anything else.
-    internal static string CleanKind(string? kind) => Names.IsToken(kind) ? kind! : "";
-
     // Whether part is on between this server and p.
     internal bool On(PeerRecord p, string part) => Agreed(p) is { } a && a.Parts.ContainsKey(part);
 
@@ -502,8 +498,9 @@ public sealed partial class MsfpEngine
         var playback = On(p, Versions.PartPlayback);
         var music = On(p, Versions.PartMusic);
         return Answer.Ok(JsonOut.Object(o => o.String("name", Name())
-            .Objects("libraries", offered, (w, l) => w.String("id", ids[l.Id]).String("name", Music.CleanText(l.Name ?? "", MaxLibraryName))
-                .String("kind", CleanKind(l.Kind) is { Length: > 0 } kind ? kind : null))
+            // A library carries no kind (catalog section 2): its titles' keys
+            // say what it holds.
+            .Objects("libraries", offered, (w, l) => w.String("id", ids[l.Id]).String("name", Music.CleanText(l.Name ?? "", MaxLibraryName)))
             .Object("limits", playback ? w => WriteLimits(w, Generous(p), music) : null)));
     }
 
@@ -517,7 +514,8 @@ public sealed partial class MsfpEngine
                 .Integer("downloadKbps", NonZero(l.DownloadKbps));
         }
 
-        w.Integer("scansPerDay", NonZero(l.ScansPerDay)).Integer("scanBytes", l.ScansPerDay > 0 ? NonZero(l.ScanBytes) : null);
+        // No scanBytes: each scan's answer states its cap (playback section 8).
+        w.Integer("scansPerDay", NonZero(l.ScansPerDay));
         if (music && l.Audio)
         {
             w.Integer("audioStreams", l.AudioStreams).Integer("audioTranscodes", l.AudioTranscodes);
@@ -682,6 +680,28 @@ public sealed partial class MsfpEngine
         Dictionary<string, string> pub, CancellationToken ct)
     {
         private readonly Dictionary<string, string> _parents = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, MusicTitle?> _albums = new(StringComparer.Ordinal);
+
+        // The host's album of that key, read once per sender; null when it has none.
+        private async Task<MusicTitle?> AlbumAsync(string key)
+        {
+            if (_albums.TryGetValue(key, out var a))
+            {
+                return a;
+            }
+
+            try
+            {
+                a = await e.HostTitleAsync(key, libs, ct).ConfigureAwait(false) as MusicTitle;
+            }
+            catch (Exception x) when (x is not OperationCanceledException)
+            {
+                a = null;
+            }
+
+            _albums[key] = a is not null && a.Key == key ? a : null;
+            return _albums[key];
+        }
 
         // Fills a whole-list page: the titles after after, up to 5,000 and 3
         // MiB of answer (catalog section 3.1), next set whenever a title
@@ -917,7 +937,7 @@ public sealed partial class MsfpEngine
                     raw = e.VideoOut(p.Id, v, library);
                     break;
                 case MusicTitle m when k.Part == Versions.PartMusic:
-                    raw = e.MusicOut(p.Id, m, library);
+                    raw = e.MusicOut(p.Id, m, library, m.Kind == "track" && m.Album is { Length: > 0 } album ? await AlbumAsync(album).ConfigureAwait(false) : null);
                     break;
             }
 
@@ -1015,7 +1035,7 @@ public sealed partial class MsfpEngine
     private byte[]? VideoOut(string peer, VideoTitle t, string library)
     {
         var copies = (t.Copies ?? []).Select(c => SendCopy(peer, c)).ToList();
-        var input = JsonOut.Object(o => o.String("key", t.Key).String("kind", t.Kind).String("library", library)
+        var input = JsonOut.Object(o => o.String("key", t.Key).String("library", library)
             .Objects("copies", copies.Count > 0 ? copies : null, Copies.Write)
             .Object("place", t.Place is { } pl ? w => w.Integer("season", pl.Season).Integer("episode", pl.Episode) : null)
             .Strings("with", t.With is { Count: > 0 } ? t.With : null)
@@ -1028,7 +1048,8 @@ public sealed partial class MsfpEngine
             }
             : null)
             .String("extraType", string.IsNullOrEmpty(t.ExtraType) ? null : t.ExtraType)
-            .String("name", string.IsNullOrEmpty(t.Name) ? null : t.Name)
+            // An extra carries no name (video section 3.9).
+            .String("name", string.IsNullOrEmpty(t.Name) || (VideoKey.TryParse(t.Key, out var vk) && vk.Kind == "extra") ? null : t.Name)
             .Integer("year", t.Year != 0 ? t.Year : null)
             .Bool("image", t.Image ? true : null));
         if (Video.ReadTitle(input) is not { } v)
@@ -1036,11 +1057,12 @@ public sealed partial class MsfpEngine
             return null;
         }
 
-        var name = v.Description?.Name ?? ""; // P17b: an extra carries no name since proposal 17
+        var name = v.Description?.Name ?? "";
         var year = v.Description?.Year ?? 0;
         var image = v.Description?.Image ?? false;
         var with = v.With.Order(StringComparer.Ordinal).ToList();
-        return JsonOut.Object(o => o.String("key", v.Key).String("kind", v.Kind).String("library", library)
+        // A title carries no kind: its key names it (video section 3).
+        return JsonOut.Object(o => o.String("key", v.Key).String("library", library)
             .Objects("copies", v.Copies.Count > 0 ? v.Copies : null, Copies.Write)
             .Object("place", v.Place is { } pl ? w => w.Integer("season", pl.Season).Integer("episode", pl.Episode) : null)
             .Strings("with", with.Count > 0 ? with : null)
@@ -1060,38 +1082,40 @@ public sealed partial class MsfpEngine
 
     // One of the host's copies as it leaves toward a peer: its ID the version
     // ID play gives for it, never the host's handle; its language tags as
-    // Languages.TrySentTag gives them; its name and its tracks' titles as
-    // MsfpConfig.CopyName and MsfpConfig.TrackTitle keep them (video section
-    // 3.6), plain text of at most 64 characters. What remains out of MSFP's
-    // bounds is dropped when it is read back.
+    // Languages.TrySentTag gives them. A copy carries no name and its tracks
+    // no title (video section 3.3): a viewer's server labels them from their
+    // facts. Its previewLayout leaves only with a SheetEncoder, which
+    // re-encodes every sheet it serves (.NET has no JPEG codec of its own).
+    // What remains out of MSFP's bounds is dropped when it is read back.
     internal Protocol.Copy SendCopy(string peer, Protocol.Copy c) => c with
     {
         Id = VersionId(peer, c.Id),
-        // P17b: copies and tracks carry no names since proposal 17.
         AudioTracks = (c.AudioTracks ?? []).Select(a => a with { Language = SentTag(a.Language) }).ToList(),
         SubtitleTracks = (c.SubtitleTracks ?? []).Select(s => s with { Language = SentTag(s.Language) }).ToList(),
+        PreviewLayout = _cfg.SheetEncoder is null ? null : c.PreviewLayout,
     };
 
     // SendCopy for a track's copy (music section 3.3).
-    internal MusicCopy SendMusicCopy(string peer, MusicCopy c) => c with { Id = VersionId(peer, c.Id) }; // P17b: no name since proposal 17
+    internal MusicCopy SendMusicCopy(string peer, MusicCopy c) => c with { Id = VersionId(peer, c.Id) };
 
     private static string? SentTag(string? code) => code is not null && Languages.TrySentTag(code, out var tag) ? tag : null;
 
-    // A name or a title as the host's hook keeps it, plain text of at most
-    // 64 characters; null for none.
-    private static string? Label(Func<string, string> keep, string? s) =>
-        Music.CleanText(keep(s ?? "") ?? "", 64) is { Length: > 0 } kept ? kept : null; // P17b: Copies.MaxName went with proposal 17
-
     // The host's music title as sent, its copies made ready to leave, read
     // back as a receiver reads it: what a receiver would skip or drop isn't
-    // sent.
-    private byte[]? MusicOut(string peer, MusicTitle t, string library)
+    // sent. A track's artists, artistNames, dates and genres leave only when
+    // they differ from its album's (music section 3): an absent one is the
+    // album's.
+    private byte[]? MusicOut(string peer, MusicTitle t, string library, MusicTitle? album)
     {
         var w = new Protocol.MusicTitle
         {
-            Key = t.Key, Kind = t.Kind, Library = library, Name = t.Name ?? "", // P17b: no sortName since proposal 17
-            Artists = t.Artists ?? [], ArtistNames = t.ArtistNames ?? "", PrimaryType = t.PrimaryType ?? "", SecondaryTypes = t.SecondaryTypes ?? [],
-            Compilation = t.Compilation, Date = t.Date ?? "", OriginalDate = t.OriginalDate ?? "", Genres = t.Genres ?? [],
+            Key = t.Key, Kind = t.Kind, Library = library, Name = t.Name ?? "",
+            Artists = Same(t.Artists, album?.Artists) ? [] : t.Artists ?? [],
+            ArtistNames = album is not null && t.ArtistNames == album.ArtistNames ? "" : t.ArtistNames ?? "",
+            PrimaryType = t.PrimaryType ?? "", SecondaryTypes = t.SecondaryTypes ?? [], Compilation = t.Compilation,
+            Date = album is not null && t.Date == album.Date ? "" : t.Date ?? "",
+            OriginalDate = album is not null && t.OriginalDate == album.OriginalDate ? "" : t.OriginalDate ?? "",
+            Genres = Same(t.Genres, album?.Genres) ? [] : t.Genres ?? [],
             Album = t.Album ?? "", Disc = t.Disc, Number = t.Number,
             Copies = (t.Copies ?? []).Select(c => SendMusicCopy(peer, c)).ToList(),
             Image = t.Image ? true : null,
@@ -1099,4 +1123,8 @@ public sealed partial class MsfpEngine
         };
         return Music.ReadTitle(w.ToJson()) is { } m ? (m with { Library = library }).ToJson() : null;
     }
+
+    // Whether a track's list is its album's (both said, and equal).
+    private static bool Same(List<string>? track, List<string>? album) =>
+        album is not null && (track ?? []).SequenceEqual(album, StringComparer.Ordinal);
 }

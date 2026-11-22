@@ -234,7 +234,7 @@ public sealed partial class MsfpEngine
             }
 
             var n = CleanName(JsonMembers.AsString(l["name"]) ?? "", "");
-            libs.Add(new WantedLibrary { Id = id, Name = n.Length > 0 ? n : "?", Kind = CleanKind(JsonMembers.AsString(l["kind"])) });
+            libs.Add(new WantedLibrary { Id = id, Name = n.Length > 0 ? n : "?" });
         }
 
         var limits = ReadLimits(ans["limits"], On(p, Versions.PartMusic));
@@ -285,9 +285,9 @@ public sealed partial class MsfpEngine
     }
 
     // Reads a peer's limits (playback section 5, music section 5.1): null
-    // when they aren't an object of integers in range. ScanBytes is the
-    // floor, 4 MiB, when the peer sent none: what this server lets its media
-    // server read in one scan of that peer.
+    // when they aren't an object of integers in range. ScanBytes is never a
+    // peer's limit: each scan's answer states its own
+    // (RemotePlayback.ScanBytes).
     private static Limits? ReadLimits(JsonNode? raw, bool music)
     {
         if (raw is null || Playback.ReadLimits(raw.DeepClone()) is not { HasStreams: true, HasTranscodes: true } k)
@@ -300,7 +300,6 @@ public sealed partial class MsfpEngine
         {
             Streams = w.Streams, Transcodes = w.Transcodes, BitrateKbps = w.BitrateKbps, Downloads = w.Downloads,
             DownloadsPerDay = w.DownloadsPerDay, DownloadKbps = w.DownloadKbps, ScansPerDay = w.ScansPerDay,
-            // P17b: scanBytes left limits with proposal 17: a scan's answer states it.
         };
         if (music && k.HasAudioStreams && k.HasAudioTranscodes)
         {
@@ -633,7 +632,7 @@ public sealed partial class MsfpEngine
                 Ids = v.Ids.Count > 0 ? new Dictionary<string, string>(v.Ids) : null,
                 Place = v.Place is { } pl ? new Place { Season = pl.Season, Episode = pl.Episode } : null,
                 ExtraType = v.ExtraType.Length > 0 ? v.ExtraType : null,
-                Name = v.Description?.Name is { Length: > 0 } name ? name : null, // P17b: an extra carries no name since proposal 17
+                Name = v.Description?.Name is { Length: > 0 } name ? name : null,
                 Year = v.Description?.Year ?? 0,
                 Image = v.Description?.Image ?? false,
             };
@@ -649,7 +648,6 @@ public sealed partial class MsfpEngine
             return new MusicTitle
             {
                 Key = m.Key, Kind = m.Kind, Libraries = [m.Library], Name = m.Name,
-                // P17b: no sortName since proposal 17.
                 Artists = m.Artists.Count > 0 ? [.. m.Artists] : null,
                 ArtistNames = m.ArtistNames.Length > 0 ? m.ArtistNames : null,
                 PrimaryType = m.PrimaryType.Length > 0 ? m.PrimaryType : null,

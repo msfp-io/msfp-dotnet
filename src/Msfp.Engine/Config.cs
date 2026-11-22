@@ -137,8 +137,10 @@ public sealed record MsfpConfig
     /// <summary>
     /// Re-encodes relayed preview sheets (MSFP video section 7). .NET has no
     /// JPEG codec, so there is no default (Go's is JPEGSheets): without one,
-    /// the previews of peers' playbacks are left out
-    /// (<see cref="RemotePlayback.Trickplay"/> is null).
+    /// this server's copies leave without their previewLayout (it serves no
+    /// sheet it can't re-encode), and peers' sheets aren't fetched
+    /// (<see cref="RemotePlayback.Sheets"/> is 0, PreviewSheetAsync is
+    /// NotSupported).
     /// </summary>
     public ISheetEncoder? SheetEncoder { get; init; }
 
@@ -146,47 +148,15 @@ public sealed record MsfpConfig
     public int MaxBitrateKbps { get; init; }
 
     /// <summary>
-    /// The codecs <see cref="Playback"/> converts to, as ffmpeg names them
-    /// (h264, hevc, av1; aac, ac3, eac3, opus…): a peer's transcode to another
-    /// is refused, 409 delivery-refused (MSFP playback section 2.7). Null, by
-    /// default: the baseline's only, h264 and aac.
+    /// What <see cref="Playback"/> makes (MSFP playback section 2.7): the
+    /// codecs it encodes, registry tokens (h264, hevc, av1; aac, ac3, eac3,
+    /// opus…), the ranges it makes (sdr, keep), and the codecs each HLS
+    /// segment format carries (mp2t, mp4). A peer's transcode to another
+    /// codec or range, and a remux or a copied stream a segment format can't
+    /// carry, are refused, 409 delivery-refused. Null, by default: the
+    /// baseline's only, h264 and aac, sdr, and <see cref="Encoders.DefaultSegments"/>.
     /// </summary>
     public Encoders? Encoders { get; init; }
-
-    /// <summary>
-    /// Chooses the copy a peer's play plays when its versionId names none of
-    /// the title's copies (MSFP playback section 2.6): an index in the copies,
-    /// which are in the host's order of preference, as the catalog sends them
-    /// (an index out of range is taken as 0). Null, by default:
-    /// <see cref="MsfpDefaults.ChooseCopy"/>, the recommended default.
-    /// </summary>
-    public Func<IReadOnlyList<Protocol.Copy>, Protocol.PlayRequest, int>? ChooseCopy { get; init; }
-
-    /// <summary>
-    /// Chooses, of the copy chosen, the audio track and the subtitles shown
-    /// when the request names none of its tracks (or, for the subtitles,
-    /// "off"): a track ID of the copy, "" for the subtitles to show none
-    /// (another ID is taken as the default's). Null, by default:
-    /// <see cref="MsfpDefaults.ChooseTracks"/>, the recommended default.
-    /// </summary>
-    public Func<Protocol.Copy, Protocol.PlayRequest, (string Audio, string Subtitle)>? ChooseTracks { get; init; }
-
-    /// <summary>
-    /// A copy's name as it leaves toward a peer, "" to send none (MSFP video
-    /// section 3.6: what it says is the owner's choice, a matter of its
-    /// privacy; the engine then makes it plain text of at most 64
-    /// characters). Null, by default: <see cref="MsfpDefaults.CopyName"/>,
-    /// only edition or quality labels, never a file name or a release
-    /// group's.
-    /// </summary>
-    public Func<string, string>? CopyName { get; init; }
-
-    /// <summary>
-    /// A track's title as it leaves toward a peer, "" to send none, as
-    /// <see cref="CopyName"/> is a copy's name. Null, by default:
-    /// <see cref="MsfpDefaults.TrackTitle"/>, only descriptions of the track.
-    /// </summary>
-    public Func<string, string>? TrackTitle { get; init; }
 
     /// <summary>
     /// Ends a peer's playback here that lasts longer; 24 hours by default
@@ -209,10 +179,6 @@ public sealed record MsfpConfig
         NewPairing = NewPairing ?? new Limits { Streams = 2, Transcodes = 1 },
         Sealer = Sealer ?? (Store as ISealerProvider)?.Sealer,
         Encoders = Encoders ?? new Encoders(),
-        ChooseCopy = ChooseCopy ?? MsfpDefaults.ChooseCopy,
-        ChooseTracks = ChooseTracks ?? MsfpDefaults.ChooseTracks,
-        CopyName = CopyName ?? MsfpDefaults.CopyName,
-        TrackTitle = TrackTitle ?? MsfpDefaults.TrackTitle,
         LongestPlayback = LongestPlayback > TimeSpan.Zero ? LongestPlayback : TimeSpan.FromHours(24),
         SyncEvery = SyncEvery > TimeSpan.Zero ? SyncEvery : TimeSpan.FromMinutes(30),
         Limits = (Limits ?? new CallLimits()).WithDefaults(),

@@ -58,7 +58,18 @@ public sealed class RelayTests
 
         public void Body(string name, string body) => Body(name, HostKit.Bytes(body));
 
-        public Task<RemotePlayback> PlayAsync() => S.B.Engine.PlayAsync(S.OnB, new PlayRequest { Title = Film });
+        public async Task<RemotePlayback> PlayAsync()
+        {
+            var pb = await S.B.Engine.PlayAsync(S.OnB, new PlayRequest { Title = Film });
+            // The playlists first: the owning server serves only the names
+            // they give (media section 1).
+            foreach (var p in new[] { new MediaPath { Kind = MediaKind.Master }, new MediaPath { Kind = MediaKind.Playlist, Name = "v0.m3u8" } })
+            {
+                await S.B.Engine.FetchAsync(pb.Id, p, "", new MemorySink());
+            }
+
+            return pb;
+        }
     }
 
     private static async Task<(MemorySink? Out, MsfpError? Error)> FetchAsync(Sharing s, string id, MediaPath p, string range = "")
@@ -81,18 +92,14 @@ public sealed class RelayTests
     {
         var h = HostKit.FilmHost();
         var sheet = Sheets.Jpeg20x10;
-        h.EditCopy(Film, 0, c => c with { PreviewLayout = new Msfp.Protocol.PreviewLayout(10, 10, 2, 1, 10_000, 3) }); // P17b
-        h.Info["movie/tmdb/949#0"] = new CopyInfo
-        {
-            Trickplay = new Trickplay { TileWidth = 10, TileHeight = 10, Columns = 2, Rows = 1, IntervalMs = 10_000, TileCount = 3 },
-        };
+        h.EditCopy(Film, 0, c => c with { PreviewLayout = new Msfp.Protocol.PreviewLayout(10, 10, 2, 1, 10_000, 3) });
         h.Files["pictures/s1/0"] = [];
         h.Files["trickplay/0"] = sheet;
         h.Files["trickplay/1"] = sheet;
         using var s = await Sharing.StartAsync(h);
         var x = new Hostile(s);
         var pb = await x.PlayAsync();
-        Assert.Equal(2, pb.Trickplay?.Sheets);
+        Assert.Equal(2, pb.Sheets);
         var master = new MediaPath { Kind = MediaKind.Master };
         var seg = new MediaPath { Kind = MediaKind.Segment, Name = "seg0.m4s" };
         var cases = new (string Name, string Body, MediaPath Path)[]
@@ -201,14 +208,13 @@ public sealed class RelayTests
         });
         var breaks = new Dictionary<string, Action<JsonObject>>
         {
-            ["a stream elsewhere"] = m => m["stream"]!["url"] = "https://evil.example/api/v1/stream/x/master.m3u8",
-            ["a stream of another ticket's form"] = m =>
-                m["stream"]!["url"] = ((string)m["stream"]!["url"]!).Replace("/api/v1/stream/", "/api/v1/stream/%41", StringComparison.Ordinal),
-            ["a file stream named otherwise"] = m => m["stream"]!["protocol"] = "file",
-            ["a subtitle URL elsewhere"] = m => m["subtitleTracks"]![0]!["url"] = "https://evil.example/s",
+            ["a URL for a ticket"] = m => m["ticket"] = "https://evil.example/api/v1/stream/x/",
+            ["a ticket of another form"] = m => m["ticket"] = "%41",
+            ["no ticket"] = m => m.Remove("ticket"),
+            ["a file protocol for the baseline"] = m => m["protocol"] = "file",
             ["a method MSFP lacks"] = m => m["method"] = "stream",
-            ["a member of the wrong type"] = m => m["durationMs"] = "5400000",
-            ["trickplay of the wrong type"] = m => m["trickplay"] = new JsonArray(),
+            ["a member of the wrong type"] = m => m["positionMs"] = "0",
+            ["no versionId"] = m => m.Remove("versionId"),
         };
         foreach (var (name, f) in breaks)
         {
@@ -230,24 +236,17 @@ public sealed class RelayTests
 
         Edit(m =>
         {
-            m["audioTracks"] = JsonNode.Parse("[{\"id\":\"a0\",\"language\":\"e\\u202en\"},{\"id\":\"../a1\"},{\"id\":\"a2\",\"channels\":\"2\"},{\"id\":\"a3\",\"role\":\"evil\"}]");
+            m["subtitles"] = JsonNode.Parse("[{\"id\":\"s0\",\"form\":\"picture\"},{\"id\":\"s1\",\"form\":\"picture\"}," +
+                "{\"id\":\"s9\",\"form\":\"text\"},{\"id\":\"s1\",\"form\":\"text\"}]");
             m["versions"] = JsonNode.Parse("[{\"id\":\"../x\",\"name\":\"x\"},{\"id\":\"v1\",\"name\":\"<b>HD</b>\"}]");
             m["durationMs"] = 9_000_000_000;
-            m["title"] = JsonNode.Parse("{\"name\":\"whatever\"}");
-            var sheetUrl = ((string)m["stream"]!["url"]!)[..^"master.m3u8".Length] + "trickplay/0";
-            m["trickplay"] = new JsonObject
-            {
-                ["tileWidth"] = 5000, ["tileHeight"] = 10, ["columns"] = 1, ["rows"] = 1, ["intervalMs"] = 1000, ["tileCount"] = 1,
-                ["sheets"] = new JsonArray(sheetUrl),
-            };
+            m["fontCount"] = 65;
+            m["stream"] = new JsonObject { ["url"] = "https://evil.example/x" };
+            m["trickplay"] = new JsonObject { ["tileWidth"] = 5000 };
         });
-        var pb = await x.PlayAsync();
-        Assert.Equal(3, pb.AudioTracks.Count);
-        Assert.True(string.IsNullOrEmpty(pb.AudioTracks[0].Language));
-        Assert.Equal(0, pb.AudioTracks[1].Channels);
-        Assert.Equal("evil", pb.AudioTracks[2].Role);
-        Assert.Equal(0, pb.DurationMs);
-        Assert.Null(pb.Trickplay);
+        var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film });
+        Assert.Equal("s1", Assert.Single(pb.Subtitles).Id);
+        Assert.Equal((0, 5_400_000L, 0), (pb.Fonts, pb.DurationMs, pb.Sheets));
     }
 
     // A case's input: its hex when it has one, else its text.

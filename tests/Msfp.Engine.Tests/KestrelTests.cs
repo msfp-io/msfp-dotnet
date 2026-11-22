@@ -185,7 +185,7 @@ public sealed class KestrelTests
     public async Task ShareAndPlayOverTls()
     {
         var h = HostKit.FilmHost();
-        h.Libs = [new Library { Id = "films", Name = "Films", Kind = "movies" }];
+        h.Libs = [new Library { Id = "films", Name = "Films" }];
         await using var a = await StartAsync("Server A", h);
         await using var b = await StartAsync("Server B");
         await Task.Delay(1100);
@@ -203,6 +203,9 @@ public sealed class KestrelTests
         var master = new MemorySink();
         await b.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.Master }, "", master);
         Assert.Equal(HostKit.Master, master.Text);
+        // The media playlist first: the owning server serves only the names
+        // its playlists gave (media section 1).
+        await b.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.Playlist, Name = "v0.m3u8" }, "", new MemorySink());
         var part = new MemorySink();
         await b.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.Segment, Name = "seg0.m4s" }, "bytes=2-5", part);
         Assert.Equal((206, "2345", "bytes 2-5/20"), (part.Status, part.Text, part.ContentRange));
@@ -221,7 +224,7 @@ public sealed class KestrelTests
         }
 
         var held = new MemorySink();
-        var fetch = b.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.Segment, Name = "seg1.m4s" }, "", held);
+        var fetch = b.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.Segment, Name = "seg0.m4s" }, "", held);
         while (held.Body.Length < 40)
         {
             await Task.Delay(10);

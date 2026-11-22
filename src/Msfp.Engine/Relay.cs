@@ -259,7 +259,8 @@ public sealed partial class MsfpEngine
             case MediaKind.Font:
                 return path.Font >= 0 && path.Font < v.Fonts && path.Entry == 0 ? "fonts/" + path.Font.ToString(CultureInfo.InvariantCulture) : null;
             case MediaKind.Sheet:
-                return v.Trickplay is { } tp && path.Sheet >= 0 && path.Sheet < tp.Sheets && path.Entry == 0 ? "trickplay/" + path.Sheet.ToString(CultureInfo.InvariantCulture) : null; // P17b
+                return rm.Layout is not null && path.Sheet >= 0 && path.Sheet < v.Sheets && path.Entry == 0
+                    ? "trickplay/" + path.Sheet.ToString(CultureInfo.InvariantCulture) : null;
         }
 
         return null;
@@ -441,7 +442,8 @@ public sealed partial class MsfpEngine
         }
 
         (output as IETagSink)?.SetETag(ent.Etag);
-        output.Start(status, Playback.RelayedMediaType(headers.GetValues("Content-Type").FirstOrDefault()), length, contentRange);
+        // The copy's own mediaType, from the catalog (media section 3).
+        output.Start(status, Media.RelayFileType(ent.MediaType), length, contentRange);
         await using var body = await res.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         try
         {
@@ -563,7 +565,7 @@ public sealed partial class MsfpEngine
                 (limit, rebuild) = SmallRules(path);
                 break;
             case MediaKind.Sheet:
-                limit = PreviewLayout.MaxSheetBytes; // P17b
+                limit = PreviewLayout.MaxSheetBytes;
                 break;
         }
 
@@ -613,7 +615,7 @@ public sealed partial class MsfpEngine
 
                 break;
             case MediaKind.Sheet:
-                var tp = rm.View.Trickplay!;
+                var tp = rm.Layout!;
                 int w = tp.Columns * tp.TileWidth, h = tp.Rows * tp.TileHeight;
                 if (!Jpeg.Fits(body, w, h) || _cfg.SheetEncoder is not { } encoder)
                 {

@@ -1,28 +1,70 @@
+using System.Globalization;
 using Microsoft.Extensions.Logging;
 using Msfp.Protocol;
 
 namespace Msfp;
 
 /// <summary>
-/// A peer's copy's seek-bar previews, fetched before a first play: their
-/// layout, and each sheet, checked and re-encoded as a JPEG (sheet n at
-/// index n).
+/// The sheets fetched of peers' copies, re-encoded, keyed by peer, title,
+/// copy, etag, layout and sheet (MSFP video section 5.5: caching recommended,
+/// keyed by the copy's etag and its previewLayout), within 64 MiB, the first
+/// kept dropped first; and the previews tickets of copies, each used until
+/// it expires. Locked on itself.
 /// </summary>
-/// <param name="Trickplay">The layout.</param>
-/// <param name="Sheets">The sheets, re-encoded.</param>
-public sealed record PreviewSheets(Trickplay Trickplay, IReadOnlyList<byte[]> Sheets);
+internal sealed class SheetCache
+{
+    public const int MostBytes = 64 << 20;
+
+    private readonly Dictionary<string, byte[]> _sheets = new(StringComparer.Ordinal);
+    private readonly Queue<string> _order = new();
+    private int _bytes;
+
+    public Dictionary<string, (string Ticket, string Etag, DateTimeOffset Expires)> Tickets { get; } = new(StringComparer.Ordinal);
+
+    public byte[]? Get(string key)
+    {
+        lock (this)
+        {
+            return _sheets.GetValueOrDefault(key);
+        }
+    }
+
+    public void Put(string key, byte[] b)
+    {
+        lock (this)
+        {
+            if (_sheets.ContainsKey(key) || b.Length > MostBytes)
+            {
+                return;
+            }
+
+            while (_bytes + b.Length > MostBytes && _order.TryDequeue(out var old))
+            {
+                _bytes -= _sheets[old].Length;
+                _sheets.Remove(old);
+            }
+
+            _sheets[key] = b;
+            _order.Enqueue(key);
+            _bytes += b.Length;
+        }
+    }
+}
 
 // The previews call (MSFP video section 5.6) and the lyrics call (music
-// section 6), both ways: a copy's seek-bar previews before a first play,
-// under a short ticket of their own that is no playback; a track's lyrics,
-// with no ticket at all.
+// section 6), both ways: a ticket for a copy's seek-bar previews outside a
+// playback, which is no playback; a track's lyrics, with no ticket at all.
 public sealed partial class MsfpEngine
 {
     internal const string CallPreviews = "previews";
     internal const string CallLyrics = "lyrics";
 
-    // Answers a paired peer's previews call: the copy's trickplay object, its
-    // sheets under a ticket that opens them only, for 10 minutes.
+    private readonly SheetCache _sheets = new();
+
+    // Answers a paired peer's previews call (video section 5.6): a ticket that
+    // opens the copy's sheets only, for 10 minutes, and the copy's etag as
+    // the host holds it now; 404 for a copy without a previewLayout in the
+    // catalog. The layout is the catalog's: the answer carries no URL.
     private async Task<Answer> PreviewsAsync(CallRequest req, CancellationToken ct)
     {
         var p = req.Peer;
@@ -62,24 +104,7 @@ public sealed partial class MsfpEngine
             return Answer.Refuse(ProblemType.Internal);
         }
 
-        if (c is not { Previews: true })
-        {
-            return Answer.Refuse(ProblemType.NotFound);
-        }
-
-        CopyInfo info;
-        try
-        {
-            info = await _cfg.Playback.DescribeAsync(c.Handle, ct).ConfigureAwait(false);
-        }
-        catch (Exception e) when (e is not OperationCanceledException)
-        {
-            return HostRefusal(e, "describe");
-        }
-
-        // Sheets are re-encoded before they leave: without a SheetEncoder,
-        // there are none to give.
-        if (TrickplayOf(info.Trickplay) is not { } t || _cfg.SheetEncoder is null)
+        if (c?.Copy.PreviewLayout is not { } t)
         {
             return Answer.Refuse(ProblemType.NotFound);
         }
@@ -87,8 +112,7 @@ public sealed partial class MsfpEngine
         var ticket = Base64UrlText.Encode(RandomBytes(32));
         AddImageTicket(ticket, new ImageTicket(TicketPreviews, p.Id, @in.Title, Now() + ImageTicketTime, c.Handle, t.Sheets,
             t.Columns * t.TileWidth, t.Rows * t.TileHeight));
-        var streamBase = StreamBase(req) + ticket + "/";
-        return Answer.Ok(JsonOut.Object(o => o.Object("trickplay", w => WriteSheets(w, t, streamBase))));
+        return Answer.Ok(Video.WritePreviewsAnswer(new PreviewsAnswer(ticket, c.Copy.ETag)));
     }
 
     // The copy of that ID of a title the peer may play here, as the catalog
@@ -99,8 +123,9 @@ public sealed partial class MsfpEngine
         return copies.FirstOrDefault(c => c.Id == id);
     }
 
-    // Serves a sheet under a previews ticket: only its copy's sheets, while
-    // the title is still sent to the peer (media section 4).
+    // Serves a sheet under a previews ticket: only its copy's sheets, below
+    // the sheet count of its layout, while the title is still sent to the
+    // peer with that layout (media section 4).
     private async Task<StreamOutcome> ServePreviewSheetAsync(MsfpRequest request, ImageTicket it, string name, IResponseSink output,
         CancellationToken ct)
     {
@@ -119,7 +144,7 @@ public sealed partial class MsfpEngine
             }
 
             var (copies, _) = await OfferedCopiesAsync(p, it.Key, ct).ConfigureAwait(false);
-            if (!copies.Any(c => c.Handle == it.Handle && c.Previews))
+            if (!copies.Any(c => c.Handle == it.Handle && c.Copy.PreviewLayout?.Sheets == it.Sheets))
             {
                 return StreamOutcome.NotFound;
             }
@@ -215,7 +240,8 @@ public sealed partial class MsfpEngine
         return t;
     }
 
-    // The lock of the image and previews calls made, by peer.
+    // The lock of the image calls made, by peer, and of the previews calls,
+    // by copy.
     private SemaphoreSlim ImageLock(string peer)
     {
         lock (_imageLocks)
@@ -231,27 +257,35 @@ public sealed partial class MsfpEngine
     }
 
     /// <summary>
-    /// Asks a peer for the seek-bar previews of one of its copies kept here
-    /// whose description says it has some (MSFP video section 5.6), and
-    /// fetches every sheet at once under the answer's ticket, each checked
-    /// and re-encoded, so that a viewer sees them from the first play. The
-    /// host keeps them while the copy's etag holds, and asks again only when
-    /// it changes. One call at a time per peer.
+    /// Fetches sheet <paramref name="n"/> of the seek-bar previews of a peer's
+    /// copy kept here with a previewLayout (MSFP video section 5.5), checked
+    /// against that layout and re-encoded as a JPEG. Previews are fetched on
+    /// demand, for a copy someone opened (its page, its chapters, a playback,
+    /// a scrub), never for a whole library nor in bulk for copies nobody
+    /// opened: call it only so (fetching a copy's sheets together hides where
+    /// the viewer is). During a live playback of the copy the playback's
+    /// ticket opens its sheets; outside one, a previews call is made once per
+    /// copy and its ticket used for all viewers until it expires, at most one
+    /// call per copy at a time. Sheets fetched are kept (in memory, within 64
+    /// MiB) while the copy's etag and layout hold.
     /// </summary>
     /// <param name="peer">The peer's ID.</param>
     /// <param name="key">The title's key.</param>
     /// <param name="versionId">The copy's ID.</param>
+    /// <param name="n">The sheet, from 0 to its layout's sheet count − 1.</param>
     /// <param name="ct">Cancels.</param>
     /// <exception cref="MsfpException">
-    /// <see cref="MsfpError.NotFound"/> (no such copy kept, none with
-    /// previews, or the peer's refusal), <see cref="MsfpError.NotPaired"/>,
+    /// <see cref="MsfpError.NotFound"/> (no such copy kept, no layout, a sheet
+    /// past its count, or the peer's refusal), <see cref="MsfpError.NotPaired"/>,
     /// <see cref="MsfpError.Uncallable"/>, <see cref="MsfpError.Suspended"/>,
     /// <see cref="MsfpError.NotSupported"/> (a part off, or no
-    /// <see cref="MsfpConfig.SheetEncoder"/>), <see cref="MsfpError.Unreachable"/>
-    /// (an answer or a sheet refused), <see cref="MsfpError.RateLimited"/>,
-    /// <see cref="MsfpError.BackingOff"/>, <see cref="MsfpError.ServerBusy"/>.
+    /// <see cref="MsfpConfig.SheetEncoder"/>), <see cref="MsfpError.CopyChanged"/>
+    /// (the previews answer's etag isn't the catalog's: the title is read
+    /// again), <see cref="MsfpError.Unreachable"/> (an answer or a sheet
+    /// refused), <see cref="MsfpError.RateLimited"/>, <see cref="MsfpError.BackingOff"/>,
+    /// <see cref="MsfpError.ServerBusy"/>.
     /// </exception>
-    public async Task<PreviewSheets> PreviewsAsync(string peer, string key, string versionId, CancellationToken ct = default)
+    public async Task<byte[]> PreviewSheetAsync(string peer, string key, string versionId, int n, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(versionId);
@@ -262,17 +296,76 @@ public sealed partial class MsfpEngine
             throw new MsfpException(MsfpError.NotSupported);
         }
 
-        // P17b: the layout is the catalog copy's previewLayout since proposal 17.
-        if (await KeptTitleAsync(peer, key, ct).ConfigureAwait(false) is not VideoTitle v ||
-            (v.Copies ?? []).FirstOrDefault(c => c.Id == versionId)?.PreviewLayout is not { } tp)
+        if (await CatalogCopyAsync(peer, key, versionId, ct).ConfigureAwait(false) is not { PreviewLayout: { } l } c || n < 0 || n >= l.Sheets)
         {
             throw new MsfpException(MsfpError.NotFound);
         }
 
-        var gate = ImageLock(peer);
+        var cacheKey = string.Join('\n', peer, key, versionId, c.ETag, l.ToString(), n.ToString(CultureInfo.InvariantCulture));
+        if (_sheets.Get(cacheKey) is { } kept)
+        {
+            return kept;
+        }
+
+        string url;
+        if (PlayingCopy(peer, key, versionId) is { } rm)
+        {
+            url = rm.Base + "trickplay/" + n.ToString(CultureInfo.InvariantCulture);
+        }
+        else
+        {
+            var ticket = await PreviewsTicketAsync(p, key, versionId, c.ETag, ct).ConfigureAwait(false);
+            url = MediaUrls.Sheet(PeerStreamRoot(p), ticket, n);
+        }
+
+        var sheet = await FetchWholeAsync(p, url, PreviewLayout.MaxSheetBytes, ct).ConfigureAwait(false);
+        int w = l.Columns * l.TileWidth, h = l.Rows * l.TileHeight;
+        if (!Jpeg.Fits(sheet, w, h))
+        {
+            throw new MsfpException(MsfpError.Unreachable, "a sheet that isn't a JPEG within its layout");
+        }
+
+        byte[] again;
+        try
+        {
+            again = await encoder.ReencodeAsync(sheet, w, h, ct).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            throw new MsfpException(MsfpError.Unreachable, e.Message, e);
+        }
+
+        _sheets.Put(cacheKey, again);
+        return again;
+    }
+
+    // A live playback on a peer of that copy whose ticket opens its sheets;
+    // null for none.
+    private RemotePlay? PlayingCopy(string peer, string key, string versionId)
+    {
+        lock (_remotes)
+        {
+            return _remotes.Values.FirstOrDefault(rm => rm.Peer == peer && rm.View.Title == key && rm.View.VersionId == versionId && rm.Layout is not null);
+        }
+    }
+
+    // A previews ticket of a peer's copy: the one kept while it works, else a
+    // new previews call's, one call per copy at a time (video section 5.6).
+    private async Task<string> PreviewsTicketAsync(PeerRecord p, string key, string versionId, string etag, CancellationToken ct)
+    {
+        var id = p.Id + "\n" + key + "\n" + versionId;
+        var gate = ImageLock("previews\n" + id);
         await gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            lock (_sheets)
+            {
+                if (_sheets.Tickets.TryGetValue(id, out var t) && Now() < t.Expires && t.Etag == etag)
+                {
+                    return t.Ticket;
+                }
+            }
+
             var r = await CallAsync(p, CallPreviews, JsonOut.Object(o => o.String("title", key).String("versionId", versionId)), ct)
                 .ConfigureAwait(false);
             if (r.Status != 200)
@@ -280,42 +373,39 @@ public sealed partial class MsfpEngine
                 throw Refused(p, r);
             }
 
-            PreviewsAnswer pv;
+            PreviewsAnswer a;
             try
             {
-                pv = Video.ReadPreviewsAnswer(r.Body); // P17b: {"ticket", "etag"} since proposal 17
+                a = Video.ReadPreviewsAnswer(r.Body);
             }
             catch (ProtocolException e)
             {
                 throw new MsfpException(MsfpError.Unreachable, e.Message, e);
             }
 
-            var root = PeerStreamRoot(p);
-            int w = tp.Columns * tp.TileWidth, h = tp.Rows * tp.TileHeight;
-            var sheets = new List<byte[]>();
-            foreach (var u in Enumerable.Range(0, tp.Sheets).Select(n => MediaUrls.Sheet(root, pv.Ticket, n)))
+            if (a.ETag != etag)
             {
-                var sheet = await FetchWholeAsync(p, u, PreviewLayout.MaxSheetBytes, ct).ConfigureAwait(false);
-                if (!Jpeg.Fits(sheet, w, h))
-                {
-                    throw new MsfpException(MsfpError.Unreachable, "a sheet that isn't a JPEG within its layout");
-                }
-
-                try
-                {
-                    sheets.Add(await encoder.ReencodeAsync(sheet, w, h, ct).ConfigureAwait(false));
-                }
-                catch (Exception e) when (e is not OperationCanceledException)
-                {
-                    throw new MsfpException(MsfpError.Unreachable, e.Message, e);
-                }
+                // The copy changed: the title is read again before any sheet.
+                ReadSoon(p.Id);
+                throw new MsfpException(MsfpError.CopyChanged);
             }
 
-            return new PreviewSheets(new Trickplay
+            lock (_sheets)
             {
-                TileWidth = tp.TileWidth, TileHeight = tp.TileHeight, Columns = tp.Columns, Rows = tp.Rows, IntervalMs = tp.IntervalMs,
-                TileCount = tp.TileCount, Sheets = tp.Sheets,
-            }, sheets);
+                var now = Now();
+                foreach (var (k, old) in _sheets.Tickets.ToList())
+                {
+                    if (now >= old.Expires)
+                    {
+                        _sheets.Tickets.Remove(k);
+                    }
+                }
+
+                // A little short of the ticket's 10 minutes, for the time a fetch takes.
+                _sheets.Tickets[id] = (a.Ticket, a.ETag, now + ImageTicketTime - TimeSpan.FromSeconds(30));
+            }
+
+            return a.Ticket;
         }
         finally
         {

@@ -20,8 +20,7 @@ public sealed class DeliveryTests
     private static string StreamOf(Sharing s, int n = -1)
     {
         var plays = s.Exchanges("play");
-        var url = (string)JsonNode.Parse(plays[n < 0 ? plays.Count - 1 : n].ResponseBody)!["stream"]!["url"]!;
-        return url[s.A.Address.Length..];
+        return HostKit.StreamPath(plays[n < 0 ? plays.Count - 1 : n].ResponseBody);
     }
 
     private static async Task<MemorySink> FetchAsync(Sharing s, string id, MediaPath p, string range = "")
@@ -68,17 +67,25 @@ public sealed class DeliveryTests
         // Without delivery, the baseline; a transcode's targets left out are
         // the baseline's when the host hears them.
         await Play(new PlayRequest { Title = Film, Delivery = Playback.DeliveryTranscode, Transcode = new TranscodeTargets { MaxHeight = 720 } });
-        Assert.Equal(new TranscodeTargets { VideoCodec = "h264", MaxHeight = 720, AudioCodec = "aac", AudioChannels = 2 }, h.Starts()[^1].Transcode);
-        // Remux needs a container; the host is told it.
+        Assert.Equal(new TranscodeTargets { VideoCodec = "h264", MaxHeight = 720, AudioCodec = "aac", AudioChannels = 2, Range = "sdr" },
+            h.Starts()[^1].Transcode);
+        // Remux needs a media type; the host is told it.
         Assert.Equal(MsfpError.InvalidRequest, await ErrorOf(() => Play(new PlayRequest { Title = Film, Delivery = Playback.DeliveryRemux })));
-        pb = await Play(new PlayRequest { Title = Film, Delivery = Playback.DeliveryRemux, Container = "mp4" });
-        Assert.Equal(("remux", "mp4"), (pb.Method, h.Starts()[^1].Container));
+        pb = await Play(new PlayRequest { Title = Film, Delivery = Playback.DeliveryRemux, MediaType = "video/mp4" });
+        Assert.Equal(("remux", "video/mp4", "mp4"), (pb.Method, h.Starts()[^1].MediaType, h.Starts()[^1].Served.Segments));
+        Assert.Equal(MsfpError.DeliveryRefused, await ErrorOf(() => Play(new PlayRequest
+        {
+            Title = Film, Delivery = Playback.DeliveryRemux, MediaType = "video/matroska",
+        })));
+        // Audio copied, video converted: a transcode the host hears so.
+        await Play(new PlayRequest { Title = Film, Delivery = Playback.DeliveryTranscode, Transcode = new TranscodeTargets { AudioCodec = "copy" } });
+        Assert.Equal(("copy", 0), (h.Starts()[^1].Served.Audio, h.Starts()[^1].Transcode!.AudioChannels));
         // A subtitle burned in, of the copy; another refused by MSFP itself.
-        pb = await Play(new PlayRequest
+        await Play(new PlayRequest
         {
             Title = Film, Delivery = Playback.DeliveryTranscode, Transcode = new TranscodeTargets { BurnSubtitle = "s0", MaxHeight = 1000 },
         });
-        Assert.Equal(("s0", "s0", 720), (pb.BurnedTrack, pb.SubtitleTrack, h.Starts()[^1].Transcode!.MaxHeight));
+        Assert.Equal(("s0", 720), (h.Starts()[^1].Transcode!.BurnSubtitle, h.Starts()[^1].Transcode!.MaxHeight));
         var before = h.Starts().Count;
         Assert.Equal(MsfpError.DeliveryRefused, await ErrorOf(() => Play(new PlayRequest
         {
@@ -97,14 +104,14 @@ public sealed class DeliveryTests
         }
 
         // A file above the pairing's bitrate cap.
-        h.EditCopy(Film, 0, c => c with { Size = 50_000L * c.DurationMs / 8 }); // P17b: the overall rate, size × 8 / durationMs
+        h.EditCopy(Film, 0, c => c with { Size = 50_000L * c.DurationMs / 8 }); // 50,000 kbit/s overall
         await s.A.Engine.SetLimitsAsync(s.OnA, new Limits { Streams = 2, Transcodes = 1, BitrateKbps = 10_000 });
         Assert.Equal(MsfpError.DeliveryRefused, await ErrorOf(() => Play(new PlayRequest { Title = Film, Delivery = Playback.DeliveryFile })));
         Assert.Equal(before, h.Starts().Count);
         // Combinations of purpose and delivery MSFP refuses, from the peer.
         foreach (var body in new[]
         {
-            "{\"title\":\"movie/tmdb/949\",\"purpose\":\"scan\",\"delivery\":\"remux\",\"container\":\"mp4\"}",
+            "{\"title\":\"movie/tmdb/949\",\"purpose\":\"scan\",\"delivery\":\"remux\",\"mediaType\":\"video/mp4\"}",
             "{\"title\":\"movie/tmdb/949\",\"purpose\":\"download\",\"delivery\":\"transcode\"}", "{\"title\":\"movie/tmdb/949\",\"delivery\":\"HLS\"}",
             "{\"title\":\"movie/tmdb/949\",\"transcode\":{\"maxHeight\":720}}",
             "{\"title\":\"movie/tmdb/949\",\"delivery\":\"transcode\",\"transcode\":{\"maxHeight\":719}}",
@@ -120,9 +127,8 @@ public sealed class DeliveryTests
         foreach (var body in new[]
         {
             "{\"title\":\"movie/tmdb/949\",\"delivery\":\"hls\"}",
-            "{\"title\":\"movie/tmdb/949\",\"delivery\":\"remux\",\"container\":\"matroska\"}",
+            "{\"title\":\"movie/tmdb/949\",\"delivery\":\"remux\",\"mediaType\":\"video/matroska\"}",
             "{\"title\":\"movie/tmdb/949\",\"delivery\":\"transcode\",\"transcode\":{\"videoCodec\":\"vvc\"}}",
-            "{\"title\":\"movie/tmdb/949\",\"delivery\":\"transcode\",\"transcode\":{\"audioCodec\":\"opus\"}}",
         })
         {
             Assert.True(await CallAsync(s, "play", body) == 409, body);
@@ -237,7 +243,7 @@ public sealed class DeliveryTests
         });
         Assert.Equal(MsfpError.InvalidRequest, await ErrorOf(() => s.B.Engine.PlayAsync(s.OnB, new PlayRequest
         {
-            Title = Film, Purpose = Playback.PurposeDownload, Delivery = Playback.DeliveryRemux, Container = "mp4",
+            Title = Film, Purpose = Playback.PurposeDownload, Delivery = Playback.DeliveryRemux, MediaType = "video/mp4",
         })));
         var first = await Download();
         Assert.Equal((Playback.PurposeDownload, 0L), (h.Starts()[^1].Purpose, h.Starts()[^1].StartMs));
@@ -430,14 +436,15 @@ public sealed class DeliveryTests
         }
 
         h.Files["file"] = big;
-        h.EditCopy(Film, 0, c => c with { Size = big.Length, PreviewLayout = new PreviewLayout(10, 10, 2, 1, 10_000, 3) }); // P17b
-        h.Info["movie/tmdb/949#0"] = new CopyInfo { Trickplay = new Trickplay { TileWidth = 10, TileHeight = 10, Columns = 2, Rows = 1, IntervalMs = 10_000, TileCount = 3 } };
+        h.EditCopy(Film, 0, c => c with { Size = big.Length, PreviewLayout = new PreviewLayout(10, 10, 2, 1, 10_000, 3) });
         using var s = await Sharing.StartAsync(h, c => c with { NewPairing = new Limits
         {
             Streams = 1, Transcodes = 1, ScansPerDay = 2, ScanBytes = Playback.ScanBytesRecommended,
         } }, clock: clock);
         var scan = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film, Purpose = Playback.PurposeScan });
-        Assert.Equal((Playback.DeliveryFile, "file", 0, true), (scan.Delivery, scan.Protocol, scan.SubtitleTracks.Count, scan.Trickplay is null));
+        Assert.Equal((Playback.DeliveryFile, "file", 0, 0, (long)Playback.ScanBytesRecommended), (scan.Delivery, scan.Protocol, scan.Subtitles.Count,
+            scan.Sheets, scan.ScanBytes));
+        Assert.DoesNotContain("scanBytes", s.Exchanges("libraries")[0].ResponseBody, StringComparison.Ordinal);
         Assert.Contains("\"purpose\":\"scan\",\"delivery\":\"file\"", s.Exchanges("play")[0].RequestBody, StringComparison.Ordinal);
         // A scan counts against no stream.
         await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film });
@@ -472,7 +479,7 @@ public sealed class DeliveryTests
     [Fact]
     public async Task MusicQueue()
     {
-        var h = new FakeHost { Libs = [new Library { Id = "music", Name = "Music", Kind = "music" }], Protocol = "file", Queue = true };
+        var h = new FakeHost { Libs = [new Library { Id = "music", Name = "Music" }], Protocol = "file", Queue = true };
         static string Key(string n) => "track/mb/0c000000-0000-4000-8000-00000000000" + n;
         foreach (var n in new[] { "3", "5", "6" })
         {
@@ -483,15 +490,20 @@ public sealed class DeliveryTests
         h.Files["queue/0/file"] = HostKit.Bytes("queue entry zero....");
         h.Files["queue/2/file"] = HostKit.Bytes("queue entry two....!");
         using var s = await Sharing.StartAsync(h, c => c with { NewPairing = new Limits { Streams = 1, Transcodes = 1 } });
-        var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Key("3"), Delivery = Playback.DeliveryFile, Queue = [Key("5"), Key("7"), Key("6")] });
+        var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest
+        {
+            Title = Key("3"), Delivery = Playback.DeliveryFile,
+            Queue = [new() { Title = Key("5") }, new() { Title = Key("7") }, new() { Title = Key("6"), Delivery = Playback.DeliveryRemux, MediaType = "audio/mp4" }],
+        });
         Assert.Equal(2, pb.Queue.Count);
         Assert.Equal((0, Key("5"), 2, 200_000L), (pb.Queue[0].Place, pb.Queue[0].Title, pb.Queue[1].Place, pb.Queue[1].DurationMs));
+        Assert.Equal(("file", "audio/flac", "hls", "remux"), (pb.Queue[0].Protocol, pb.Queue[0].MimeType, pb.Queue[1].Protocol, pb.Queue[1].Method));
         var got = h.Starts()[0].Queue;
-        Assert.Equal((2, "c5", 2), (got.Count, got[0].Copy, got[1].Place));
+        Assert.Equal((2, "c5", 2, Playback.DeliveryRemux, "audio/mp4"), (got.Count, got[0].Copy, got[1].Place, got[1].Delivery, got[1].MediaType));
         var body = s.Exchanges("play")[0].ResponseBody;
-        Assert.Contains("/queue/0/file", body, StringComparison.Ordinal);
-        Assert.Contains("/queue/2/file", body, StringComparison.Ordinal);
-        foreach (var (entry, want) in new[] { (0, "0123456789abcdefghij"), (1, "queue entry zero...."), (3, "queue entry two....!") })
+        Assert.DoesNotContain("/queue/", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("url", body, StringComparison.Ordinal);
+        foreach (var (entry, want) in new[] { (0, "0123456789abcdefghij"), (1, "queue entry zero....") })
         {
             Assert.Equal(want, (await FetchAsync(s, pb.Id, new MediaPath { Kind = MediaKind.File, Entry = entry })).Text);
         }
@@ -508,39 +520,48 @@ public sealed class DeliveryTests
         var last = h.Reports()[^1];
         Assert.Equal((Key("6"), 5000L), (last.Title, last.PositionMs));
         // A queue MSFP refuses.
-        string[] tooLong = [Key("5"), Key("6"), Key("7"), Key("8"), Key("9"), "track/mb/0c000000-0000-4000-8000-000000000010"];
+        QueuedTrack[] tooLong = [.. new[] { "5", "6", "7", "8", "9", "a" }.Select(n => new QueuedTrack { Title = Key(n) })];
         Assert.Equal(MsfpError.InvalidRequest, await ErrorOf(() => s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Key("3"), Queue = tooLong, Replaces = pb.Id })));
-        Assert.Equal(400, await CallAsync(s, "play", "{\"title\":\"" + Key("3") + "\",\"queue\":[\"" + Key("3") + "\"]}"));
+        Assert.Equal(400, await CallAsync(s, "play", "{\"title\":\"" + Key("3") + "\",\"queue\":[{\"title\":\"" + Key("3") + "\"}]}"));
     }
 
-    // previews before a first play, under a ticket of their own that is no
-    // playback; lyrics with none (video section 5.6, music section 6).
+    // previews on demand, under a ticket of their own that is no playback, or
+    // under a playback's; lyrics with none (video sections 5.5 and 5.6, music
+    // section 6).
     [Fact]
     public async Task PreviewsAndLyrics()
     {
         var h = HostKit.FilmHost();
-        h.Libs = [new Library { Id = "films", Name = "Films", Kind = "movies" }, new Library { Id = "music", Name = "Music", Kind = "music" }];
-        h.EditCopy(Film, 0, c => c with { PreviewLayout = new PreviewLayout(10, 10, 2, 1, 10_000, 3) }); // P17b
-        h.Info["movie/tmdb/949#0"] = new CopyInfo { Trickplay = new Trickplay { TileWidth = 10, TileHeight = 10, Columns = 2, Rows = 1, IntervalMs = 10_000, TileCount = 3 } };
+        h.Libs = [new Library { Id = "films", Name = "Films" }, new Library { Id = "music", Name = "Music" }];
+        var layout = new PreviewLayout(10, 10, 2, 1, 10_000, 3);
+        h.EditCopy(Film, 0, c => c with { PreviewLayout = layout });
         h.Files["trickplay/0"] = Sheets.Jpeg20x10;
         h.Files["trickplay/1"] = Sheets.Jpeg20x10;
         const string Track = "track/mb/0c000000-0000-4000-8000-000000000003";
         h.Titles[Track] = HostKit.MusicTrack(Track, "t", "synced");
-        h.Lyrics["t"] = [new LyricsSet("en", "main", [new LyricsLine(0, "Hello\u0007"), new LyricsLine(1500, "")])]; // P17b
+        h.Lyrics["t"] = [new LyricsSet("en", "main", [new LyricsLine(0, "Hello\u0007"), new LyricsLine(1500, "")])];
         using var s = await Sharing.StartAsync(h);
         var titles = await s.PeerTitlesAsync();
         var copies = ((VideoTitle)titles[Film]).Copies!;
-        Assert.True(copies[0].PreviewLayout is not null && copies[1].PreviewLayout is null); // P17b
-        var pv = await s.B.Engine.PreviewsAsync(s.OnB, Film, copies[0].Id);
-        Assert.Equal((2, 2, 3), (pv.Trickplay.Sheets, pv.Sheets.Count, pv.Trickplay.TileCount));
+        Assert.True(copies[0].PreviewLayout == layout && copies[1].PreviewLayout is null);
+        Assert.Empty(s.Exchanges("previews")); // none fetched before anyone opened the copy
+        for (var n = 0; n < 2; n++)
+        {
+            Assert.NotEmpty(await s.B.Engine.PreviewSheetAsync(s.OnB, Film, copies[0].Id, n));
+        }
+
+        Assert.Single(s.Exchanges("previews")); // one previews call for the copy
+        Assert.NotEmpty(await s.B.Engine.PreviewSheetAsync(s.OnB, Film, copies[0].Id, 1)); // kept
         Assert.Empty(s.A.Engine.Playbacks());
         Assert.Empty(h.Starts());
-        Assert.Equal(MsfpError.NotFound, await ErrorOf(() => s.B.Engine.PreviewsAsync(s.OnB, Film, copies[1].Id)));
-        // The ticket opens the sheets only, of that copy.
-        var sheets = JsonNode.Parse(s.Exchanges("previews")[0].ResponseBody)!["trickplay"]!["sheets"]!.AsArray();
-        Assert.Equal(2, sheets.Count);
-        var url = (string)sheets[0]!;
-        var streamBase = url[s.A.Address.Length..^"trickplay/0".Length];
+        Assert.Equal(MsfpError.NotFound, await ErrorOf(() => s.B.Engine.PreviewSheetAsync(s.OnB, Film, copies[0].Id, 2)));
+        Assert.Equal(MsfpError.NotFound, await ErrorOf(() => s.B.Engine.PreviewSheetAsync(s.OnB, Film, copies[1].Id, 0)));
+        // The ticket opens the sheets only, of that copy; the answer has no URL.
+        var answer = s.Exchanges("previews")[0].ResponseBody;
+        var pv = Video.ReadPreviewsAnswer(HostKit.Bytes(answer));
+        Assert.Equal("e0", pv.ETag);
+        Assert.DoesNotContain("trickplay", answer, StringComparison.Ordinal);
+        var streamBase = "/api/v1/stream/" + pv.Ticket + "/";
         foreach (var (name, want) in new[] { ("trickplay/1", 200), ("trickplay/2", 404), ("file", 404), ("master.m3u8", 404), ("image", 404) })
         {
             Assert.True(await HostKit.GetAsync(s.A, streamBase + name) == want, name);
@@ -556,6 +577,13 @@ public sealed class DeliveryTests
         Assert.Equal(Sheets.Jpeg20x10, reencoded.Body.ToArray());
         Assert.Equal(500, await HostKit.GetAsync(s.A, streamBase + "trickplay/1"));
         h.Files["trickplay/0"] = h.Files["trickplay/1"] = Sheets.Jpeg20x10;
+        // During a playback of the copy, its ticket opens the sheets: no
+        // previews call.
+        var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film, VersionId = copies[0].Id });
+        Assert.Equal(2, pb.Sheets);
+        var sheet = await FetchAsync(s, pb.Id, new MediaPath { Kind = MediaKind.Sheet, Sheet = 1 });
+        Assert.Equal("image/jpeg", sheet.ContentType);
+        await s.B.Engine.StopAsync(pb.Id, -1);
         foreach (var (body, want) in new[]
         {
             ("{\"title\":\"movie/tmdb/949\"}", 400), ("{\"title\":\"series/tmdb/1\",\"versionId\":\"x\"}", 400),
@@ -599,12 +627,10 @@ public sealed class DeliveryTests
         using var s = await Sharing.StartAsync(h);
         var x = new RelayTests.Hostile(s);
         var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film });
-        var byId = pb.SubtitleTracks.ToDictionary(t => t.Id);
-        Assert.Equal(4, byId.Count);
-        Assert.True(byId["s2"].Ass && byId["s2"].Text && byId["s2"].Format == "ass");
+        var byId = pb.Subtitles.ToDictionary(t => t.Id);
+        Assert.Equal(2, byId.Count); // s1 the host can't serve apart; s3 of a format the table doesn't list
+        Assert.True(byId["s2"].Ass && byId["s2"].Form == "text" && byId["s0"].Form == "text");
         Assert.Equal(1, pb.Fonts);
-        Assert.False(byId["s1"].Pictures);
-        Assert.False(byId["s3"].Text);
         var o = await FetchAsync(s, pb.Id, new MediaPath { Kind = MediaKind.Ass, Track = "s2" });
         Assert.Equal(((string)ass["output"]!, "text/x-ass; charset=utf-8"), (o.Text, o.ContentType));
         await FetchAsync(s, pb.Id, new MediaPath { Kind = MediaKind.Ass, Track = "s2", Whole = true });

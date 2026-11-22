@@ -122,7 +122,7 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
     }
 
     /// <summary>A title's one copy, of the least a copy carries (msfp-go's oneCopy).</summary>
-    public static List<Msfp.Protocol.Copy> OneCopy(string handle) => [new Msfp.Protocol.Copy(handle, 60_000, "mp4", 100, "e1", [])];
+    public static List<Msfp.Protocol.Copy> OneCopy(string handle) => [new Msfp.Protocol.Copy(handle, 60_000, "video/mp4", 100, "e1", [])];
 
     /// <summary>Answers in place of the files, when set.</summary>
     public Func<MediaPath, ByteRange?, IResponseSink, CancellationToken, ValueTask>? Serve { get; set; }
@@ -139,7 +139,8 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
     /// <summary>
     /// A film in library lib, with one copy per audio language given (handle
     /// "&lt;key&gt;#&lt;n&gt;", size 20, the size of Files["file"]), each with
-    /// an audio track, a French text subtitle track and a French PGS one.
+    /// an H.264 picture, an audio track, a French text subtitle track and a
+    /// French PGS one.
     /// </summary>
     public void Film(string lib, string key, params string[] audio)
     {
@@ -151,10 +152,10 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
             {
                 var a = audio[i];
                 var handle = key + "#" + i.ToString(CultureInfo.InvariantCulture);
-                t.Copies.Add(new Msfp.Protocol.Copy(handle, 5_400_000, "mkv", 20, "e" + i.ToString(CultureInfo.InvariantCulture),
-                    [new CopyAudio("a0", "aac") { Language = a, Channels = 2, Default = true }])
+                t.Copies.Add(new Msfp.Protocol.Copy(handle, 5_400_000, "video/matroska", 20, "e" + i.ToString(CultureInfo.InvariantCulture),
+                    [new CopyAudio("a0", "aac") { Language = a, Channels = 2, Default = true, Codecs = "mp4a.40.2" }])
                 {
-                    // P17b: no name since proposal 17.
+                    Video = new VideoStream("h264", 1920, 1080) { Codecs = "avc1.640028", BitDepth = 8 },
                     SubtitleTracks = [new CopySubtitle("s0", "subrip") { Language = "fr" }, new CopySubtitle("s1", "hdmv_pgs_subtitle") { Language = "fr" }],
                 });
             }
@@ -304,9 +305,15 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
             StartedList.Add(request);
             return new Started
             {
-                Handle = "h" + _handles.ToString(CultureInfo.InvariantCulture), Method = method, Protocol = protocol, MimeType = "video/mp4",
+                Handle = "h" + _handles.ToString(CultureInfo.InvariantCulture), Method = method, Protocol = protocol,
                 PositionMs = request.StartMs, AudioRenditions = request.AudioRenditions && !noRenditions,
-                Queue = queue ? request.Queue.Select(q => new StartedEntry(q.Place, method, protocol, "audio/flac")).ToList() : null,
+                Queue = queue ? request.Queue.Select(q => q.Delivery switch
+                {
+                    Playback.DeliveryFile => new StartedEntry(q.Place, "direct", "file"),
+                    Playback.DeliveryRemux => new StartedEntry(q.Place, "remux", "hls"),
+                    Playback.DeliveryTranscode => new StartedEntry(q.Place, "transcode", "hls"),
+                    _ => new StartedEntry(q.Place, method, protocol),
+                }).ToList() : null,
             };
         }
     }
@@ -462,7 +469,7 @@ internal sealed class Sharing : IDisposable
     {
         if (h.Libs.Count == 0)
         {
-            h.Libs = [new Library { Id = "films", Name = "Films", Kind = "movies" }];
+            h.Libs = [new Library { Id = "films", Name = "Films" }];
         }
 
         var net = new Network();
@@ -591,10 +598,21 @@ internal static class HostKit
 
     public static byte[] Bytes(string s) => System.Text.Encoding.UTF8.GetBytes(s);
 
+    /// <summary>
+    /// The stream's path of a play answer, built from its ticket as a
+    /// viewer's server builds it (MSFP media section 1): the answer carries no
+    /// URL.
+    /// </summary>
+    public static string StreamPath(string answer)
+    {
+        var o = System.Text.Json.Nodes.JsonNode.Parse(answer)!;
+        return MediaUrls.Stream("/api/v1/stream/", (string)o["ticket"]!, (string)o["protocol"]!);
+    }
+
     /// <summary>A track of the album 0c…0002, with one FLAC copy of handle copy, 20 bytes long (msfp-go's musicTrack).</summary>
     public static MusicTitle MusicTrack(string key, string copy, string lyrics = "") => new()
     {
         Key = key, Kind = "track", Libraries = ["music"], Name = "x", Album = "album/mb/0b000000-0000-4000-8000-000000000002", Disc = 1, Number = 1,
-        Copies = [new MusicCopy { Id = copy, DurationMs = 200_000, MediaType = "audio/flac", Codec = "flac", Size = 20, Etag = "m-" + copy, Lyrics = lyrics }], // P17b
+        Copies = [new MusicCopy { Id = copy, DurationMs = 200_000, MediaType = "audio/flac", Codec = "flac", Size = 20, Etag = "m-" + copy, Lyrics = lyrics }],
     };
 }
