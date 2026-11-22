@@ -10,22 +10,33 @@ namespace Msfp;
 /// limits; the host plugs in through the interfaces of <see cref="MsfpConfig"/>.
 /// Make one with <see cref="OpenAsync"/>, give peers' requests to
 /// <see cref="HandleFederationAsync"/>, and call its actions from the
-/// operator's panel. It speaks MSFP version 0 as revised by proposal 16:
+/// operator's panel. It speaks MSFP version 0 as revised by proposals 16 and 17:
 /// still a draft, and one that doesn't pair with the draft before it
 /// (0.7.1-preview and before).
 /// </summary>
 /// <remarks>
 /// <para>
 /// To share, the host gives a catalog (its libraries and titles, each film,
-/// episode, extra and track with its copies described), a playback and a
-/// media; its operator chooses what each peer is offered
-/// (<see cref="SetOffersAsync"/>), whether local titles go too
+/// episode, extra and track with its copies described, in its order of
+/// preference, with ffmpeg's names and exact values), a playback and a
+/// media. The engine maps no names: a value MSFP doesn't list is sent and
+/// kept as it is, any token (MSFP core section 8.5). What the owning side
+/// chooses when a peer's play names nothing, and what names and track
+/// titles say, are hooks with the recommended defaults
+/// (<see cref="MsfpConfig.ChooseCopy"/>, <see cref="MsfpConfig.ChooseTracks"/>,
+/// <see cref="MsfpConfig.CopyName"/>, <see cref="MsfpConfig.TrackTitle"/>:
+/// <see cref="MsfpDefaults"/>); <see cref="MsfpConfig.Encoders"/> lists the
+/// codecs its transcodes make. Its operator chooses what each peer is
+/// offered (<see cref="SetOffersAsync"/>), whether local titles go too
 /// (<see cref="SetLocalAsync"/>, <see cref="SetGroupLocalAsync"/>) and what
-/// it may use (<see cref="SetLimitsAsync"/>: streams, downloads, scans). Its
-/// viewers play, download or scan a peer's title through
+/// it may use (<see cref="SetLimitsAsync"/>: streams, downloads, scans and
+/// the bytes a scan reads). Its viewers play, download or scan a peer's
+/// title through
 /// <see cref="PlayAsync(string, PlayRequest, CancellationToken)"/>, <see cref="Progress"/>,
 /// <see cref="StopAsync(string, long, CancellationToken)"/>
-/// and <see cref="FetchAsync"/>; <see cref="ReportOfflineAsync"/> sends a
+/// and <see cref="FetchAsync"/> (the host names the copy and the delivery,
+/// from the copy's facts and its device; without a delivery, the baseline:
+/// H.264 and AAC in HLS); <see cref="ReportOfflineAsync"/> sends a
 /// download's late reports, which count for 30 days across restarts
 /// (<see cref="IDownloadsTx"/>).
 /// </para>

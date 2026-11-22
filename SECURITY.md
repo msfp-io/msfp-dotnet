@@ -19,7 +19,7 @@ report it there the same way.
 The engine checks every call and everything a peer's media brings
 before the host sees it, but some of what crosses still reaches the
 host's people's devices, or the host's own disks and bandwidth. With
-version 0 as revised (proposal 16):
+version 0 as revised (proposals 16 and 17):
 
 - **Fonts and ASS from peers.** A peer's ASS subtitles are rebuilt, not
   filtered: known sections, lines and override tags only, embedded fonts
@@ -54,9 +54,10 @@ version 0 as revised (proposal 16):
   and ending the pairing doesn't take it back. A download's late
   reports are kept in the store for 30 days (`IDownloadsTx`), with the
   peer and the title.
-- **Scan access.** A scan lets a peer's media server read up to 32 MiB
-  of a copy by ranges, to list it, for 10 minutes. It is off until the
-  operator allows it (`Limits.ScansPerDay`). The engine counts the bytes
+- **Scan access.** A scan lets a peer's media server read up to the
+  pairing's `Limits.ScanBytes` (4 MiB unless the operator sets more, at
+  most 1 GiB) of a copy by ranges, to list it, for 10 minutes. It is off
+  until the operator allows it (`Limits.ScansPerDay`). The engine counts the bytes
   sent under each scan ticket and never passes the cap; scans count
   against no stream, so a host that meters its bandwidth counts them
   too.

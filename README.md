@@ -17,7 +17,7 @@ the two shipped stores) and hands the engine the requests peers send it;
 it writes none of the protocol itself.
 
 - The protocol: [msfp-io/msfp-spec](https://github.com/msfp-io/msfp-spec),
-  version 0 as revised by proposal 16, still a draft until version 1
+  version 0 as revised by proposals 16 and 17, still a draft until version 1
   ([spec/v0](https://github.com/msfp-io/msfp-spec/tree/main/spec/v0)).
   The code here, not released yet, speaks the revised draft;
   0.7.1-preview and before speak the draft before it, and servers on the
@@ -129,10 +129,19 @@ logs. `CodeTextAsync` gives a live code's text again, to send once more. Every m
 A host that shares gives the engine its libraries and playback
 (`MsfpConfig.Catalog`, `Playback`, `Media`: `ICatalog`, `IPlayback`,
 `IMedia`): each film, episode and extra with its copies described as
-MSFP lists them. The engine serves a copy's file by byte ranges itself,
-against the size and etag the catalog gave, and checks or rebuilds what
-leaves (playlists, served the same on every fetch; subtitles, fonts;
-preview sheets re-encoded). The host mounts the stream route of peers'
+MSFP lists them: exact values, ffmpeg's names for containers, codecs and
+subtitle formats, its copies in its order of preference. The engine
+serves a copy's file by byte ranges itself, against the size and etag
+the catalog gave, and checks or rebuilds what leaves (playlists, served
+the same on every fetch; subtitles, fonts; preview sheets re-encoded).
+It maps no names: a media server that names things otherwise maps them
+to ffmpeg's, and a value MSFP doesn't list is sent and kept as it is
+(any token). What the engine chooses for a peer when its play names
+nothing (the copy, the tracks) and what a copy's name and a track's
+title may say are hooks with the recommended defaults
+(`MsfpConfig.ChooseCopy`, `ChooseTracks`, `CopyName`, `TrackTitle`;
+`MsfpDefaults`); `MsfpConfig.Encoders` lists the codecs its transcodes
+make. The host mounts the stream route of peers'
 tickets beside the federation route:
 
 ```csharp
@@ -163,8 +172,12 @@ episodes come with theirs. To read a peer's titles: `TheirLibrariesAsync`, `SetW
 then `RunAsync` reads them on schedule (or `ReadNowAsync`) into the
 store, where the host reads them; `PlayableAsync` says whether they can
 be played now. A viewer plays with `PlayAsync` (to watch, to download, or
-to let a media server scan the file: `PlayRequest.Purpose`, `Delivery`),
-the host serves the media at its own route through `FetchAsync`
+to let a media server scan the file: `PlayRequest.Purpose`). The host has
+every copy's facts in the catalog and knows its device: a play names the
+copy (`VersionId`) and asks a delivery (the file as it is, a remux into
+`mpegts` or `mp4`, a transcode to ffmpeg's codecs), or none for the
+baseline every server plays, H.264 and AAC in HLS; nothing of the device
+is sent. The host serves the media at its own route through `FetchAsync`
 (`MediaPath.TryParse` reads its URL), and reports with `Progress` and
 `StopAsync` (a download's late reports with `ReportOfflineAsync`);
 `PreviewsAsync` and `TrackLyricsAsync` fetch a copy's previews and a
@@ -174,8 +187,11 @@ Two things are off until the operator turns them on: **local titles**
 (those no public database knows: `SetLocalAsync` per pairing and
 `SetGroupLocalAsync` per group; their keys made with `OpaqueKeyPart`,
 their images given by `IImages`) and **downloads and scans** (`Limits`:
-`Downloads`, `DownloadsPerDay`, `DownloadKbps`, `ScansPerDay`). A
-download's late reports count for 30 days, across restarts: the shipped
+`Downloads`, `DownloadsPerDay`, `DownloadKbps`, `ScansPerDay`, and
+`ScanBytes`, what one scan may read: 4 MiB unless you say more, 32 MiB
+recommended). Theme songs and theme videos are extras like the others:
+whether you offer them is your operator's choice. A download's late
+reports count for 30 days, across restarts: the shipped
 stores keep downloads (`IDownloadsTx`); a store of your own implements it
 too, or they last until a restart. A download's pace follows
 `MsfpConfig.TimeProvider` and waits with its timers.
@@ -242,8 +258,9 @@ named with their TMDB (or TheTVDB) IDs, `Title (Year) [tmdbid-949].mkv`
 or a folder of their own, episodes `S01E02` (by their TMDB episode ID when
 the name has one), extras in `Trailers/` and `Extras/`, local titles (no
 ID, an image beside them), `.vtt` subtitles, HLS copies
-(`<same name>.hls/`) and previews (`<same name>.trickplay/`) made
-beforehand; nothing is transcoded. Copies are described from their files,
+(`<same name>.hls/`, H.264 and AAC: the baseline a play without a
+delivery gets) and previews (`<same name>.trickplay/`) made beforehand;
+nothing is transcoded. Copies are described from their files,
 with `ffprobe` when it is installed; with `ffmpeg`, it re-encodes preview
 sheets and JPEG images (its `ISheetEncoder`). The comment at the top of
 Folder.cs shows the layout. Run two of them on one machine:
@@ -285,7 +302,7 @@ Patch versions are each library's own. The library's version is separate
 from the protocol's: from 0.4.0-preview it speaks MSFP version 0, groups
 included; 0.2.0-preview and before speak the same protocol numbered 1, and
 the two don't talk. The next release speaks version 0 as revised
-(proposal 16), which doesn't talk with 0.7.1-preview and before either.
+(proposals 16 and 17), which doesn't talk with 0.7.1-preview and before either.
 
 ## Testing
 
