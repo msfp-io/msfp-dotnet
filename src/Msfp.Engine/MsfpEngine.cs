@@ -10,13 +10,41 @@ namespace Msfp;
 /// limits; the host plugs in through the interfaces of <see cref="MsfpConfig"/>.
 /// Make one with <see cref="OpenAsync"/>, give peers' requests to
 /// <see cref="HandleFederationAsync"/>, and call its actions from the
-/// operator's panel.
+/// operator's panel. It speaks MSFP version 0 as revised by proposal 16:
+/// still a draft, and one that doesn't pair with the draft before it
+/// (0.7.1-preview and before).
 /// </summary>
 /// <remarks>
+/// <para>
+/// To share, the host gives a catalog (its libraries and titles, each film,
+/// episode, extra and track with its copies described), a playback and a
+/// media; its operator chooses what each peer is offered
+/// (<see cref="SetOffersAsync"/>), whether local titles go too
+/// (<see cref="SetLocalAsync"/>, <see cref="SetGroupLocalAsync"/>) and what
+/// it may use (<see cref="SetLimitsAsync"/>: streams, downloads, scans). Its
+/// viewers play, download or scan a peer's title through
+/// <see cref="PlayAsync(string, PlayRequest, CancellationToken)"/>, <see cref="Progress"/>,
+/// <see cref="StopAsync(string, long, CancellationToken)"/>
+/// and <see cref="FetchAsync"/>; <see cref="ReportOfflineAsync"/> sends a
+/// download's late reports, which count for 30 days across restarts
+/// (<see cref="IDownloadsTx"/>).
+/// </para>
+/// <para>
+/// The engine checks what leaves before it leaves: titles and copies cleaned
+/// as a receiver keeps them, the file served by byte ranges against the
+/// catalog's size and etag, playlists checked complete and served the same
+/// on every fetch, subtitles and fonts rebuilt or checked, preview sheets
+/// and images re-encoded (JPEGs with the host's <see cref="ISheetEncoder"/>:
+/// .NET has no JPEG codec). What arrives from peers is checked the same way
+/// before the host sees it. Headers reach the host's response only through
+/// its sink (<see cref="IResponseSink"/>, <see cref="IETagSink"/>).
+/// </para>
+/// <para>
 /// Every method is safe to call from several threads at once. Methods
 /// throw <see cref="MsfpException"/> with the codes each one names, or
 /// <see cref="MsfpError.Internal"/>, or the token's
 /// <see cref="OperationCanceledException"/>.
+/// </para>
 /// </remarks>
 public sealed partial class MsfpEngine : IDisposable
 {

@@ -4,7 +4,7 @@
     <RootNamespace>Msfp</RootNamespace>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IsPackable>true</IsPackable>
-    <Description>The MSFP engine: runs the Media Server Federation Protocol inside a media server (pairing, keys, signed calls, catalog, playback, groups), with memory and JSON-file stores.</Description>
+    <Description>The MSFP engine: runs the Media Server Federation Protocol (version 0 as revised by proposal 16) inside a media server (pairing, keys, signed calls, catalog, playback, downloads and scans, groups), with memory and JSON-file stores.</Description>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Msfp.Protocol/Msfp.Protocol.csproj" />

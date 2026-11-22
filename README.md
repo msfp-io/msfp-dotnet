@@ -17,7 +17,11 @@ the two shipped stores) and hands the engine the requests peers send it;
 it writes none of the protocol itself.
 
 - The protocol: [msfp-io/msfp-spec](https://github.com/msfp-io/msfp-spec),
-  version 0, a draft until version 1 ([spec/v0](https://github.com/msfp-io/msfp-spec/tree/main/spec/v0)).
+  version 0 as revised by proposal 16, still a draft until version 1
+  ([spec/v0](https://github.com/msfp-io/msfp-spec/tree/main/spec/v0)).
+  The code here, not released yet, speaks the revised draft;
+  0.7.1-preview and before speak the draft before it, and servers on the
+  two don't pair. The [changelog](CHANGELOG.md) says what hosts change.
 - The engine's API in words: [api/](https://github.com/msfp-io/msfp-spec/tree/main/api)
   in the spec's repository, mainly
   [engine.md](https://github.com/msfp-io/msfp-spec/blob/main/api/engine.md)
@@ -124,8 +128,12 @@ logs. `CodeTextAsync` gives a live code's text again, to send once more. Every m
 
 A host that shares gives the engine its libraries and playback
 (`MsfpConfig.Catalog`, `Playback`, `Media`: `ICatalog`, `IPlayback`,
-`IMedia`), and mounts the stream route of peers' tickets beside the
-federation route:
+`IMedia`): each film, episode and extra with its copies described as
+MSFP lists them. The engine serves a copy's file by byte ranges itself,
+against the size and etag the catalog gave, and checks or rebuilds what
+leaves (playlists, served the same on every fetch; subtitles, fonts;
+preview sheets re-encoded). The host mounts the stream route of peers'
+tickets beside the federation route:
 
 ```csharp
 app.Map("/api/v1/stream/{**rest}", async (HttpContext ctx) =>
@@ -137,7 +145,10 @@ app.Map("/api/v1/stream/{**rest}", async (HttpContext ctx) =>
 });
 ```
 
-Give it every method (HEAD and the others get a 405). The sink writes the
+Give it every method: `HEAD` and the others get a 405 on every media URL
+form, whatever the ticket (live, ended or never given), so `Fallback`
+comes for `GET`s only there; a host that answers its own clients' `HEAD`
+does so on a route of its own. The sink writes the
 status and the headers the engine gives, and adds `Accept-Ranges: bytes`
 to a 200 or a 206, the file's ETag it is given (`IETagSink`) and
 `Allow: GET` to a 405 (the example's `AspNetSink` does).
@@ -159,10 +170,33 @@ the host serves the media at its own route through `FetchAsync`
 `PreviewsAsync` and `TrackLyricsAsync` fetch a copy's previews and a
 track's lyrics before any play.
 
-Preview sheets a peer sends are re-encoded before they reach a viewer
-(MSFP video section 7). .NET has no JPEG codec, so the engine has no
-default `ISheetEncoder`: give one (ImageSharp, SkiaSharp, the host's
-own), or previews of peers' titles are left out.
+Two things are off until the operator turns them on: **local titles**
+(those no public database knows: `SetLocalAsync` per pairing and
+`SetGroupLocalAsync` per group; their keys made with `OpaqueKeyPart`,
+their images given by `IImages`) and **downloads and scans** (`Limits`:
+`Downloads`, `DownloadsPerDay`, `DownloadKbps`, `ScansPerDay`). A
+download's late reports count for 30 days, across restarts: the shipped
+stores keep downloads (`IDownloadsTx`); a store of your own implements it
+too, or they last until a restart. A download's pace follows
+`MsfpConfig.TimeProvider` and waits with its timers.
+
+Preview sheets are re-encoded, so that only their pixels pass: those a
+peer sends before they reach a viewer (MSFP video section 7), and the
+host's own before they leave (video section 6.2), each checked against
+its layout first; a peer's JPEG image of a local title too. .NET has no
+JPEG codec, so the engine has no default `ISheetEncoder` (msfp-go's is
+`JPEGSheets`): give one (ImageSharp, SkiaSharp, ffmpeg as the example
+does, the host's own). Without one, previews are left out both ways: the
+host serves no sheets to peers (its plays answer without them, a
+`previews` call gets 404), peers' playbacks come without them, and only
+a peer's PNG images can be fetched (the engine re-encodes PNGs itself).
+
+The engine hands headers to the host through its sink only:
+`IResponseSink.Start` gives the status, `Content-Type`, `Content-Length`
+and `Content-Range`, and `IETagSink.SetETag` the file's ETag; the host's
+sink writes them (and `Accept-Ranges`, `Allow`) on its own response type,
+so the engine is the same under ASP.NET Core, a plugin's controller or a
+test.
 
 ## Groups
 
@@ -201,30 +235,41 @@ link and keeps the peer away from every group.
 [examples/ShareFolder](examples/ShareFolder) is a small host, msfp-go's
 `examples/share-folder` in C#: Kestrel with a self-signed certificate it
 pins, its records in JSON files, typed commands in place of a panel, and
-a folder of films shared with its peers ([Folder.cs](examples/ShareFolder/Folder.cs)
-is the engine's `ICatalog`, `IPlayback` and `IMedia`). A film is a file
-named with its TMDB ID, `Title (Year) [tmdbid-949].mp4`, optionally with
-an HLS copy made beforehand beside it (`<same name>.hls/master.m3u8`) and
-WebVTT subtitles (`<same name>.<language>.vtt`); nothing is transcoded.
-Run two of them on one machine:
+a folder of films and series shared with its peers
+([Folder.cs](examples/ShareFolder/Folder.cs) is the engine's `ICatalog`,
+`IImages`, `IPlayback` and `IMedia`). The folder holds films and series
+named with their TMDB (or TheTVDB) IDs, `Title (Year) [tmdbid-949].mkv`
+or a folder of their own, episodes `S01E02` (by their TMDB episode ID when
+the name has one), extras in `Trailers/` and `Extras/`, local titles (no
+ID, an image beside them), `.vtt` subtitles, HLS copies
+(`<same name>.hls/`) and previews (`<same name>.trickplay/`) made
+beforehand; nothing is transcoded. Copies are described from their files,
+with `ffprobe` when it is installed; with `ffmpeg`, it re-encodes preview
+sheets and JPEG images (its `ISheetEncoder`). The comment at the top of
+Folder.cs shows the layout. Run two of them on one machine:
 
 ```sh
 cd examples/ShareFolder
-dotnet run -- --address https://127.0.0.1:8441 --data a --films ~/films --loopback
+dotnet run -- --address https://127.0.0.1:8441 --data a --folder ~/videos --loopback
 dotnet run -- --address https://127.0.0.1:8442 --data b --loopback
 ```
 
 `--loopback` lets peers on the same machine be called (the engine refuses
 local addresses otherwise). Type `code` in the first and `redeem <code>` in
 the second, compare the fingerprints both print, and `accept <id>` in the
-first. Then `offer <id>` in the first shares the films; `want <id>` in the
-second reads them, `titles <id>` lists them, and `play <id> <key>` prints a
-URL that `curl -k` or `ffplay -tls_verify 0` plays through the second
+first. Then `offer <id>` in the first shares the folder (`local <id> on`
+its local titles too); `want <id>` in the second reads them, `titles
+<id>` lists them, and `play <id> <key>` prints a URL that `curl -k` or
+`ffplay -tls_verify 0` plays through the second
 server; `pause <playback>`, `resume <playback>` and `stop <playback>`
 follow, and until the stop the example reports the playback every
 minute, as a host must (a peer ends a playback it hears nothing of for 2
-minutes). The comment at the top of
-[Program.cs](examples/ShareFolder/Program.cs) lists every command.
+minutes). `limits <id> 2 1 1 3 8000 2` in the first allows the second 2
+streams, 1 transcode, 1 download at once, 3 a day at 8,000 kbit/s, and 2
+scans a day; `download <id> <key>` in the second then prints the URL of
+the file to save, `late <download> <ms>` sends a late report of it, and
+`previews <id> <key>` fetches a film's previews. The comment at the top
+of [Program.cs](examples/ShareFolder/Program.cs) lists every command.
 
 Groups work the same way: `group-create <name>` in the first, `invite
 <group>` for a code the others redeem, `groups` to see the members and the
@@ -239,7 +284,8 @@ major.minor version is shared with the other MSFP engines: msfp-dotnet
 Patch versions are each library's own. The library's version is separate
 from the protocol's: from 0.4.0-preview it speaks MSFP version 0, groups
 included; 0.2.0-preview and before speak the same protocol numbered 1, and
-the two don't talk.
+the two don't talk. The next release speaks version 0 as revised
+(proposal 16), which doesn't talk with 0.7.1-preview and before either.
 
 ## Testing
 
@@ -267,6 +313,11 @@ cp ../msfp-spec/vectors/v0/*.json tests/Msfp.Protocol.Tests/testdata/v0/
 cp ../msfp-spec/vectors/history/test-draft-strict.json tests/Msfp.Protocol.Tests/testdata/
 dotnet test
 ```
+
+## Security
+
+[SECURITY.md](SECURITY.md) says how to report a vulnerability, and what a
+host should know of what crosses from peers.
 
 ## How it's made
 
