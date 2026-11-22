@@ -96,7 +96,7 @@ public sealed class GroupTests
         var want = JsonNode.Parse(mv.Str("opened"))!.AsObject();
         Assert.Equal(new SealedContent
         {
-            Address = want.Str("address"), Name = want.Str("name"), NextCommitment = want.Str("nextCommitment"),
+            Address = want.Str("address"), NextCommitment = want.Str("nextCommitment"),
             Inbound = want["inbound"]!.GetValue<bool>(),
         }, opened);
     }

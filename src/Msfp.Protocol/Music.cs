@@ -101,10 +101,13 @@ public readonly record struct TitleKey(string Part, string Kind, bool Playable)
 
 /// <summary>
 /// A music title as sent in titles, and as a peer's is kept (music section
-/// 3): its key, kind and library, and its description, cleaned. Text is ""
-/// and numbers 0 when absent, lists empty; <see cref="Compilation"/> and
-/// <see cref="Image"/> are null when absent. A track carries no dates and
-/// no genres, an artist only a name, an image and ids. An owning server
+/// 3): its key, the kind its key names, its library, and its description,
+/// cleaned. Text is "" and numbers 0 when absent, lists empty;
+/// <see cref="Compilation"/> and <see cref="Image"/> are null when absent.
+/// A track's artists, artist names, dates and genres are sent only when
+/// they differ from its album's: absent, they are its album's, which a
+/// reader doesn't fill in. An artist carries only a name and, local, an
+/// image. An owning server
 /// writes its own titles with <see cref="ToJson"/>, and reads them back
 /// with <see cref="Music.ReadTitle(ReadOnlySpan{byte})"/> to send only what
 /// a receiver keeps.
@@ -114,7 +117,7 @@ public sealed record MusicTitle
     /// <summary>Its key, canonical.</summary>
     public required string Key { get; init; }
 
-    /// <summary>Its kind, the key's.</summary>
+    /// <summary>The kind its key names (a title carries no kind member).</summary>
     public required string Kind { get; init; }
 
     /// <summary>The library it gives; a reader leaves the caller to check it is one asked for.</summary>
@@ -122,9 +125,6 @@ public sealed record MusicTitle
 
     /// <summary>Its name, cleaned; never empty.</summary>
     public required string Name { get; init; }
-
-    /// <summary>Its sort name (albums).</summary>
-    public string SortName { get; init; } = "";
 
     /// <summary>Its artists' keys (albums and tracks).</summary>
     public IReadOnlyList<string> Artists { get; init; } = [];
@@ -173,7 +173,7 @@ public sealed record MusicTitle
     /// <summary>Whether the image call gives an image of it (local artists and albums); null when absent.</summary>
     public bool? Image { get; init; }
 
-    /// <summary>Its other identifiers, by scheme (music section 3.1).</summary>
+    /// <summary>Its other identifiers, by scheme (music section 3.1): mb albums' mbreleasegroup, mb tracks' mbrecording.</summary>
     public IReadOnlyDictionary<string, string> Ids { get; init; } = new Dictionary<string, string>();
 
     /// <summary>The title as titles carries it, its members in the spec's order, absent ones left out.</summary>
@@ -183,8 +183,7 @@ public sealed record MusicTitle
     public void Write(JsonOut o)
     {
         ArgumentNullException.ThrowIfNull(o);
-        o.String("key", Key).String("kind", Kind).String("library", Library).String("name", Name)
-            .String("sortName", Music.Present(SortName))
+        o.String("key", Key).String("library", Library).String("name", Name)
             .Strings("artists", Artists.Count > 0 ? Artists : null)
             .String("artistNames", Music.Present(ArtistNames))
             .String("primaryType", Music.Present(PrimaryType))
@@ -204,26 +203,25 @@ public sealed record MusicTitle
 
 /// <summary>
 /// A track's copy (music section 3.3). The optional numbers are 0 when
-/// absent (none of their ranges holds 0), optional text "".
+/// absent (none of their ranges holds 0), optional text "". It carries no
+/// name, no day it was added and no bitrate: size × 8 / durationMs is its
+/// overall rate.
 /// </summary>
 public sealed record MusicCopy
 {
     /// <summary>Its id, of an ID's form.</summary>
     public required string Id { get; init; }
 
-    /// <summary>A quality label, plain text of at most <see cref="Music.MaxCopyName"/> code points.</summary>
-    public string Name { get; init; } = "";
-
-    /// <summary>Its duration, 1 to <see cref="Music.MaxDurationMs"/>.</summary>
+    /// <summary>Its duration, 1 to <see cref="Music.MaxDurationMs"/>, exact.</summary>
     public required long DurationMs { get; init; }
 
-    /// <summary>Its container, a token: ffmpeg's muxer name (flac, mp3, mp4, ogg, wav, matroska…), known or not.</summary>
-    public required string Container { get; init; }
+    /// <summary>The file's media type (<see cref="Names.IsMediaType"/>: audio/flac, audio/mpeg, audio/mp4, audio/ogg, audio/wave, audio/matroska…), known or not.</summary>
+    public required string MediaType { get; init; }
 
-    /// <summary>Its audio codec, a token: ffmpeg's codec_name (flac, mp3, aac, alac, opus, vorbis, pcm_s16le…), known or not.</summary>
+    /// <summary>Its audio codec, a registry token (flac, mp3, aac, alac, opus, vorbis, pcm_s16le…), known or not.</summary>
     public required string Codec { get; init; }
 
-    /// <summary>Its RFC 6381 codecs string (mp4a.40.2, fLaC, opus, ec-3), 1 to 64 characters of A-Z a-z 0-9 . -; "" when absent.</summary>
+    /// <summary>Its RFC 6381 codecs string (mp4a.40.2, fLaC, Opus, ec-3), 1 to 64 characters of A-Z a-z 0-9 . + -; "" when absent. Required for aac and dts: without it the viewer's server doesn't play the copy as it is.</summary>
     public string Codecs { get; init; } = "";
 
     /// <summary>Its size in bytes, 1 to <see cref="Music.MaxCopySize"/>.</summary>
@@ -231,12 +229,6 @@ public sealed record MusicCopy
 
     /// <summary>Its etag, of an ID's form.</summary>
     public required string Etag { get; init; }
-
-    /// <summary>When it was added, YYYY-MM-DD.</summary>
-    public string Added { get; init; } = "";
-
-    /// <summary>Its bitrate in kbit/s, 1 to <see cref="Music.MaxAudioBitrate"/>, exact.</summary>
-    public int BitrateKbps { get; init; }
 
     /// <summary>Its sample rate in Hz.</summary>
     public int SampleRate { get; init; }
@@ -257,11 +249,9 @@ public sealed record MusicCopy
     public void Write(JsonOut o)
     {
         ArgumentNullException.ThrowIfNull(o);
-        o.String("id", Id).String("name", Music.Present(Name)).Integer("durationMs", DurationMs)
-            .String("container", Container).String("codec", Codec).String("codecs", Music.Present(Codecs))
+        o.String("id", Id).Integer("durationMs", DurationMs)
+            .String("mediaType", MediaType).String("codec", Codec).String("codecs", Music.Present(Codecs))
             .Integer("size", Size).String("etag", Etag)
-            .String("added", Music.Present(Added))
-            .Integer("bitrateKbps", BitrateKbps != 0 ? BitrateKbps : null)
             .Integer("sampleRate", SampleRate != 0 ? SampleRate : null)
             .Integer("bitDepth", BitDepth != 0 ? BitDepth : null)
             .Integer("channels", Channels != 0 ? Channels : null)
@@ -320,19 +310,13 @@ public static partial class Music
     public const int MaxDiscNumber = 999;
 
     /// <summary>The most copies a track keeps (music section 3.3).</summary>
-    public const int MaxMusicCopies = 8;
+    public const int MaxMusicCopies = 16;
 
     /// <summary>A track copy's longest duration in milliseconds, a day (music section 3.3).</summary>
     public const long MaxDurationMs = 86_400_000;
 
     /// <summary>A track copy's largest size in bytes (music section 3.3, as a video copy's).</summary>
     public const long MaxCopySize = 999_999_999_999_999;
-
-    /// <summary>The most code points of a track copy's name (music section 3.3, as a video copy's).</summary>
-    public const int MaxCopyName = 64;
-
-    /// <summary>A track copy's highest bitrate in kbit/s, from 1 (music section 3.3).</summary>
-    public const int MaxAudioBitrate = 100_000;
 
     /// <summary>The most secondary types an album keeps (music section 3.2).</summary>
     public const int MaxSecondaryTypes = 8;
@@ -354,20 +338,11 @@ public static partial class Music
     [GeneratedRegex(@"^[a-z0-9._/-](?:[a-z0-9 ._/-]{0,30}[a-z0-9._/-])?\z")]
     private static partial Regex TypeRe();
 
-    [GeneratedRegex(@"^[A-Za-z0-9.-]{1,64}\z")]
-    private static partial Regex CodecsRe();
-
     [GeneratedRegex(@"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z")]
     private static partial Regex MbidRe();
 
-    [GeneratedRegex(@"^[A-Z]{2}[A-Z0-9]{3}[0-9]{7}\z")]
-    private static partial Regex IsrcRe();
-
     [GeneratedRegex(@"^([0-9]{4})(?:-([0-9]{2})(?:-([0-9]{2}))?)?\z")]
     private static partial Regex DateRe();
-
-    [GeneratedRegex(@"^[0-9]{4}-[0-9]{2}-[0-9]{2}\z")]
-    private static partial Regex DayRe();
 
     /// <summary>
     /// Whether <paramref name="s"/> is a release-group type as music section
@@ -494,8 +469,9 @@ public static partial class Music
     /// <summary>
     /// Whether <paramref name="value"/> is an identifier of a known scheme
     /// for a title of <paramref name="kind"/>, in its form (music section
-    /// 3.1): mbreleasegroup (albums), mbrecording, isrc and acoustid
-    /// (tracks).
+    /// 3.1): mbreleasegroup (albums), mbrecording (tracks), on mb titles
+    /// only; a local title carries no ids, and isrc and acoustid, which a
+    /// viewer's server finds from mbrecording, are retired.
     /// </summary>
     public static bool MusicId(string kind, string scheme, string value)
     {
@@ -503,8 +479,7 @@ public static partial class Music
         return scheme switch
         {
             "mbreleasegroup" => kind == "album" && MbidRe().IsMatch(value),
-            "mbrecording" or "acoustid" => kind == "track" && MbidRe().IsMatch(value),
-            "isrc" => kind == "track" && IsrcRe().IsMatch(value),
+            "mbrecording" => kind == "track" && MbidRe().IsMatch(value),
             _ => false,
         };
     }
@@ -519,15 +494,15 @@ public static partial class Music
 
     /// <summary>
     /// Reads one entry of a titles answer as catalog section 3.3 and music
-    /// section 3.2 say: null, to skip it, when it isn't an object whose key,
-    /// kind and library are strings, when the key isn't a canonical music
-    /// key of either scheme, when its kind isn't the key's, when it has no
-    /// name once cleaned, and for a track, when it is a track/mb whose album
+    /// section 3.2 say: null, to skip it, when it isn't an object whose key
+    /// and library are strings, when the key isn't a canonical music key of
+    /// either scheme, when it has no name once cleaned, and for a track, when it is a track/mb whose album
     /// isn't an album/mb key, or has no copy left (a copies that isn't an
     /// array included). Every other member of the wrong type, out of range
     /// or for another kind counts as absent; a bad entry of artists, genres
-    /// or ids is skipped alone. Whether library is one asked for is the
-    /// caller's to check.
+    /// or ids is skipped alone; ids on a local title, and members the part
+    /// doesn't give (kind, releaseType, sortName), are ignored. Whether
+    /// library is one asked for is the caller's to check.
     /// </summary>
     /// <remarks>The entry is read as <see cref="StrictJson.ReadEntry(JsonNode?)"/> reads it, its nulls dropped in place.</remarks>
     public static MusicTitle? ReadTitle(JsonNode? entry)
@@ -537,11 +512,10 @@ public static partial class Music
             return null;
         }
 
-        string key, kind, library;
+        string key, library;
         try
         {
             key = t.GetString("key") ?? "";
-            kind = t.GetString("kind") ?? "";
             library = t.GetString("library") ?? "";
         }
         catch (ProtocolException)
@@ -549,7 +523,7 @@ public static partial class Music
             return null;
         }
 
-        if (!MusicKey.TryParse(key, out var k) || k.Kind != kind ||
+        if (!MusicKey.TryParse(key, out var k) ||
             CatalogRules.ReadDescription(t, MusicDescription) is not { } d)
         {
             return null;
@@ -575,7 +549,7 @@ public static partial class Music
             artistNames = CleanText(JsonMembers.AsString(t["artistNames"]) ?? "", MaxArtistNames);
         }
 
-        var title = new MusicTitle { Key = key, Kind = kind, Library = library, Name = d.Name, Artists = artists, ArtistNames = artistNames };
+        var title = new MusicTitle { Key = key, Kind = k.Kind, Library = library, Name = d.Name, Artists = artists, ArtistNames = artistNames };
         if (k.Kind is "album" or "track")
         {
             string date = "", originalDate = "";
@@ -607,7 +581,6 @@ public static partial class Music
 
                 title = title with
                 {
-                    SortName = CleanText(JsonMembers.AsString(t["sortName"]) ?? "", MaxMusicName),
                     PrimaryType = JsonMembers.AsString(t["primaryType"]) is { } pt && MusicType(pt) ? pt : "",
                     SecondaryTypes = secondary,
                     Compilation = BoolOf(t["compilation"]),
@@ -641,7 +614,7 @@ public static partial class Music
         }
 
         var ids = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (t["ids"] is JsonObject o)
+        if (t["ids"] is JsonObject o && !k.Local)
         {
             foreach (var (scheme, value) in o)
             {
@@ -674,11 +647,13 @@ public static partial class Music
     /// <see cref="MaxMusicCopies"/>, the first. A copy is skipped alone when
     /// it isn't an object, misses a required member or breaks its form (id
     /// and etag of an ID's form, size from 1 to <see cref="MaxCopySize"/>,
-    /// durationMs from 1 to <see cref="MaxDurationMs"/>, container and codec
-    /// tokens, core section 8.5, kept as they are, known or not), or repeats
-    /// a kept copy's id. Its optional members out of range, out of their form
-    /// or of the wrong type count as absent; durationMs and bitrateKbps are
-    /// kept exact; video's members of a copy are ignored.
+    /// durationMs from 1 to <see cref="MaxDurationMs"/>, mediaType a media
+    /// type and codec a token, core section 8.5, kept as they are, known or
+    /// not), or repeats a kept copy's id. Its optional members out of range,
+    /// out of their form or of the wrong type count as absent (codecs on an
+    /// aac or dts copy among them: the copy stays); durationMs is kept
+    /// exact; video's members of a copy, and name, added, bitrateKbps and
+    /// container of earlier drafts, are ignored.
     /// </summary>
     public static IReadOnlyList<MusicCopy>? ReadCopies(JsonNode? copies)
     {
@@ -714,9 +689,9 @@ public static partial class Music
 
         var id = JsonMembers.AsString(o["id"]);
         var etag = JsonMembers.AsString(o["etag"]);
-        var container = Names.Token(o["container"]);
+        var mediaType = Names.MediaType(o["mediaType"]);
         var codec = Names.Token(o["codec"]);
-        if (id is null || !Playback.Id(id) || etag is null || !Playback.Id(etag) || container is null || codec is null ||
+        if (id is null || !Playback.Id(id) || etag is null || !Playback.Id(etag) || mediaType is null || codec is null ||
             IntOf(o["durationMs"], 1, MaxDurationMs) is not { } duration || IntOf(o["size"], 1, MaxCopySize) is not { } size)
         {
             return null;
@@ -740,15 +715,12 @@ public static partial class Music
         return new MusicCopy
         {
             Id = id,
-            Name = JsonMembers.AsString(o["name"]) is { } name ? CleanText(name, MaxCopyName) : "",
             DurationMs = duration,
-            Container = container,
+            MediaType = mediaType,
             Codec = codec,
-            Codecs = JsonMembers.AsString(o["codecs"]) is { } cs && CodecsRe().IsMatch(cs) ? cs : "",
+            Codecs = JsonMembers.AsString(o["codecs"]) is { } cs && Copies.CodecsForm(cs) ? cs : "",
             Size = size,
             Etag = etag,
-            Added = JsonMembers.AsString(o["added"]) is { } added && Day(added) ? added : "",
-            BitrateKbps = (int)(IntOf(o["bitrateKbps"], 1, MaxAudioBitrate) ?? 0),
             SampleRate = (int)(IntOf(o["sampleRate"], 8_000, 768_000) ?? 0),
             BitDepth = (int)(IntOf(o["bitDepth"], 8, 32) ?? 0),
             Channels = (int)(IntOf(o["channels"], 1, 64) ?? 0),
@@ -756,10 +728,6 @@ public static partial class Music
             Lyrics = lyrics is "plain" or "synced" ? lyrics : "",
         };
     }
-
-    // Whether s is a valid date YYYY-MM-DD: a copy's added, as for video.
-    private static bool Day(string s) =>
-        DayRe().IsMatch(s) && DateTime.TryParseExact(s, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _);
 
     // Text when set, null (left out) when "".
     internal static string? Present(string s) => s.Length > 0 ? s : null;

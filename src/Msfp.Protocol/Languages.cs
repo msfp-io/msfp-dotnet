@@ -53,10 +53,9 @@ public static class Languages
     /// already in the form a server sends, which <see cref="TrySentTag"/>
     /// gives back unchanged ("fr", "fr-CA", "yue", "zh-Hant-TW", "es-419");
     /// "fre" (not yet converted), "fr-ca" or "FR" (another case), "e", "und"
-    /// and "fr_CA" aren't. It is the one rule wherever a title or a track
-    /// carries a tag, and for play's audioLanguage and subtitleLanguage: a
-    /// receiver checks it and never converts the tag; an invalid one counts
-    /// as absent in what it keeps, and refuses a request. Valid tags compare
+    /// and "fr_CA" aren't. It is the one rule wherever a track or a lyrics
+    /// set carries a tag: a receiver checks it and never converts the tag; an
+    /// invalid one counts as absent in what it keeps. Valid tags compare
     /// the same byte for byte and without case.
     /// </summary>
     public static bool ValidTag(string? s) => s is not null && TrySentTag(s, out var t) && t == s;

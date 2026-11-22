@@ -220,14 +220,11 @@ public sealed record GroupMail
         .String("from", From).String("to", To).String("answers", Answers).Integer("expires", Expires).String("sealed", Sealed));
 }
 
-/// <summary>What a mail carries, once opened (groups section 5).</summary>
+/// <summary>What a mail carries, once opened (groups section 5): no name, a member's being its latest profile's, or its joined's until its profile arrives.</summary>
 public sealed record SealedContent
 {
     /// <summary>The sender's address (core section 5.2).</summary>
     public string Address { get; init; } = "";
-
-    /// <summary>Its name.</summary>
-    public string? Name { get; init; }
 
     /// <summary>Its next key commitment, base64url.</summary>
     public string NextCommitment { get; init; } = "";
@@ -239,16 +236,16 @@ public sealed record SealedContent
     public IReadOnlyList<string>? Certificates { get; init; }
 
     /// <summary>The JSON sealed.</summary>
-    public byte[] Bytes() => JsonOut.Object(o => o.String("address", Address).String("name", Name)
+    public byte[] Bytes() => JsonOut.Object(o => o.String("address", Address)
         .String("nextCommitment", NextCommitment).Bool("inbound", Inbound).Strings("certificates", Certificates));
 
     /// <inheritdoc/>
     public bool Equals(SealedContent? other) =>
-        other is not null && Address == other.Address && Name == other.Name && NextCommitment == other.NextCommitment &&
+        other is not null && Address == other.Address && NextCommitment == other.NextCommitment &&
         Inbound == other.Inbound && (Certificates ?? []).SequenceEqual(other.Certificates ?? []);
 
     /// <inheritdoc/>
-    public override int GetHashCode() => HashCode.Combine(Address, Name, NextCommitment, Inbound);
+    public override int GetHashCode() => HashCode.Combine(Address, NextCommitment, Inbound);
 }
 
 /// <summary>A member as a group's state knows it (groups section 3.5).</summary>
@@ -574,7 +571,7 @@ public static class GroupEvents
             var o = StrictJson.ParseObject(pt, nulls: false);
             return new SealedContent
             {
-                Address = o.GetString("address") ?? "", Name = o.GetString("name"), NextCommitment = o.GetString("nextCommitment") ?? "",
+                Address = o.GetString("address") ?? "", NextCommitment = o.GetString("nextCommitment") ?? "",
                 Inbound = o.GetBool("inbound") ?? false, Certificates = o.GetStrings("certificates"),
             };
         }

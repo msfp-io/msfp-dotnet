@@ -62,33 +62,32 @@ public class MusicTests
     [Fact]
     public void MusicQueueVectors()
     {
-        var v = TestVectors.Load("music.json");
-        var root = v["streamRoot"]!.GetValue<string>();
         var cases = TestVectors.Cases("music.json", "queue");
         var failures = new List<string>();
         foreach (var c in cases)
         {
             var answer = c.Str("kind") == "answer";
             var request = answer ? c.Str("request") : c.Str("text");
-            IReadOnlyList<string> asked = [];
-            var delivery = "";
-            bool ok;
+            IReadOnlyList<QueueAsk> asked = [];
+            var why = "";
             try
             {
-                var req = StrictJson.ReadRequest(Encoding.UTF8.GetBytes(request), ["title", "delivery", "queue"]);
-                delivery = req.GetString("delivery") ?? "";
-                ok = Music.TryCheckQueue(req.GetString("title") ?? "", req["queue"], out asked);
+                var req = JsonNode.Parse(request)!.AsObject();
+                asked = Music.CheckQueue(req);
             }
-            catch (ProtocolException)
+            catch (PlayRefusal e)
             {
-                ok = false;
+                why = e.Status + " " + e.Problem;
             }
 
+            var ok = why.Length == 0;
             if (!answer)
             {
-                if (ok != c.Valid())
+                var wantWhy = c.Str("reason");
+                if (ok != c.Valid() || (!ok && !wantWhy.StartsWith(why.StartsWith("400", StringComparison.Ordinal) ? "400" : "409 delivery-refused",
+                        StringComparison.Ordinal)))
                 {
-                    failures.Add($"{c.Str("name")}: accepted {ok}, want {c.Valid()}");
+                    failures.Add($"{c.Str("name")}: accepted {ok} ({why}), want {c.Valid()} ({wantWhy})");
                 }
 
                 continue;
@@ -96,13 +95,12 @@ public class MusicTests
 
             if (!ok)
             {
-                failures.Add($"{c.Str("name")}: the request refused");
+                failures.Add($"{c.Str("name")}: the request refused ({why})");
                 continue;
             }
 
-            var a = StrictJson.ReadAnswer(Encoding.UTF8.GetBytes(c.Str("text")));
-            var url = a.GetObject("stream")?.GetString("url") ?? "";
-            var kept = Music.ReadQueue(a["queue"], asked, delivery, root, url);
+            var a = StrictJson.ReadAnswer(Encoding.UTF8.GetBytes(c.Str("text")), keepNestedNulls: true);
+            var kept = Music.ReadQueue(a["queue"], asked);
             var have = JsonNode.Parse(JsonOut.Object(o => o.Objects("q", kept, (w, e) => e.Write(w))))!["q"];
             if (Differs(have, c.Str("output")) is { } diff)
             {
@@ -179,11 +177,10 @@ public class MusicTests
             [
                 new MusicCopy
                 {
-                    Id = "c1", DurationMs = 1000, Container = "flac", Codec = "flac", Size = 10, Etag = "e1",
-                    BitrateKbps = 936, ReplayGain = new ReplayGain(-4.12, null, null, null), Lyrics = "plain",
+                    Id = "c1", DurationMs = 1000, MediaType = "audio/flac", Codec = "flac", Size = 10, Etag = "e1",
+                    ReplayGain = new ReplayGain(-4.12, null, null, null), Lyrics = "plain",
                 },
             ],
-            Ids = new Dictionary<string, string> { ["isrc"] = "USSM17000123" },
         };
         var got = Music.ReadTitle(sent.ToJson());
         Assert.NotNull(got);
@@ -196,14 +193,15 @@ public class MusicTests
     }
 
     [Fact]
-    public void QueueUrls()
+    public void QueueChecks()
     {
-        const string root = "https://a.example.org/api/v1/stream/";
-        Assert.Equal(root + "Tk1/queue/3/master.m3u8", Music.QueueUrl(root, "Tk1", 3, "hls"));
-        Assert.Equal(root + "Tk1/queue/0/file", Music.QueueUrl(root, "Tk1", 0, "file"));
-        Assert.True(Music.TryCheckQueue("track/local/T1", null, out var q));
-        Assert.Empty(q);
-        Assert.False(Music.TryCheckQueue("album/local/A1", null, out _));
+        Assert.Empty(Music.CheckQueue(JsonNode.Parse("""{"title":"track/local/T1"}""")!.AsObject()));
+        Assert.Equal(400, Assert.Throws<PlayRefusal>(() => Music.CheckQueue(JsonNode.Parse("""{"title":"album/local/A1"}""")!.AsObject())).Status);
+        var q = Music.CheckQueue(JsonNode.Parse(
+            """{"title":"track/local/T1","delivery":"file","queue":[{"title":"track/local/T2"},{"title":"track/local/T3","delivery":"transcode"}]}""")!.AsObject());
+        Assert.Equal([new QueueAsk("track/local/T2", "", "file", false), new QueueAsk("track/local/T3", "", "transcode", true)], q);
+        Assert.Equal(("direct", "file"), (q[0].Method, q[0].Protocol));
+        Assert.Equal(("transcode", "hls"), (q[1].Method, q[1].Protocol));
     }
 
     [Fact]
