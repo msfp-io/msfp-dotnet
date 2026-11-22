@@ -387,7 +387,7 @@ public sealed partial class MsfpEngine
         var output = t;
         if (output.MaxBitrateKbps > 0)
         {
-            output = output with { MaxBitrateKbps = Math.Max(Playback.CoarsenBitrate(output.MaxBitrateKbps) / 1000 * 1000, 1000) };
+            output = output with { MaxBitrateKbps = Math.Max(OldNames.CoarsenBitrate(output.MaxBitrateKbps) / 1000 * 1000, 1000) }; // P17
         }
 
         output = output with { MaxHeight = Protocol.Video.StepHeight(output.MaxHeight) };
@@ -479,7 +479,7 @@ public sealed partial class MsfpEngine
         var caps = Coarsen(request.Capabilities ?? new PlayCapabilities(), !audioOnly);
         var targets = CoarseTargets(request.Transcode, !audioOnly);
         var start = purpose == Playback.PurposePlay ? Math.Min(Math.Max(request.StartMs, 0), Playback.MaxPositionMs) : 0;
-        var kbps = Playback.CoarsenBitrate(request.MaxBitrateKbps);
+        var kbps = OldNames.CoarsenBitrate(request.MaxBitrateKbps); // P17: no coarsening of maxBitrateKbps now
         string? subtitleLanguage = null, subtitleTrack = null;
         IReadOnlyList<string>? queue = null;
         if (!audioOnly)
@@ -651,7 +651,7 @@ public sealed partial class MsfpEngine
             MimeType = a.Stream.Protocol == "file" ? Playback.RelayedMediaType(a.Stream.MimeType) : "",
             Etag = a.Etag, Size = changed ? -1 : size, CopyChanged = changed,
             PositionMs = a.PositionMs, DurationMs = a.DurationMs, MaxBitrateKbps = a.MaxBitrateKbps,
-            Versions = a.Versions.Select(v => new Version(v.Id, v.Name)).ToList(),
+            Versions = [], // P17: versions left play's answer; the catalog's copies list them
             VersionId = a.VersionId, AudioTrack = a.AudioTrack,
             AudioTracks = a.AudioTracks.Select(t => new Track
             {

@@ -845,7 +845,7 @@ public sealed partial class MsfpEngine
             Copy = chosen.Handle, Title = @in.Title, AudioOnly = audioOnly, Purpose = purpose, Delivery = @in.Delivery,
             Container = @in.Container, Transcode = @in.Transcode, AudioRenditions = @in.AudioRenditions, Parts = chosen.Parts,
             Peer = new PeerRef(p.Id, p.Name), AudioTrack = audio, SubtitleTrack = shown, StartMs = start,
-            Capabilities = @in.Capabilities ?? new PlayCapabilities(), MaxBitrateKbps = kbps, Queue = queued,
+            Capabilities = new PlayCapabilities(), MaxBitrateKbps = kbps, Queue = queued, // P17: no capabilities in play now
             Admit = method =>
             {
                 if (slot is not null)

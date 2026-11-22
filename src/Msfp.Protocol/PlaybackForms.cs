@@ -10,17 +10,19 @@ namespace Msfp.Protocol;
 /// </summary>
 public static partial class Playback
 {
-    [GeneratedRegex(@"^play_[a-z2-7]{26}\z")]
-    private static partial Regex PlayIdRe();
-
     [GeneratedRegex(@"^[A-Za-z0-9_-]{1,64}\z")]
     private static partial Regex IdRe();
 
-    /// <summary>Whether <paramref name="s"/> is a playback ID (playback section 2.3).</summary>
+    /// <summary>
+    /// Whether <paramref name="s"/> is a playback ID (playback section 2.3):
+    /// the common opaque form, 1 to 64 characters of A–Z a–z 0–9 _ -. The
+    /// owning server makes it from at least 128 bits of a cryptographically
+    /// secure random source, as it makes tickets.
+    /// </summary>
     public static bool PlayId(string s)
     {
         ArgumentNullException.ThrowIfNull(s);
-        return PlayIdRe().IsMatch(s);
+        return IdRe().IsMatch(s);
     }
 
     /// <summary>

@@ -352,11 +352,13 @@ public sealed class DeliveryTests
 
     // A scan's cap counts the bytes sent: a read cut short counts only what
     // went (media section 4.2).
+    // P17: the cap is the pairing's scanBytes now; the engine still cuts at
+    // the recommended 32 MiB until its step.
     [Fact]
     public async Task ScanCapCountsSent()
     {
         var h = HostKit.FilmHost();
-        var big = new byte[Media.ScanCap + 1000];
+        var big = new byte[Playback.ScanBytesRecommended + 1000];
         h.Files["file"] = big;
         h.EditCopy(Film, 0, c => c with { Size = big.Length });
         using var s = await Sharing.StartAsync(h, c => c with { NewPairing = new Limits { Streams = 1, Transcodes = 1, ScansPerDay = 1 } });
@@ -375,7 +377,7 @@ public sealed class DeliveryTests
         await Assert.ThrowsAsync<IOException>(() => s.B.Engine.FetchAsync(scan.Id, new MediaPath { Kind = MediaKind.File }, "bytes=0-1999", new MemorySink()));
         h.Serve = null;
         var o = await HostKit.GetFullAsync(s.A, file, "GET", "Range", "bytes=0-");
-        Assert.Equal((206, Media.ScanCap - 2000), (o.Status, o.Body.Length)); // 1,000 bytes sent twice
+        Assert.Equal((206, Playback.ScanBytesRecommended - 2000), (o.Status, o.Body.Length)); // 1,000 bytes sent twice
         Assert.Equal(416, await HostKit.GetAsync(s.A, file, "GET", "Range", "bytes=0-0"));
     }
 
@@ -387,7 +389,7 @@ public sealed class DeliveryTests
     {
         var clock = new FakeTime(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         var h = HostKit.FilmHost();
-        var big = new byte[Media.ScanCap + 1000];
+        var big = new byte[Playback.ScanBytesRecommended + 1000];
         for (var i = 0; i < big.Length; i++)
         {
             big[i] = (byte)i;
@@ -406,7 +408,7 @@ public sealed class DeliveryTests
         Assert.Equal(MsfpError.NotFound, await FetchErrorAsync(s, scan.Id, file));
         Assert.Equal(big[..10], (await FetchAsync(s, scan.Id, file, "bytes=0-9")).Body);
         var o = await FetchAsync(s, scan.Id, file, "bytes=0-");
-        Assert.Equal((206, Media.ScanCap - 10, "bytes 0-33554421/33555432"), (o.Status, (long)o.Body.Length, o.ContentRange));
+        Assert.Equal((206, Playback.ScanBytesRecommended - 10, "bytes 0-33554421/33555432"), (o.Status, (long)o.Body.Length, o.ContentRange));
         Assert.Equal(MsfpError.RangeNotSatisfiable, await FetchErrorAsync(s, scan.Id, file, "bytes=0-0"));
         // Only the file opens under a scan's ticket; its progress changes
         // nothing.

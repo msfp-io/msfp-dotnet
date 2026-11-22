@@ -218,52 +218,6 @@ public class CatalogTests
         TestVectors.NoFailures(failures, cases.Count, "strict.json languageCodes as valid tags");
     }
 
-    [Fact]
-    public void NamesLists()
-    {
-        var lists = new Dictionary<string, IReadOnlyList<string>>
-        {
-            ["Containers"] = Names.Containers, ["VideoCodecs"] = Names.VideoCodecs, ["AudioCodecs"] = Names.AudioCodecs,
-            ["HdrFormats"] = Names.HdrFormats, ["AudioProfiles"] = Names.AudioProfiles, ["Editions"] = Names.Editions,
-            ["ExtraTypes"] = Names.ExtraTypes, ["SubtitleFormats"] = Names.SubtitleFormats,
-        };
-        foreach (var (name, list) in lists)
-        {
-            Assert.All(list, s => Assert.True(s.Length > 0 && s == s.ToLowerInvariant(), $"{name}: \"{s}\""));
-            Assert.Equal(list.Count, list.Distinct(StringComparer.Ordinal).Count());
-        }
-
-        Assert.Equal(18, Names.Containers.Count);
-        Assert.Equal(11, Names.VideoCodecs.Count);
-        Assert.Equal(15, Names.AudioCodecs.Count);
-        foreach (var list in new[] { Names.Containers, Names.VideoCodecs, Names.AudioCodecs, Names.ExtraTypes })
-        {
-            Assert.DoesNotContain(Names.Other, list);
-        }
-
-        Assert.Equal(["hdr10", "hdr10plus", "hlg", "dv"], Names.HdrFormats);
-        Assert.Equal(Names.DvProfiles.Order(), Names.DvProfiles);
-
-        Assert.True(Names.IsContainer("m2ts"));
-        Assert.False(Names.IsContainer("matroska"));
-        Assert.False(Names.IsContainer("MKV"));
-        Assert.True(Names.IsVideoCodec("theora"));
-        Assert.False(Names.IsVideoCodec("aac"));
-        Assert.True(Names.IsAudioCodec("pcm_bluray"));
-        Assert.False(Names.IsAudioCodec("h264"));
-
-        Assert.Equal("mkv", Names.NameOrOther(Names.Containers, "mkv"));
-        Assert.Equal(Names.Other, Names.NameOrOther(Names.Containers, "matroska"));
-        Assert.Equal(Names.Other, Names.NameOrOther(Names.Containers, ""));
-        Assert.Equal(Names.Other, Names.NameOrOther(Names.Containers, null));
-        Assert.Equal("truehd", Names.NameOrOther(Names.AudioCodecs, "truehd"));
-        Assert.Equal(Names.Other, Names.NameOrOther(Names.AudioCodecs, "TrueHD"));
-        Assert.Equal("pgs", Names.NameOrOther(Names.SubtitleFormats, "pgs"));
-        Assert.Equal(Names.Other, Names.NameOrOther(Names.SubtitleFormats, "hdmv_pgs_subtitle"));
-        Assert.Equal("imax", Names.NameOrOther(Names.Editions, "imax"));
-        Assert.Equal(Names.Other, Names.NameOrOther(Names.Editions, "fan"));
-    }
-
     // The token of core section 8.5, and the open values a fact keeps.
     [Fact]
     public void Tokens()

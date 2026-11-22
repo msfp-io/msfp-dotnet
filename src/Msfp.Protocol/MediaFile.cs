@@ -61,9 +61,6 @@ public sealed record MediaAnswer(int Status, string? ETag = null, string? Conten
 // relays, and the cap of a scan ticket.
 public static partial class Media
 {
-    /// <summary>How many body bytes the owning server sends under one scan ticket, a byte sent twice counted twice: 32 MiB (media section 4.2).</summary>
-    public const long ScanCap = 32 << 20;
-
     [GeneratedRegex(@"^bytes=(?:([0-9]{1,15})-([0-9]{1,15})?|-([0-9]{1,15}))\z")]
     private static partial Regex RangeForm();
 
@@ -203,23 +200,26 @@ public static partial class Media
 
     /// <summary>
     /// What the owning server sends for a fetch under a scan ticket that has
-    /// sent <paramref name="sent"/> bytes so far, of a copy of
-    /// <paramref name="size"/> bytes (media section 4.2): a 206 of start to
-    /// end, the range cut short at <see cref="ScanCap"/> when it would pass
-    /// it. False is a 416, with <see cref="UnsatisfiedRange"/>: a fetch
-    /// without Range or with a malformed one, one that can't be satisfied,
-    /// or one once the cap is spent.
+    /// sent <paramref name="sent"/> bytes so far, a byte sent twice counted
+    /// twice, of a copy of <paramref name="size"/> bytes (media section 4.2):
+    /// a 206 of start to end, the range cut short at <paramref name="cap"/>
+    /// when it would pass it. The cap is the scanBytes the owning server sends
+    /// in limits (<see cref="PlaybackLimits.ScanCap"/>: the floor,
+    /// <see cref="Playback.ScanBytesFloor"/>, when it sends none). False is a
+    /// 416, with <see cref="UnsatisfiedRange"/>: a fetch without Range or
+    /// with a malformed one, one that can't be satisfied, or one once the cap
+    /// is spent.
     /// </summary>
-    public static bool TryScanSpan(long sent, string? rangeHeader, long size, out long start, out long end)
+    public static bool TryScanSpan(long sent, string? rangeHeader, long size, long cap, out long start, out long end)
     {
         start = end = 0;
-        if (!TryParseRange(rangeHeader, out var r) || sent >= ScanCap || !r.TrySpan(size, out start, out end))
+        if (!TryParseRange(rangeHeader, out var r) || sent >= cap || !r.TrySpan(size, out start, out end))
         {
             start = end = 0;
             return false;
         }
 
-        end = Math.Min(end, start + (ScanCap - sent) - 1);
+        end = Math.Min(end, start + (cap - sent) - 1);
         return true;
     }
 

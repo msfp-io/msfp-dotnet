@@ -7,9 +7,6 @@ namespace Msfp.Protocol;
 // and cleans it, and the restart of a file being read (section 2.7).
 public static partial class Playback
 {
-    /// <summary>How long a version's name is kept, in code points (playback section 2.3, video section 3.6).</summary>
-    public const int MaxVersionName = 32;
-
     /// <summary>The only mimeType an hls stream may name.</summary>
     public const string HlsType = "application/vnd.apple.mpegurl";
 
@@ -23,13 +20,16 @@ public static partial class Playback
     /// the delivery's (direct for file); stream not under root as its
     /// protocol says (<see cref="TryStreamBase"/>), an hls mimeType other
     /// than <see cref="HlsType"/>, a file stream for a remux or a transcode,
-    /// an hls one for delivery file; etag not 1 to 64 characters of A–Z a–z
-    /// 0–9 - _; positionMs absent or out of 0 to <see cref="MaxPositionMs"/>.
-    /// Cleaned: durationMs out of range set to 0; versions and tracks with
-    /// another ID dropped, names made plain and cut; other IDs cleared; track
-    /// members of the wrong type or value dropped; maxBitrateKbps out of
-    /// range dropped. A refused answer: the viewer's server sends stop for
-    /// its id, when it has one, and gives up.
+    /// an hls one for delivery file, a file one without delivery (the
+    /// baseline is HLS); etag not 1 to 64 characters of A–Z a–z 0–9 - _;
+    /// positionMs absent or out of 0 to <see cref="MaxPositionMs"/>;
+    /// audioRenditions not a boolean. Cleaned: durationMs out of range set
+    /// to 0; tracks with another ID dropped; other IDs cleared; track members
+    /// of the wrong type or value dropped (a role kept when it is a token,
+    /// known or not); audioRenditions true with a file stream dropped;
+    /// maxBitrateKbps out of range dropped. Unknown members (versions and
+    /// info among them, since proposal 17) are ignored. A refused answer: the
+    /// viewer's server sends stop for its id, when it has one, and gives up.
     /// </summary>
     /// <returns>The answer kept; null when refused.</returns>
     public static PlayAnswer? ReadPlayAnswer(ReadOnlySpan<byte> body, string delivery, string root, string catalogEtag)
@@ -90,7 +90,7 @@ public static partial class Playback
         var file = protocol == "file";
         if (!TryStreamBase(url, root, protocol, out var streamBase) ||
             (!file && mimeType.Length > 0 && mimeType != HlsType) ||
-            (file && method != MethodDirect) || (delivery == DeliveryFile && !file))
+            (file && method != MethodDirect) || (delivery == DeliveryFile && !file) || (delivery.Length == 0 && protocol != "hls"))
         {
             return null;
         }
@@ -111,27 +111,6 @@ public static partial class Playback
             if (n is >= 0 and <= MaxPositionMs)
             {
                 duration = n;
-            }
-        }
-
-        var versions = new List<PlayVersion>();
-        if (o.TryGetPropertyValue("versions", out var vs))
-        {
-            if (vs is not JsonArray list)
-            {
-                return null;
-            }
-
-            foreach (var e in list)
-            {
-                var eo = e as JsonObject;
-                var vid = JsonMembers.AsString(eo?["id"]) ?? "";
-                if (!Id(vid))
-                {
-                    continue;
-                }
-
-                versions.Add(new PlayVersion(vid, Music.CleanText(JsonMembers.AsString(eo!["name"]) ?? "", MaxVersionName)));
             }
         }
 
@@ -157,6 +136,17 @@ public static partial class Playback
             return null;
         }
 
+        var renditions = false;
+        if (o.TryGetPropertyValue("audioRenditions", out var ar))
+        {
+            if (Music.BoolOf(ar) is not { } b)
+            {
+                return null;
+            }
+
+            renditions = b && !file;
+        }
+
         var kbps = 0;
         if (o.TryGetPropertyValue("maxBitrateKbps", out var k))
         {
@@ -179,10 +169,10 @@ public static partial class Playback
             Etag = etag,
             PositionMs = pos,
             DurationMs = duration,
-            Versions = versions,
             VersionId = Id(versionId) ? versionId : "",
             AudioTracks = tracks,
             AudioTrack = Id(audioTrack) ? audioTrack : "",
+            AudioRenditions = renditions,
             MaxBitrateKbps = kbps,
             ReadTitleAgain = catalogEtag.Length > 0 && etag != catalogEtag,
         };
@@ -201,13 +191,12 @@ public static partial class Playback
 
         static bool Flag(JsonNode? n) => n is JsonValue v && v.GetValueKind() == JsonValueKind.True;
         var language = JsonMembers.AsString(o!["language"]);
-        var role = JsonMembers.AsString(o["role"]);
         return new PlayTrack
         {
             Id = id,
             Language = Languages.ValidTag(language) ? language! : "",
-            Channels = JsonMembers.AsInteger(o["channels"]) is { } n && n >= 0 ? (int)Math.Min(n, int.MaxValue) : 0,
-            Role = role is "commentary" or "description" ? role : "",
+            Channels = JsonMembers.AsInteger(o["channels"]) is { } n && n is >= 1 and <= 64 ? (int)n : 0,
+            Role = Names.Token(o["role"]) ?? "",
             Default = Flag(o["default"]),
             Forced = Flag(o["forced"]),
             HearingImpaired = Flag(o["hearingImpaired"]),
@@ -251,7 +240,7 @@ public static partial class Playback
 /// the playback's own members, checked and cleaned
 /// (<see cref="Playback.ReadPlayAnswer"/>). The content parts' members
 /// (video's subtitles and previews, music's queue) are theirs to read;
-/// info, title and next aren't kept.
+/// unknown members (versions, info, title, next) aren't kept.
 /// </summary>
 public sealed record PlayAnswer
 {
@@ -273,9 +262,6 @@ public sealed record PlayAnswer
     /// <summary>The duration, in milliseconds; 0 when unknown.</summary>
     public long DurationMs { get; init; }
 
-    /// <summary>The title's copies, to choose another.</summary>
-    public IReadOnlyList<PlayVersion> Versions { get; init; } = [];
-
     /// <summary>The copy playing; "" when not said.</summary>
     public string VersionId { get; init; } = "";
 
@@ -284,6 +270,13 @@ public sealed record PlayAnswer
 
     /// <summary>The audio track playing; "" when not said.</summary>
     public string AudioTrack { get; init; } = "";
+
+    /// <summary>
+    /// Whether the playlist carries every audio track as a rendition (media
+    /// section 3.1), so that switching tracks needs no new playback; false
+    /// when the owning server made none (or the stream is a file).
+    /// </summary>
+    public bool AudioRenditions { get; init; }
 
     /// <summary>The bitrate cap the owning server applied; 0 when not said.</summary>
     public int MaxBitrateKbps { get; init; }
@@ -299,11 +292,6 @@ public sealed record PlayAnswer
 /// <param name="Base">The stream's base (<see cref="Playback.TryStreamBase"/>), under which every other URL of the answer must be.</param>
 public sealed record PlayStream(string Url, string Protocol, string MimeType, string Base);
 
-/// <summary>An entry of an answer's versions.</summary>
-/// <param name="Id">The version's ID.</param>
-/// <param name="Name">Its name, plain and cut; "" when none.</param>
-public sealed record PlayVersion(string Id, string Name);
-
 /// <summary>A track of an answer, of playback section 2.3's members (video's, its codec and the rest, are video's).</summary>
 public sealed record PlayTrack
 {
@@ -313,10 +301,10 @@ public sealed record PlayTrack
     /// <summary>Its language tag; "" when none or invalid.</summary>
     public string Language { get; init; } = "";
 
-    /// <summary>Its channels; 0 when not said.</summary>
+    /// <summary>Its channels, 1 to 64; 0 when not said.</summary>
     public int Channels { get; init; }
 
-    /// <summary>commentary, description, or "".</summary>
+    /// <summary>Its role, a token of the DASH role scheme (main, commentary, description…), known or not; "" when none.</summary>
     public string Role { get; init; } = "";
 
     /// <summary>Whether it is the default.</summary>

@@ -76,6 +76,7 @@ public static partial class Playback
             At = at,
             AtSaid = atSaid,
             Title = Text(o, "title") ?? "",
+            TitleSaid = o.ContainsKey("title"),
         };
     }
 
@@ -127,6 +128,9 @@ public sealed record PlayReport
 
     /// <summary>The track playing, of a music queue; "" when not said.</summary>
     public string Title { get; init; } = "";
+
+    /// <summary>Whether the request said title: an empty one is a title neither the playback's nor of its queue (400).</summary>
+    public bool TitleSaid { get; init; }
 }
 
 /// <summary>
@@ -184,7 +188,7 @@ public sealed record PlaybackState
         }
 
         var title = r.Title;
-        if (title.Length == 0)
+        if (title.Length == 0 && !r.TitleSaid)
         {
             title = Title;
         }

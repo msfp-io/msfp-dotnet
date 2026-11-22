@@ -298,7 +298,8 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
 
         var probed = _probes.Describe(path, info);
         var etag = Convert.ToString(info.Length, 16) + "-" + Convert.ToString(info.LastWriteTimeUtc.Ticks, 16);
-        return new Protocol.Copy(rel, probed.DurationMs, Names.NameOrOther(Names.Containers, Path.GetExtension(rel).TrimStart('.')),
+        // P17: container is ffmpeg's muxer name now (matroska for .mkv); the extension until the example's step.
+        return new Protocol.Copy(rel, probed.DurationMs, Path.GetExtension(rel).TrimStart('.').ToLowerInvariant(),
             info.Length, etag, probed.Audio)
         {
             BitrateKbps = probed.BitrateKbps,

@@ -21,10 +21,11 @@ public class PlaybackTests
     [Fact]
     public void PlayIdAndId()
     {
-        Assert.True(Playback.PlayId("play_abcdefghijklmnopqrstuvwxyz"[..5] + new string('a', 26)));
-        Assert.False(Playback.PlayId("play_" + new string('a', 25)));
+        Assert.True(Playback.PlayId("play_" + new string('a', 26)));
+        Assert.True(Playback.PlayId("Pb7-x_" + new string('Z', 58)));
+        Assert.False(Playback.PlayId(new string('a', 65)));
         Assert.False(Playback.PlayId("play_" + new string('a', 26) + "\n"));
-        Assert.False(Playback.PlayId("play_" + new string('1', 26)));
+        Assert.False(Playback.PlayId(""));
         Assert.True(Playback.Id("A-z_0"));
         Assert.False(Playback.Id(new string('a', 65)));
         Assert.False(Playback.Id("a\n"));

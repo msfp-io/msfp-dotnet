@@ -1015,7 +1015,7 @@ public sealed partial class MsfpEngine
     // MSFP lists (theme songs and videos are never sent).
     private byte[]? VideoOut(string peer, VideoKey k, VideoTitle t, string library)
     {
-        if (k.Kind == "extra" && !Names.ExtraTypes.Contains(t.ExtraType ?? "", StringComparer.Ordinal))
+        if (k.Kind == "extra" && !OldNames.ExtraTypes.Contains(t.ExtraType ?? "", StringComparer.Ordinal)) // P17: extraType is open now
         {
             return null;
         }

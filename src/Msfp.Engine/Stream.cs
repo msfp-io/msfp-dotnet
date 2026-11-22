@@ -471,7 +471,7 @@ public sealed partial class MsfpEngine
                     return StreamOutcome.Served;
                 }
 
-                if (!Media.TryScanSpan(pb.ScanSent, h, size, out start, out end))
+                if (!Media.TryScanSpan(pb.ScanSent, h, size, Playback.ScanBytesRecommended, out start, out end)) // P17: the pairing's scanBytes
                 {
                     return Unsatisfied();
                 }

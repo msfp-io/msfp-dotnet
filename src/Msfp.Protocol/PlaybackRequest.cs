@@ -4,8 +4,10 @@ using System.Text.Json.Nodes;
 namespace Msfp.Protocol;
 
 // play's request (MSFP playback sections 2.1, 2.2 and 2.7, video section
-// 5.1): what a viewer's server sends of a device, coarsened, and how an
-// owning server reads it, refusing what step 1 of section 2.2 refuses.
+// 5.1): what a viewer's server asks for, and how an owning server reads it,
+// refusing what step 1 of section 2.2 refuses. The request says nothing of
+// the viewer's device: the viewer's server asks for a delivery, or leaves
+// it out for the baseline.
 public static partial class Playback
 {
     /// <summary>A playback to watch or listen to (playback section 1).</summary>
@@ -62,35 +64,23 @@ public static partial class Playback
     /// <summary>The largest bitrate play takes, in kbit/s.</summary>
     public const int MaxKbps = 10_000_000;
 
-    /// <summary>The cap of playback section 2.2, step 6, without any other, in kbit/s.</summary>
-    public const int DefaultCapKbps = 120_000;
-
-    private const int MaxCapHeight = 100_000;
-    private const int MaxCapChannels = 64;
-    private const int MaxCapSampleRate = 768_000;
-    private const int MaxCapBitDepth = 64;
-
-    /// <summary>The steps maxAudioChannels is coarsened to (playback section 2.1), and transcode.audioChannels's values.</summary>
+    /// <summary>The values of a transcode's audioChannels (playback section 2.7).</summary>
     public static readonly IReadOnlyList<int> ChannelSteps = [2, 6, 8];
-
-    /// <summary>The steps maxAudioSampleRate is coarsened to (playback section 2.1).</summary>
-    public static readonly IReadOnlyList<int> SampleRateSteps = [44_100, 48_000, 96_000, 192_000];
-
-    /// <summary>The steps maxAudioBitDepth is coarsened to (playback section 2.1).</summary>
-    public static readonly IReadOnlyList<int> BitDepthSteps = [16, 24, 32];
 
     // The members of play's request this part and video know: null in any
     // of them, anywhere, refuses the request (core section 2.3).
     private static readonly string[] PlayMembers =
     [
-        "title", "purpose", "delivery", "container", "transcode", "audioRenditions", "capabilities",
+        "title", "purpose", "delivery", "container", "transcode", "audioRenditions",
         "startPositionMs", "maxBitrateKbps", "audioLanguage", "audioTrack", "versionId", "subtitleLanguage", "subtitleTrack",
     ];
 
     /// <summary>
     /// <paramref name="v"/> stepped down to the greatest of
-    /// <paramref name="steps"/> not above it, the first below the first; 0
-    /// (or less) is not said, and stays 0, never stepped up.
+    /// <paramref name="steps"/> not above it, the first below the first: a
+    /// transcode target of its steps (<see cref="ChannelSteps"/>,
+    /// <see cref="Video.Heights"/>) for a value at most that; 0 (or less) is
+    /// not said, and stays 0, never stepped up.
     /// </summary>
     public static int StepDown(int v, IReadOnlyList<int> steps)
     {
@@ -113,16 +103,12 @@ public static partial class Playback
     }
 
     /// <summary>
-    /// The request's maxBitrateKbps as a viewer's server sends it (playback
-    /// section 2.1): rounded down to a whole 1,000 from 1,000 up, kept as it
-    /// is below; never above <see cref="MaxKbps"/>, never below 0.
-    /// </summary>
-    public static int CoarsenBitrate(int kbps) => kbps >= 1000 ? Math.Min(kbps, MaxKbps) / 1000 * 1000 : Math.Max(kbps, 0);
-
-    /// <summary>
-    /// Playback section 2.7's table of purpose and delivery: a play takes any
-    /// delivery or none; a download file, or a transcode with a size
-    /// (<see cref="TranscodeTargets.Sized"/>); a scan file only.
+    /// Playback section 2.7's table of purpose and a delivery of its list
+    /// (file, remux, transcode, or "" for none): a play takes any delivery or
+    /// none; a download file, or a transcode with a size
+    /// (<see cref="TranscodeTargets.Sized"/>); a scan file only. A delivery
+    /// not of the list is refused at step 7 whatever the purpose
+    /// (<see cref="RefuseDelivery"/>).
     /// </summary>
     public static bool PurposeAllows(string purpose, string delivery, TranscodeTargets? targets) => purpose switch
     {
@@ -135,14 +121,16 @@ public static partial class Playback
     /// <summary>
     /// Reads play's request as step 1 of playback section 2.2 checks it: an
     /// I-JSON object; title a key <paramref name="playable"/> says play takes
-    /// (null: <see cref="TitleKey.TryParse"/>'s); purpose, delivery and
-    /// container of their lists, container with delivery remux only, and
-    /// then required; a transcode object with delivery transcode only, each
-    /// target of its values; numbers in range; languages valid tags
-    /// (<see cref="Languages.ValidTag"/>); capabilities as section 2.1 reads
-    /// them, unknown entries ignored; purpose and delivery together as
-    /// <see cref="PurposeAllows"/> says. Track IDs are checked later, at step
-    /// 4 (<see cref="PlayRequest.TrackIdsOk"/>).
+    /// (null: <see cref="TitleKey.TryParse"/>'s); purpose of its list;
+    /// delivery and container tokens (core section 8.5: an unknown token is
+    /// kept, and refused at step 7 by <see cref="RefuseDelivery"/>), container
+    /// with delivery remux only, and then required; a transcode object with
+    /// delivery transcode only, its codecs tokens, its numbers of their
+    /// steps; numbers in range; languages valid tags
+    /// (<see cref="Languages.ValidTag"/>); purpose and a delivery of the list
+    /// together as <see cref="PurposeAllows"/> says. Unknown members
+    /// (capabilities among them, since proposal 17) are ignored. Track IDs
+    /// are checked later, at step 4 (<see cref="PlayRequest.TrackIdsOk"/>).
     /// </summary>
     /// <exception cref="PlayRefusal">The request is refused (400 invalid-request).</exception>
     public static PlayRequest ReadPlay(ReadOnlySpan<byte> body, Func<string, bool>? playable = null) => ReadPlay(body, playable, out _);
@@ -174,9 +162,9 @@ public static partial class Playback
         }
 
         var delivery = Text(o, "delivery") ?? "";
-        if (o.ContainsKey("delivery") && delivery is not (DeliveryFile or DeliveryRemux or DeliveryTranscode))
+        if (o.ContainsKey("delivery") && !Names.IsToken(delivery))
         {
-            throw BadPlay("delivery isn't file, remux or transcode");
+            throw BadPlay("delivery isn't a token");
         }
 
         var container = Text(o, "container");
@@ -185,9 +173,9 @@ public static partial class Playback
             throw BadPlay("container without delivery remux");
         }
 
-        if (container is not null && !Names.IsContainer(container))
+        if (container is not null && !Names.IsToken(container))
         {
-            throw BadPlay("container isn't one of containers");
+            throw BadPlay("container isn't a token");
         }
 
         if (container is null && delivery == DeliveryRemux)
@@ -208,11 +196,6 @@ public static partial class Playback
         }
 
         var renditions = Boolean(o, "audioRenditions") ?? false;
-        PlayCapabilities? caps = null;
-        if (o.TryGetPropertyValue("capabilities", out var c) && ReadCapabilities(c) is { Empty: false } read)
-        {
-            caps = read;
-        }
 
         var start = Integer(o, "startPositionMs", MaxPositionMs);
         var kbps = (int)Integer(o, "maxBitrateKbps", MaxKbps);
@@ -232,7 +215,8 @@ public static partial class Playback
         var audioTrack = Text(o, "audioTrack");
         var subtitleTrack = Text(o, "subtitleTrack");
         emptyTrack |= audioTrack == "" || subtitleTrack == "";
-        if (!PurposeAllows(purpose, delivery, targets))
+        var known = delivery is "" or DeliveryFile or DeliveryRemux or DeliveryTranscode;
+        if (known && !PurposeAllows(purpose, delivery, targets))
         {
             throw BadPlay("purpose " + purpose + " doesn't take that delivery");
         }
@@ -245,7 +229,6 @@ public static partial class Playback
             Container = container ?? "",
             Transcode = targets,
             AudioRenditions = renditions,
-            Capabilities = caps,
             StartPositionMs = start,
             MaxBitrateKbps = kbps,
             AudioLanguage = audioLanguage ?? "",
@@ -257,102 +240,10 @@ public static partial class Playback
         };
     }
 
-    // Reads capabilities as an owning server does (playback section 2.1,
-    // video section 5.1): a list of the wrong type or with an entry of the
-    // wrong type, or a number out of range, refuses; an unknown entry, in
-    // another case included, is ignored; dv counts only with dvProfiles;
-    // subtitles has no values yet: read for its type, kept empty.
-    private static PlayCapabilities ReadCapabilities(JsonNode? v)
-    {
-        if (v is not JsonObject o)
-        {
-            throw BadPlay("capabilities isn't an object");
-        }
-
-        IReadOnlyList<string> List(string name, IReadOnlyList<string> names)
-        {
-            if (!o.TryGetPropertyValue(name, out var raw))
-            {
-                return [];
-            }
-
-            if (raw is not JsonArray arr)
-            {
-                throw BadPlay("capabilities." + name + " isn't an array");
-            }
-
-            var entries = new List<string>();
-            foreach (var e in arr)
-            {
-                entries.Add(JsonMembers.AsString(e) ?? throw BadPlay("capabilities." + name + " has an entry that isn't a string"));
-            }
-
-            return Listed(entries, names);
-        }
-
-        int Number(string name, int top)
-        {
-            try
-            {
-                return (int)Integer(o, name, top);
-            }
-            catch (PlayRefusal)
-            {
-                throw BadPlay("capabilities." + name + " isn't an integer from 0 to " + top.ToString(CultureInfo.InvariantCulture));
-            }
-        }
-
-        var containers = List("containers", Names.Containers);
-        var videoCodecs = List("videoCodecs", Names.VideoCodecs);
-        var audioCodecs = List("audioCodecs", Names.AudioCodecs);
-        var audioProfiles = List("audioProfiles", Names.AudioProfiles);
-        var hdr = List("hdr", Names.HdrFormats);
-        _ = List("subtitles", []);
-        IReadOnlyList<int> dv = [];
-        if (o.TryGetPropertyValue("dvProfiles", out var rawDv))
-        {
-            if (rawDv is not JsonArray arr)
-            {
-                throw BadPlay("capabilities.dvProfiles isn't an array");
-            }
-
-            var profiles = new List<int>();
-            foreach (var e in arr)
-            {
-                var n = JsonMembers.AsInteger(e) ?? throw BadPlay("capabilities.dvProfiles has an entry that isn't an integer");
-                if (n is >= 0 and <= 10)
-                {
-                    profiles.Add((int)n);
-                }
-            }
-
-            dv = DvListed(profiles);
-        }
-
-        if (dv.Count == 0)
-        {
-            hdr = [.. hdr.Where(s => s != "dv")];
-        }
-
-        return new PlayCapabilities
-        {
-            Containers = containers,
-            VideoCodecs = videoCodecs,
-            AudioCodecs = audioCodecs,
-            AudioProfiles = audioProfiles,
-            Hdr = hdr,
-            DvProfiles = dv,
-            MaxHeight = Number("maxHeight", MaxCapHeight),
-            MaxAudioChannels = Number("maxAudioChannels", MaxCapChannels),
-            MaxAudioSampleRate = Number("maxAudioSampleRate", MaxCapSampleRate),
-            MaxAudioBitDepth = Number("maxAudioBitDepth", MaxCapBitDepth),
-            MaxBitrateKbps = Number("maxBitrateKbps", MaxKbps),
-        };
-    }
-
     // Reads a transcode object (playback section 2.7, video section 5.1):
-    // each target present of its values, else refused; Empty says
-    // burnSubtitle was "" (malformed, refused at step 4 with the track IDs).
+    // its codecs tokens (an unknown one is refused at step 7, 409), its
+    // numbers of their steps, else refused; Empty says burnSubtitle was "" or not a string
+    // (malformed, refused at step 4 with the track IDs).
     private static (TranscodeTargets Targets, bool Empty) ReadTargets(JsonNode? v)
     {
         if (v is not JsonObject o)
@@ -360,12 +251,12 @@ public static partial class Playback
             throw BadPlay("transcode isn't an object");
         }
 
-        string Codec(string name, IReadOnlyList<string> names)
+        string Codec(string name)
         {
             var s = Text(o, name);
-            if (s is not null && !names.Contains(s, StringComparer.Ordinal))
+            if (s is not null && !Names.IsToken(s))
             {
-                throw BadPlay("transcode." + name + " isn't one of its list");
+                throw BadPlay("transcode." + name + " isn't a token");
             }
 
             return s ?? "";
@@ -386,8 +277,8 @@ public static partial class Playback
             return (int)n;
         }
 
-        var videoCodec = Codec("videoCodec", Names.VideoCodecs);
-        var audioCodec = Codec("audioCodec", Names.AudioCodecs);
+        var videoCodec = Codec("videoCodec");
+        var audioCodec = Codec("audioCodec");
         var targets = new TranscodeTargets
         {
             VideoCodec = videoCodec,
@@ -396,17 +287,16 @@ public static partial class Playback
             MaxBitrateKbps = Target("maxBitrateKbps", n => n is >= 1000 and <= MaxKbps && n % 1000 == 0),
             AudioChannels = Target("audioChannels", n => ChannelSteps.Contains((int)n)),
         };
-        var burn = Text(o, "burnSubtitle");
-        return (targets with { BurnSubtitle = burn ?? "" }, burn == "");
+        // burnSubtitle's form, its type included, is step 4's (a string
+        // s<n>; anything else is malformed there).
+        if (!o.TryGetPropertyValue("burnSubtitle", out var burn))
+        {
+            return (targets, false);
+        }
+
+        var s = JsonMembers.AsString(burn) ?? "";
+        return (targets with { BurnSubtitle = s }, s.Length == 0);
     }
-
-    // Keeps of entries those names holds, each once, sorted.
-    internal static IReadOnlyList<string> Listed(IEnumerable<string> entries, IReadOnlyList<string> names) =>
-        [.. entries.Where(e => names.Contains(e, StringComparer.Ordinal)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
-
-    // Keeps of profiles those Names.DvProfiles holds, each once, in increasing order.
-    internal static IReadOnlyList<int> DvListed(IEnumerable<int> profiles) =>
-        [.. profiles.Where(Names.DvProfiles.Contains).Distinct().Order()];
 
     internal static PlayRefusal BadPlay(string why) => new(400, ProblemInvalid, why);
 
@@ -487,101 +377,13 @@ public sealed class PlayRefusal : Exception
 }
 
 /// <summary>
-/// What a viewer's device plays (playback section 2.1, video section 5.1).
-/// Each list holds only values of its names list, each once, sorted
-/// (DvProfiles in increasing order); 0 is not said.
-/// </summary>
-public sealed record PlayCapabilities
-{
-    /// <summary>The containers it plays.</summary>
-    public IReadOnlyList<string> Containers { get; init; } = [];
-
-    /// <summary>The video codecs it plays.</summary>
-    public IReadOnlyList<string> VideoCodecs { get; init; } = [];
-
-    /// <summary>The audio codecs it plays.</summary>
-    public IReadOnlyList<string> AudioCodecs { get; init; } = [];
-
-    /// <summary>The audio profiles it plays in their codec.</summary>
-    public IReadOnlyList<string> AudioProfiles { get; init; } = [];
-
-    /// <summary>The HDR formats it shows.</summary>
-    public IReadOnlyList<string> Hdr { get; init; } = [];
-
-    /// <summary>The Dolby Vision profiles it shows.</summary>
-    public IReadOnlyList<int> DvProfiles { get; init; } = [];
-
-    /// <summary>The tallest picture, in pixels; 0: not said.</summary>
-    public int MaxHeight { get; init; }
-
-    /// <summary>The most audio channels; 0: not said.</summary>
-    public int MaxAudioChannels { get; init; }
-
-    /// <summary>The highest sample rate, in Hz; 0: not said.</summary>
-    public int MaxAudioSampleRate { get; init; }
-
-    /// <summary>The deepest bit depth; 0: not said.</summary>
-    public int MaxAudioBitDepth { get; init; }
-
-    /// <summary>The highest bitrate, in kbit/s; 0: not said.</summary>
-    public int MaxBitrateKbps { get; init; }
-
-    /// <summary>Whether it says nothing, as capabilities left out.</summary>
-    public bool Empty =>
-        Containers.Count + VideoCodecs.Count + AudioCodecs.Count + AudioProfiles.Count + Hdr.Count + DvProfiles.Count == 0 &&
-        MaxHeight == 0 && MaxAudioChannels == 0 && MaxAudioSampleRate == 0 && MaxAudioBitDepth == 0 && MaxBitrateKbps == 0;
-
-    /// <summary>
-    /// What a viewer's server sends of its device's capabilities (playback
-    /// section 2.1, video section 5.1): the lists lowercased, only their
-    /// listed values, each once, sorted; maxHeight, maxAudioChannels,
-    /// maxAudioSampleRate and maxAudioBitDepth stepped down; maxBitrateKbps
-    /// rounded down to a whole 1,000, below 1,000 left out; 0 left out.
-    /// </summary>
-    public PlayCapabilities Coarsen()
-    {
-        static IReadOnlyList<string> Lower(IReadOnlyList<string> l, IReadOnlyList<string> names) =>
-            Playback.Listed(l.Select(e => e.ToLowerInvariant()), names);
-        return new PlayCapabilities
-        {
-            Containers = Lower(Containers, Names.Containers),
-            VideoCodecs = Lower(VideoCodecs, Names.VideoCodecs),
-            AudioCodecs = Lower(AudioCodecs, Names.AudioCodecs),
-            AudioProfiles = Lower(AudioProfiles, Names.AudioProfiles),
-            Hdr = Lower(Hdr, Names.HdrFormats),
-            DvProfiles = Playback.DvListed(DvProfiles),
-            MaxHeight = Playback.StepDown(MaxHeight, Video.Heights),
-            MaxAudioChannels = Playback.StepDown(MaxAudioChannels, Playback.ChannelSteps),
-            MaxAudioSampleRate = Playback.StepDown(MaxAudioSampleRate, Playback.SampleRateSteps),
-            MaxAudioBitDepth = Playback.StepDown(MaxAudioBitDepth, Playback.BitDepthSteps),
-            MaxBitrateKbps = MaxBitrateKbps >= 1000 ? Math.Min(MaxBitrateKbps, Playback.MaxKbps) / 1000 * 1000 : 0,
-        };
-    }
-
-    /// <summary>Writes its members, those empty or 0 left out.</summary>
-    public void Write(JsonOut w)
-    {
-        ArgumentNullException.ThrowIfNull(w);
-        w.Strings("containers", Some(Containers)).Strings("videoCodecs", Some(VideoCodecs))
-            .Strings("audioCodecs", Some(AudioCodecs)).Strings("audioProfiles", Some(AudioProfiles)).Strings("hdr", Some(Hdr))
-            .Integers("dvProfiles", DvProfiles.Count > 0 ? DvProfiles.Select(p => (long)p) : null)
-            .Integer("maxHeight", NonZero(MaxHeight)).Integer("maxAudioChannels", NonZero(MaxAudioChannels))
-            .Integer("maxAudioSampleRate", NonZero(MaxAudioSampleRate)).Integer("maxAudioBitDepth", NonZero(MaxAudioBitDepth))
-            .Integer("maxBitrateKbps", NonZero(MaxBitrateKbps));
-    }
-
-    internal static IReadOnlyList<string>? Some(IReadOnlyList<string> l) => l.Count > 0 ? l : null;
-
-    internal static long? NonZero(long v) => v != 0 ? v : null;
-}
-
-/// <summary>
 /// A play's transcode object (playback section 2.7, video section 5.1):
-/// each left out ("" or 0) is the owning server's choice.
+/// each target left out ("" or 0) takes the baseline's value
+/// (<see cref="WithBaseline"/>).
 /// </summary>
 public sealed record TranscodeTargets
 {
-    /// <summary>The video codec to convert to.</summary>
+    /// <summary>The video codec to convert to, a token: the encoder's codec as ffmpeg names it (h264, hevc, av1, vp9).</summary>
     public string VideoCodec { get; init; } = "";
 
     /// <summary>The tallest picture, one of <see cref="Video.Heights"/>.</summary>
@@ -590,7 +392,7 @@ public sealed record TranscodeTargets
     /// <summary>The highest bitrate, a whole 1,000 kbit/s.</summary>
     public int MaxBitrateKbps { get; init; }
 
-    /// <summary>The audio codec to convert to.</summary>
+    /// <summary>The audio codec to convert to, a token as ffmpeg names it (aac, ac3, eac3, opus, flac).</summary>
     public string AudioCodec { get; init; } = "";
 
     /// <summary>The audio channels, one of <see cref="Playback.ChannelSteps"/>.</summary>
@@ -602,16 +404,37 @@ public sealed record TranscodeTargets
     /// <summary>Whether it names a download's size (playback section 7): maxHeight, maxBitrateKbps or both.</summary>
     public bool Sized => MaxHeight != 0 || MaxBitrateKbps != 0;
 
+    /// <summary>
+    /// The targets the owning server converts to (playback section 2.7):
+    /// these, those left out taking the baseline's values (videoCodec
+    /// <see cref="Names.BaselineVideoCodec"/>, audioCodec
+    /// <see cref="Names.BaselineAudioCodec"/>, audioChannels
+    /// <see cref="Names.BaselineChannels"/>; maxHeight left out is the copy's
+    /// own height, and no cap but step 6's). For a title without a picture
+    /// (<paramref name="picture"/> false, a track), the video targets are
+    /// ignored: dropped.
+    /// </summary>
+    public TranscodeTargets WithBaseline(bool picture) => this with
+    {
+        VideoCodec = !picture ? "" : VideoCodec.Length > 0 ? VideoCodec : Names.BaselineVideoCodec,
+        MaxHeight = picture ? MaxHeight : 0,
+        BurnSubtitle = picture ? BurnSubtitle : "",
+        AudioCodec = AudioCodec.Length > 0 ? AudioCodec : Names.BaselineAudioCodec,
+        AudioChannels = AudioChannels != 0 ? AudioChannels : Names.BaselineChannels,
+    };
+
     /// <summary>Writes its members, those empty left out.</summary>
     public void Write(JsonOut w)
     {
         ArgumentNullException.ThrowIfNull(w);
-        w.String("videoCodec", NonEmpty(VideoCodec)).Integer("maxHeight", PlayCapabilities.NonZero(MaxHeight))
-            .Integer("maxBitrateKbps", PlayCapabilities.NonZero(MaxBitrateKbps)).String("audioCodec", NonEmpty(AudioCodec))
-            .Integer("audioChannels", PlayCapabilities.NonZero(AudioChannels)).String("burnSubtitle", NonEmpty(BurnSubtitle));
+        w.String("videoCodec", NonEmpty(VideoCodec)).Integer("maxHeight", NonZero(MaxHeight))
+            .Integer("maxBitrateKbps", NonZero(MaxBitrateKbps)).String("audioCodec", NonEmpty(AudioCodec))
+            .Integer("audioChannels", NonZero(AudioChannels)).String("burnSubtitle", NonEmpty(BurnSubtitle));
     }
 
     internal static string? NonEmpty(string s) => s.Length > 0 ? s : null;
+
+    internal static long? NonZero(long v) => v != 0 ? v : null;
 }
 
 /// <summary>
@@ -628,23 +451,30 @@ public sealed record PlayRequest
     /// <summary>The purpose: play, download or scan.</summary>
     public string Purpose { get; init; } = "";
 
-    /// <summary>The delivery asked; "" for the owning server's choice.</summary>
+    /// <summary>The delivery asked, a token (file, remux or transcode; another is refused at step 7); "" for the baseline.</summary>
     public string Delivery { get; init; } = "";
 
-    /// <summary>The container of a remux.</summary>
+    /// <summary>The container of a remux, a token: mpegts or mp4 (another is refused at step 7).</summary>
     public string Container { get; init; } = "";
 
     /// <summary>The targets of a transcode; null when not said.</summary>
     public TranscodeTargets? Transcode { get; init; }
 
-    /// <summary>Whether the audio tracks are asked for as renditions.</summary>
+    /// <summary>Whether the audio tracks are asked for as renditions: a request the owning server may decline, never refuse.</summary>
     public bool AudioRenditions { get; init; }
-
-    /// <summary>The device's capabilities, coarsened; null when not said.</summary>
-    public PlayCapabilities? Capabilities { get; init; }
 
     /// <summary>Where to start, in milliseconds.</summary>
     public long StartPositionMs { get; init; }
+
+    /// <summary>
+    /// What a delivery transcode converts to (playback section 2.7): the
+    /// request's targets, a transcode object left out included, those left
+    /// out taking the baseline's values (<see cref="TranscodeTargets.WithBaseline"/>);
+    /// null for any other delivery.
+    /// </summary>
+    /// <param name="picture">Whether the title has a picture (video's; false for a track).</param>
+    public TranscodeTargets? TargetsServed(bool picture) =>
+        Delivery == Playback.DeliveryTranscode ? (Transcode ?? new TranscodeTargets()).WithBaseline(picture) : null;
 
     /// <summary>The bitrate cap asked, in kbit/s; 0 for none.</summary>
     public int MaxBitrateKbps { get; init; }
@@ -682,28 +512,23 @@ public sealed record PlayRequest
 
     /// <summary>
     /// The cap of playback section 2.2, step 6, for a play: the lowest
-    /// non-zero of the request's maxBitrateKbps, its capabilities' and its
-    /// transcode's, the owning server's own cap and the pairing's
-    /// bitrateKbps; <see cref="Playback.DefaultCapKbps"/> without any. A
-    /// download's and a scan's aren't capped so (sections 7 and 8).
+    /// non-zero of the request's maxBitrateKbps and its transcode's, the
+    /// owning server's own cap and the pairing's bitrateKbps; 0, no cap,
+    /// without any. A download's and a scan's aren't capped so (sections 7
+    /// and 8).
     /// </summary>
     /// <param name="own">The owning server's own cap; 0 for none.</param>
     /// <param name="pairing">The pairing's bitrateKbps; 0 for none.</param>
     public int BitrateCap(int own, int pairing)
     {
         var caps = new List<int> { MaxBitrateKbps, own, pairing };
-        if (Capabilities is { } c)
-        {
-            caps.Add(c.MaxBitrateKbps);
-        }
-
         if (Transcode is { } t)
         {
             caps.Add(t.MaxBitrateKbps);
         }
 
         var positive = caps.Where(c => c > 0).ToList();
-        return positive.Count == 0 ? Playback.DefaultCapKbps : positive.Min();
+        return positive.Count == 0 ? 0 : positive.Min();
     }
 
     /// <summary>The request's body, as a viewer's server sends it: what is empty, 0 or false left out.</summary>
@@ -714,9 +539,8 @@ public sealed record PlayRequest
         .String("container", TranscodeTargets.NonEmpty(Container))
         .Object("transcode", Transcode is { } t ? t.Write : null)
         .Bool("audioRenditions", AudioRenditions ? true : null)
-        .Object("capabilities", Capabilities is { Empty: false } c ? c.Write : null)
-        .Integer("startPositionMs", PlayCapabilities.NonZero(StartPositionMs))
-        .Integer("maxBitrateKbps", PlayCapabilities.NonZero(MaxBitrateKbps))
+        .Integer("startPositionMs", TranscodeTargets.NonZero(StartPositionMs))
+        .Integer("maxBitrateKbps", TranscodeTargets.NonZero(MaxBitrateKbps))
         .String("audioLanguage", TranscodeTargets.NonEmpty(AudioLanguage))
         .String("audioTrack", TranscodeTargets.NonEmpty(AudioTrack))
         .String("versionId", TranscodeTargets.NonEmpty(VersionId))
