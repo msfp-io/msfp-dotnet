@@ -197,8 +197,7 @@ public static partial class Video
 {
     /// <summary>
     /// How many tags a title's language list keeps at most (video section
-    /// 3.1): each 2 to 12 characters of A–Z a–z 0–9 -, each once, compared
-    /// without case.
+    /// 3.1): each a valid tag (<see cref="Languages.ValidTag"/>), each once.
     /// </summary>
     public const int MaxTags = 12;
 
@@ -223,18 +222,7 @@ public static partial class Video
     [GeneratedRegex(@"^[1-9][0-9]{0,9}\z")]
     private static partial Regex TvdbRe();
 
-    /// <summary>
-    /// Whether <paramref name="s"/> may be a language tag of a title's
-    /// lists, or of play's audioLanguage and subtitleLanguage (which may also
-    /// be left out).
-    /// </summary>
-    public static bool LanguageTag(string s)
-    {
-        ArgumentNullException.ThrowIfNull(s);
-        return s.Length is >= 2 and <= 12 && s.All(c => char.IsAsciiLetterOrDigit(c) || c == '-');
-    }
-
-    /// <summary>Keeps of a peer's tags those <see cref="LanguageTag"/> allows, each once, at most <see cref="MaxTags"/>; a bad tag is skipped alone.</summary>
+    /// <summary>Keeps of a peer's tags those <see cref="Languages.ValidTag"/> allows, each once, at most <see cref="MaxTags"/>; a bad tag is skipped alone.</summary>
     public static IReadOnlyList<string> CleanTags(IEnumerable<string> tags)
     {
         ArgumentNullException.ThrowIfNull(tags);
@@ -246,7 +234,7 @@ public static partial class Video
                 break;
             }
 
-            if (LanguageTag(t) && !out_.Contains(t, StringComparer.OrdinalIgnoreCase))
+            if (Languages.ValidTag(t) && !out_.Contains(t, StringComparer.OrdinalIgnoreCase))
             {
                 out_.Add(t);
             }

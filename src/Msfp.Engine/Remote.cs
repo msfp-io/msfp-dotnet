@@ -316,14 +316,14 @@ public sealed partial class MsfpEngine
 
         await WaitStopsAsync(peer, ct).ConfigureAwait(false);
         var caps = Coarsen(request.Capabilities ?? new Capabilities(), !audioOnly);
-        var subtitleLanguage = !audioOnly && Protocol.Video.LanguageTag(request.SubtitleLanguage) ? request.SubtitleLanguage : null;
+        var subtitleLanguage = !audioOnly && Protocol.Languages.ValidTag(request.SubtitleLanguage) ? request.SubtitleLanguage : null;
         var subtitleTrack = !audioOnly && (Playback.TryTrackId(request.SubtitleTrack, 's', out _) || request.SubtitleTrack == "off")
             ? request.SubtitleTrack : null;
         var start = Math.Min(Math.Max(request.StartMs, 0), MaxPositionMs);
         var kbps = RoundKbps(request.MaxBitrateKbps);
         var body = JsonOut.Object(o => o.String("title", request.Title).Object("capabilities", caps)
             .Integer("startPositionMs", NonZero(start)).Integer("maxBitrateKbps", NonZero(kbps))
-            .String("audioLanguage", Protocol.Video.LanguageTag(request.AudioLanguage) ? request.AudioLanguage : null)
+            .String("audioLanguage", Protocol.Languages.ValidTag(request.AudioLanguage) ? request.AudioLanguage : null)
             .String("audioTrack", Playback.TryTrackId(request.AudioTrack, 'a', out _) ? request.AudioTrack : null)
             .String("versionId", Playback.Id(request.VersionId) ? request.VersionId : null)
             .String("subtitleLanguage", subtitleLanguage).String("subtitleTrack", subtitleTrack));

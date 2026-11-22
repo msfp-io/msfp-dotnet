@@ -49,9 +49,26 @@ public static class Languages
     }.ToFrozenDictionary(StringComparer.Ordinal);
 
     /// <summary>
+    /// Whether <paramref name="s"/> is a valid tag (catalog section 3): one
+    /// already in the form a server sends, which <see cref="TrySentTag"/>
+    /// gives back unchanged ("fr", "fr-CA", "yue", "zh-Hant-TW", "es-419");
+    /// "fre" (not yet converted), "fr-ca" or "FR" (another case), "e", "und"
+    /// and "fr_CA" aren't. It is the one rule wherever a title or a track
+    /// carries a tag, and for play's audioLanguage and subtitleLanguage: a
+    /// receiver checks it and never converts the tag; an invalid one counts
+    /// as absent in what it keeps, and refuses a request. Valid tags compare
+    /// the same byte for byte and without case.
+    /// </summary>
+    public static bool ValidTag(string? s) => s is not null && TrySentTag(s, out var t) && t == s;
+
+    // Whether s has a tag's form: 2 to 12 characters of A–Z a–z 0–9 -.
+    private static bool TagForm(string s) =>
+        s.Length is >= 2 and <= 12 && s.All(c => char.IsAsciiLetterOrDigit(c) || c == '-');
+
+    /// <summary>
     /// The tag sent for <paramref name="code"/>, a media server's language
     /// code ("fre" and "fra" give "fr", "fre-ca" "fr-CA"); false for one MSFP
-    /// doesn't send: not of a tag's form (<see cref="Video.LanguageTag"/>), or
+    /// doesn't send: not of a tag's form (2 to 12 characters of A–Z a–z 0–9 -), or
     /// und, mul, zxx or mis. Test cases: languageCodes in
     /// vectors/v0/strict.json.
     /// </summary>
@@ -61,7 +78,7 @@ public static class Languages
     {
         ArgumentNullException.ThrowIfNull(code);
         tag = "";
-        if (!Video.LanguageTag(code))
+        if (!TagForm(code))
         {
             return false;
         }
