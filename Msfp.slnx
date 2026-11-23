@@ -3,10 +3,12 @@
     <Project Path="examples/ShareFolder/ShareFolder.csproj" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/Msfp.Describe/Msfp.Describe.csproj" />
     <Project Path="src/Msfp.Engine/Msfp.Engine.csproj" />
     <Project Path="src/Msfp.Protocol/Msfp.Protocol.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Msfp.Describe.Tests/Msfp.Describe.Tests.csproj" />
     <Project Path="tests/Msfp.Engine.Tests/Msfp.Engine.Tests.csproj" />
     <Project Path="tests/Msfp.Protocol.Tests/Msfp.Protocol.Tests.csproj" />
   </Folder>

@@ -54,6 +54,7 @@ holds it.
 | Package | What it is |
 |---------|------------|
 | `Msfp.Engine` (namespace `Msfp`) | the engine: `MsfpEngine.OpenAsync`, its HTTP entry, pairing; the stores `MemoryStore` and `JsonFileStore` (namespace `Msfp.Stores`) |
+| `Msfp.Describe` (namespace `Msfp.Describe`) | a media file as a copy, with ffprobe: the media type sniffed, ffprobe run safely, codecs strings from the codec records, the copy shaped (msfp-go's `describe`) |
 | `Msfp.Protocol` (namespace `Msfp.Protocol`) | the protocol's pieces: keys, pairing codes, signatures, strict JSON, statements, title keys, the media checks |
 
 Both have the same version. The only dependency beyond .NET is

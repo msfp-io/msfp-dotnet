@@ -17,6 +17,23 @@ pair with each other: move every server at once. The migration guide at
 the end of this section says what hosts change; its last part is
 proposal 17's, and wins where the parts before name a member it removed.
 
+### Added
+
+- `Msfp.Describe` (namespace `Msfp.Describe`), msfp-go's `describe` in
+  C#: a media file as a copy. `MediaTypes` (the media type from a file's
+  first bytes, the registry's aliases and container names, the demuxer
+  each sniffed type forces), `Prober` (ffprobe run safely: links
+  resolved, a regular file only, the sniffed demuxer, the file protocol
+  only, bounded probe size, time and output, two runs so codec records
+  are read apart and attachments never, an optional frame read for
+  HDR10+ and HLG's SEI; on Linux ffprobe reads the checked file by this
+  process's descriptor), `Records` (avcC, hvcC, av1C, vpcC, Matroska's
+  CodecPrivate, Annex B, AudioSpecificConfig), `CodecsStrings` (RFC 6381
+  from records, else from ffprobe's fields), `Shaper.Shape` (the copy in
+  MSFP's vocabularies) and `Probe.Raw` (ffprobe's output without paths
+  or attachments). Its tests use msfp-go's `describe/testdata` unchanged:
+  both engines shape the same copies.
+
 ### Changed by proposal 17
 
 - One rule for unknown values (`Names.IsToken`, `Names.Token`,
