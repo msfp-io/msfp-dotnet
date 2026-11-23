@@ -12,7 +12,8 @@
 // every interface. Then type "code" in the first, "redeem <code>" in the
 // second, compare the fingerprints both print, and "accept <id>" in the
 // first. With ffprobe installed, copies are described from their files
-// (length, picture, audio tracks: codecs, colour, Dolby Vision); with ffmpeg, preview sheets and
+// (with the Msfp.Describe package: length, picture, audio and subtitle
+// tracks, chapters); with ffmpeg, preview sheets and
 // JPEG images are re-encoded (.NET has no JPEG codec: without it, no
 // previews are offered or relayed). The commands:
 //

@@ -9,5 +9,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Msfp.Engine/Msfp.Engine.csproj" />
+    <ProjectReference Include="../../src/Msfp.Describe/Msfp.Describe.csproj" />
   </ItemGroup>
 </Project>

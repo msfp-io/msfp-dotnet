@@ -51,7 +51,7 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
     // local film or series, its image file.
     private sealed record Item(VideoTitle Title, string Video = "", string Image = "");
 
-    [GeneratedRegex(@"\.(mp4|m4v|mkv|webm|mov|ts)$")]
+    [GeneratedRegex(@"\.(mp4|m4v|mkv|webm|mov|ts|avi)$")]
     private static partial Regex VideoExt();
 
     // "Name (Year) [tmdbid-N]", the year and the ID optional.
@@ -287,8 +287,9 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
 
     // Describes a video file as the catalog lists a copy (MSFP video section
     // 3.2): its exact size, its media type and etag, what ffprobe says of it
-    // (Probes.cs), its .vtt subtitles (numbered after the file's streams), its
-    // previews' layout. Its ID is its handle: its path in the folder.
+    // (Probes.cs, with the Msfp.Describe package), its .vtt subtitles
+    // (numbered after the file's streams), its previews' layout. Its ID is its
+    // handle: its path in the folder.
     private Protocol.Copy? CopyOf(string rel)
     {
         var path = Path.Combine(dir, rel);
@@ -298,20 +299,22 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
             return null;
         }
 
-        var probed = _probes.Describe(path, info);
-        if (probed.Etag.Length == 0)
+        var (c, streams) = _probes.Describe(path, info);
+        if (c.ETag.Length == 0)
         {
             return null;
         }
 
-        return new Protocol.Copy(rel, probed.DurationMs, probed.MediaType, info.Length, probed.Etag, probed.Audio)
+        var external = Subtitles(path).Select((s, i) => new CopySubtitle("s" + (streams + i).ToString(CultureInfo.InvariantCulture), "webvtt")
         {
-            Video = probed.Video,
-            SubtitleTracks = Subtitles(path).Select((s, i) => new CopySubtitle("s" + (probed.Streams + i).ToString(CultureInfo.InvariantCulture), "webvtt")
-            {
-                Language = Language(s),
-                External = true,
-            }).ToList(),
+            Language = Language(s),
+            External = true,
+        });
+        return c with
+        {
+            Id = rel,
+            Size = info.Length,
+            SubtitleTracks = [.. c.SubtitleTracks, .. external],
             PreviewLayout = Previews(path),
         };
     }
@@ -347,8 +350,16 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
         }
     }
 
-    /// <summary>Tells what the catalog doesn't: no fonts; every .vtt file is served apart (as text: video section 5.4).</summary>
-    public ValueTask<CopyInfo> DescribeAsync(string copy, CancellationToken ct) => ValueTask.FromResult(new CopyInfo());
+    /// <summary>
+    /// Tells what the catalog doesn't: no fonts; every .vtt file is served
+    /// apart (as text: video section 5.4), the subtitle tracks inside the file
+    /// aren't (they play with the file as it is).
+    /// </summary>
+    public ValueTask<CopyInfo> DescribeAsync(string copy, CancellationToken ct) =>
+        ValueTask.FromResult(new CopyInfo
+        {
+            NotApart = Local(copy) && CopyOf(copy) is { } c ? c.SubtitleTracks.Where(s => !s.External).Select(s => s.Id).ToList() : null,
+        });
 
     /// <summary>
     /// Serves what the engine decided (the request's Served), or refuses: the
@@ -434,7 +445,7 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
                 return;
             case MediaKind.Subtitles:
                 var subs = Subtitles(file);
-                var streams = _probes.Describe(file, new FileInfo(file)).Streams;
+                var (_, streams) = _probes.Describe(file, new FileInfo(file));
                 var n = path.Track.StartsWith('s') && int.TryParse(path.Track.AsSpan(1), NumberStyles.None, CultureInfo.InvariantCulture, out var i)
                     ? i - streams : -1;
                 if (n < 0 || n >= subs.Count)

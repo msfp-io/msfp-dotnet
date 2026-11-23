@@ -268,9 +268,10 @@ ID, an image beside them), `.vtt` subtitles, HLS copies
 (`<same name>.hls/`, H.264 and AAC: the baseline a play without a
 delivery gets) and previews (`<same name>.trickplay/`) made beforehand;
 nothing is transcoded. Copies are described from their files (the
-media type from their first bytes, an etag from their content; codecs
-strings, H.273 colour, Dolby Vision and track IDs by stream index with
-`ffprobe` when it is installed); with `ffmpeg`, it re-encodes preview
+media type from their first bytes, an etag from their content; with
+`ffprobe` when it is installed, the Msfp.Describe package gives the rest:
+codecs strings, H.273 colour, Dolby Vision, the audio and subtitle tracks
+inside the file by stream index, chapters); with `ffmpeg`, it re-encodes preview
 sheets and JPEG images (its `ISheetEncoder`). The comment at the top of
 Folder.cs shows the layout. Run two of them on one machine:
 

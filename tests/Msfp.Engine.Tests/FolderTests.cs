@@ -108,71 +108,37 @@ public sealed class FolderTests : IDisposable
         Assert.Equal("heat file", sink.Text);
     }
 
-    // A file's media type from its first bytes (MSFP video section 3.5, the
-    // registry's brand table).
-    [Theory]
-    [InlineData("isom", "", "video/mp4")]
-    [InlineData("qt  ", "", "video/quicktime")]
-    [InlineData("M4A ", "", "audio/mp4")]
-    [InlineData("3gp5", "", "video/3gpp")]
-    [InlineData("zzzz", "mp42", "video/mp4")] // unknown, a compatible brand
-    [InlineData("zzzz", "", "video/mp4")] // unknown
-    public void SniffBrands(string major, string compatible, string want)
-    {
-        var b = new List<byte> { 0, 0, 0, (byte)(16 + compatible.Length) };
-        b.AddRange(Encoding.Latin1.GetBytes("ftyp" + major + "\0\0\0\0" + compatible));
-        Assert.Equal(want, Sniff.Of(b.ToArray()));
-    }
-
+    // A file's own subtitle tracks listed with the .vtt beside it (MSFP video
+    // section 3.3: a copy lists all its subtitle tracks), told not served
+    // apart; an AVI read. With ffprobe, on the media in EXAMPLE_MEDIA:
+    // subs.mkv (h264, aac, SubRip fr, ASS en forced) and film.avi (mpeg4,
+    // mp3), made with ffmpeg (testsrc and sine, 2 s); skipped otherwise (the
+    // SDK image has no ffprobe).
     [Fact]
-    public void SniffOthers()
+    public async Task FileTracks()
     {
-        static byte[] Ts(int n, int off)
+        var media = Environment.GetEnvironmentVariable("EXAMPLE_MEDIA");
+        if (string.IsNullOrEmpty(media) || !Directory.Exists(media))
         {
-            var b = new byte[(3 * n) + off];
-            for (var k = 0; k < 3; k++)
-            {
-                b[off + (k * n)] = 0x47;
-            }
-
-            return b;
+            Assert.Skip("EXAMPLE_MEDIA not set");
         }
 
-        Assert.Equal("video/matroska", Sniff.Of([0x1a, 0x45, 0xdf, 0xa3, 0x42, 0x82, 0x88, .. "matroska"u8]));
-        Assert.Equal("video/webm", Sniff.Of([0x1a, 0x45, 0xdf, 0xa3, 0x42, 0x82, 0x84, .. "webm"u8]));
-        Assert.Equal("video/mp2t", Sniff.Of(Ts(188, 0)));
-        Assert.Equal("video/vnd.dlna.mpeg-tts", Sniff.Of(Ts(192, 4)));
-        Assert.Equal("", Sniff.Of("plain"u8));
-        Assert.Equal(("audio/matroska", "video/quicktime", "video/mp4"),
-            (Sniff.AudioOrVideo("video/matroska", false), Sniff.AudioOrVideo("video/quicktime", false), Sniff.AudioOrVideo("video/mp4", true)));
-    }
-
-    // ffprobe's facts in MSFP's vocabularies: H.273 numbers, codecs strings.
-    [Fact]
-    public void ProbeMapping()
-    {
-        var v = Probes.VideoStreamOf(new FfprobeStream
-        {
-            CodecName = "hevc", CodecTag = "hvc1", Profile = "Main 10", Level = 153, Width = 3840, Height = 2160, PixFmt = "yuv420p10le",
-            ColorRange = "tv", ColorSpace = "bt2020nc", ColorTransfer = "smpte2084", ColorPrimaries = "bt2020", AvgFrameRate = "48000/2002",
-            SampleAspectRatio = "1:1", FieldOrder = "progressive", SideData = [new FfprobeSide { Type = "Display Matrix", Rotation = -90 }],
-        });
-        Assert.Equal(("hvc1.2.4.L153", 10, "24000/1001", null, false, 90), (v.Codecs, v.BitDepth, v.Fps, v.SampleAspect, v.Interlaced, v.Rotation));
-        Assert.Equal(new VideoColour(9, 16, 9, false), v.Colour);
-        Assert.NotNull(Rfc6381.Read(v.Codec, v.Codecs, v.BitDepth, v.Dv, out var why));
-        Assert.Empty(why);
-        var h = Probes.VideoStreamOf(new FfprobeStream { CodecName = "h264", Profile = "High", Level = 41, Width = 1920, Height = 1080, PixFmt = "yuv420p", Refs = 4 });
-        Assert.Equal(("avc1.640029", 4, 8), (h.Codecs, h.RefFrames, h.BitDepth));
-        Assert.Null(Probes.VideoStreamOf(new FfprobeStream { CodecName = "hevc", Profile = "Rext", Level = 120, Width = 1, Height = 1 }).Codecs);
-        var a = Probes.AudioTrack(new FfprobeStream { Index = 1, CodecName = "eac3", Profile = "Dolby Digital Plus + Dolby Atmos", Channels = 6 });
-        Assert.Equal(("a1", "ec-3", "dolby-atmos"), (a.Id, a.Codecs, a.Objects));
-        foreach (var (codec, profile, want) in new[]
-        {
-            ("aac", "LC", "mp4a.40.2"), ("aac", "HE-AACv2", "mp4a.40.29"), ("dts", "DTS-HD MA", "dtsh"), ("dts", "DTS", "dtsc"),
-            ("dts", "DTS Express", "dtse"), ("flac", "", "fLaC"),
-        })
-        {
-            Assert.Equal(want, Probes.AudioCodecs(codec, profile));
-        }
+        File.Copy(Path.Combine(media, "subs.mkv"), Path.Combine(dir, "Heat (1995) [tmdbid-949].mkv"));
+        Write("Heat (1995) [tmdbid-949].de.vtt", "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHallo\n");
+        File.Copy(Path.Combine(media, "film.avi"), Path.Combine(dir, "Blade Runner (1982) [tmdbid-78].avi"));
+        var f = new Folder(dir);
+        var byKey = (await f.TitlesAsync([], "", 100, Ct)).Titles.Cast<VideoTitle>().ToDictionary(t => t.Key, StringComparer.Ordinal);
+        var heat = byKey["movie/tmdb/949"].Copies![0];
+        Assert.True(heat.SubtitleTracks is [
+            { Id: "s2", Format: "subrip", Language: "fr", External: false },
+            { Id: "s3", Format: "ass", Language: "en", Forced: true, External: false },
+            { Id: "s4", Format: "webvtt", Language: "de", External: true }]);
+        Assert.Equal(["s2", "s3"], (await f.DescribeAsync(heat.Id, Ct)).NotApart);
+        var sink = new MemorySink();
+        await f.ServeAsync("file " + heat.Id, new MediaPath { Kind = MediaKind.Subtitles, Track = "s4", Whole = true }, null, sink, Ct);
+        Assert.Contains("Hallo", sink.Text, StringComparison.Ordinal);
+        var avi = byKey["movie/tmdb/78"].Copies![0];
+        Assert.Equal(("video/avi", "mpeg4", "a1"), (avi.MediaType, avi.Video?.Codec, Assert.Single(avi.AudioTracks).Id));
+        Assert.True(avi.DurationMs > 1900);
     }
 }
