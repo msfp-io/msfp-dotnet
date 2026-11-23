@@ -33,6 +33,19 @@ proposal 17's, and wins where the parts before name a member it removed.
   MSFP's vocabularies) and `Probe.Raw` (ffprobe's output without paths
   or attachments). Its tests use msfp-go's `describe/testdata` unchanged:
   both engines shape the same copies.
+- Why a peer's titles weren't read: `PeerView.Reading` (a `LastReading`:
+  when the last reading ended, its `Failure`, and for a signed refusal
+  its problem type), and `CatalogReadEnded.Failure` and `Refusal`.
+  `ReadFailure` holds a closed set of codes (`ReadFailure.All`), the same
+  in msfp-go, never holding an address or anything the peer wrote:
+  `unreachable`, `timeout`, `certificate-refused`, `refused-unsigned`,
+  `refused`, `not-paired`, `suspended`, `uncallable`,
+  `no-common-version`, `catalog-off`, `older-draft`,
+  `answer-not-understood`, `internal`. A peer still on the draft before
+  this revision used to read as an empty catalog: its answers are now
+  recognised (libraries and titles with a `kind`, films, episodes and
+  tracks without `copies`), and the reading fails as `older-draft`
+  (`Unreachable`), keeping what was kept before.
 
 ### Changed by proposal 17
 

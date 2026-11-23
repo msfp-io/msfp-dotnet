@@ -113,6 +113,11 @@ public sealed partial class MsfpEngine
                 catch (MsfpException)
                 {
                 }
+                catch (OperationCanceledException) when (cts.IsCancellationRequested)
+                {
+                    // The reading's 5 minutes are over (ReadCatalogAsync kept it as a timeout).
+                    _log.LogInformation("msfp: a peer's catalog couldn't be read: {Peer} timed out", id);
+                }
             }
 
             if (wait)
@@ -178,12 +183,22 @@ public sealed partial class MsfpEngine
     public async Task<IReadOnlyList<WantedLibrary>> TheirLibrariesAsync(string peer, CancellationToken ct = default)
     {
         var p = await PeerRecordAsync(peer, ct).ConfigureAwait(false);
-        return await TheirLibrariesAsync(p, false, ct).ConfigureAwait(false);
+        try
+        {
+            return (await TheirLibrariesAsync(p, false, ct).ConfigureAwait(false)).Libraries;
+        }
+        catch (Exception e)
+        {
+            ReadEnded(p, e, false);
+            throw;
+        }
     }
 
     // Calls libraries on p and keeps its answer: the libraries, its name,
-    // its limits (catalog section 2.2).
-    private async Task<List<WantedLibrary>> TheirLibrariesAsync(PeerRecord p, bool background, CancellationToken ct)
+    // its limits (catalog section 2.2). Kinds says each library of the
+    // answer carried a kind, as the previous draft's libraries did
+    // (OlderDraftPage).
+    private async Task<(List<WantedLibrary> Libraries, bool Kinds)> TheirLibrariesAsync(PeerRecord p, bool background, CancellationToken ct)
     {
         UsablePeer(p, Versions.PartCatalog);
         var r = await CallAsync(p, CallLibraries, "{}"u8.ToArray(), ct, background).ConfigureAwait(false);
@@ -202,12 +217,18 @@ public sealed partial class MsfpEngine
         }
         catch (ProtocolException e)
         {
-            throw new MsfpException(MsfpError.Unreachable, "a libraries answer of the wrong form", e);
+            throw new MsfpException(MsfpError.Unreachable, "a libraries answer of the wrong form", e) { Failure = ReadFailure.NotUnderstood };
         }
 
         var libs = new List<WantedLibrary>();
+        var kinds = list is { Count: > 0 };
         foreach (var raw in list ?? [])
         {
+            if (raw is not JsonObject { } withKind || JsonMembers.AsString(withKind["kind"]) is null)
+            {
+                kinds = false;
+            }
+
             if (libs.Count == MaxLibraries)
             {
                 break;
@@ -281,7 +302,7 @@ public sealed partial class MsfpEngine
             }
         }, ct).ConfigureAwait(false);
         Notify([.. events]);
-        return kept;
+        return (kept, kinds);
     }
 
     // Reads a peer's limits (playback section 5, music section 5.1): null
@@ -330,7 +351,11 @@ public sealed partial class MsfpEngine
             HelloNow(p.Id);
         }
 
-        return e;
+        return new MsfpException(e.Code, $"a signed refusal: {r.Status}")
+        {
+            SignedRefusal = true,
+            Refusal = r.Problem is { } t && Problems.ByType.ContainsKey(t) ? t : null,
+        };
     }
 
     /// <summary>
@@ -369,7 +394,15 @@ public sealed partial class MsfpEngine
 
         if (wanted.Any(id => !(p.Wants ?? []).Any(w => w.Id == id)))
         {
-            await TheirLibrariesAsync(p, false, ct).ConfigureAwait(false);
+            try
+            {
+                await TheirLibrariesAsync(p, false, ct).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                ReadEnded(p, e, false);
+                throw;
+            }
         }
 
         await UpdatePeerAsync(peer, q =>
@@ -412,7 +445,7 @@ public sealed partial class MsfpEngine
         }
         catch (ProtocolException e)
         {
-            throw new MsfpException(MsfpError.Unreachable, "a titles answer of the wrong form", e);
+            throw new MsfpException(MsfpError.Unreachable, "a titles answer of the wrong form", e) { Failure = ReadFailure.NotUnderstood };
         }
     }
 
@@ -429,18 +462,29 @@ public sealed partial class MsfpEngine
         try
         {
             var p = await PeerRecordAsync(id, ct).ConfigureAwait(false);
-            UsablePeer(p, Versions.PartCatalog);
+            try
+            {
+                UsablePeer(p, Versions.PartCatalog);
+            }
+            catch (MsfpException e)
+            {
+                ReadEnded(p, e, background);
+                throw;
+            }
+
             var kept = 0;
             var changes = false;
             try
             {
                 kept = await ReadTitlesAsync(p, background, n => kept = n, c => changes = c, ct).ConfigureAwait(false);
+                ReadEnded(p, null, background);
                 Notify(new CatalogReadEnded(p.Id, p.Name, kept, changes, null));
                 return kept;
             }
             catch (Exception e) when (e is not MsfpException { Code: MsfpError.BackingOff })
             {
-                Notify(new CatalogReadEnded(p.Id, p.Name, kept, changes, e));
+                var last = ReadEnded(p, e, background);
+                Notify(new CatalogReadEnded(p.Id, p.Name, kept, changes, e) { Failure = last?.Failure, Refusal = last?.Refusal });
                 throw;
             }
         }
@@ -458,9 +502,12 @@ public sealed partial class MsfpEngine
         // individual relation holds, and what its groups show of it.
         var individual = Individual(p);
         var (shows, grouped) = await ShownByAsync(p, ct).ConfigureAwait(false);
+        var kinds = false; // its libraries carried kinds: maybe the previous draft
         if (grouped || (individual && (p.Wants ?? []).Any(w => w.Wanted)))
         {
-            foreach (var w in await TheirLibrariesAsync(p, background, ct).ConfigureAwait(false))
+            var (theirs, k) = await TheirLibrariesAsync(p, background, ct).ConfigureAwait(false);
+            kinds = k;
+            foreach (var w in theirs)
             {
                 if (!w.Gone && ((w.Wanted && individual) || (grouped && shows(w.Id))))
                 {
@@ -478,7 +525,10 @@ public sealed partial class MsfpEngine
             return 0;
         }
 
-        var since = (p.CatalogRead.Wants ?? []).SequenceEqual(libs, StringComparer.Ordinal) ? p.CatalogRead.Seq : 0;
+        // Libraries with kinds may be the previous draft's: the whole list
+        // then, whose titles tell (a reading of changes may carry none).
+        // This draft's libraries carry none: it costs them nothing.
+        var since = !kinds && (p.CatalogRead.Wants ?? []).SequenceEqual(libs, StringComparer.Ordinal) ? p.CatalogRead.Seq : 0;
         long seq = 0;
         var whole = new List<Title>(); // a whole list's titles, kept once read to its end
         var first = true;
@@ -507,12 +557,28 @@ public sealed partial class MsfpEngine
             }
             else if (ans.Changes != changes)
             {
-                throw new MsfpException(MsfpError.Unreachable, "a reading mixing changes and the whole list");
+                throw new MsfpException(MsfpError.Unreachable, "a reading mixing changes and the whole list") { Failure = ReadFailure.NotUnderstood };
             }
 
             if (ans.Titles.Count + (ans.Gone?.Count ?? 0) > TitlesPage)
             {
-                throw new MsfpException(MsfpError.Unreachable, $"a page of more than {TitlesPage} keys");
+                throw new MsfpException(MsfpError.Unreachable, $"a page of more than {TitlesPage} keys") { Failure = ReadFailure.NotUnderstood };
+            }
+
+            if (kinds)
+            {
+                // Until a page tells: answers in the previous draft's shapes
+                // fail the reading, rather than read as an empty catalog.
+                var (old, current) = OlderDraftPage(ans.Titles);
+                if (old)
+                {
+                    throw new MsfpException(MsfpError.Unreachable, "answers in the shapes of the previous draft of version 0")
+                    {
+                        Failure = ReadFailure.OlderDraft,
+                    };
+                }
+
+                kinds = !current;
             }
 
             var page = new List<Title>();
@@ -540,7 +606,7 @@ public sealed partial class MsfpEngine
             counted(kept);
             if (kept > MaxPeerTitles)
             {
-                throw new MsfpException(MsfpError.Unreachable, $"more than {MaxPeerTitles} titles");
+                throw new MsfpException(MsfpError.Unreachable, $"more than {MaxPeerTitles} titles") { Failure = ReadFailure.NotUnderstood };
             }
 
             if (!changes)

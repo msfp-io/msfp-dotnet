@@ -202,6 +202,19 @@ public sealed class MsfpException : Exception
     /// <summary>For <see cref="MsfpError.Unreachable"/>: an unsigned refusal, the peer doesn't hear the key the call was signed with; its status.</summary>
     internal int NotHeard { get; init; }
 
+    /// <summary>
+    /// What a reading that ends with this error failed of, when the error's
+    /// code doesn't say it alone: one of <see cref="ReadFailure"/>'s codes
+    /// (an answer not understood, unsigned, timed out, in an older draft's shapes).
+    /// </summary>
+    internal string? Failure { get; init; }
+
+    /// <summary>The error is a peer's signed refusal (a reading's <see cref="ReadFailure.Refused"/>).</summary>
+    internal bool SignedRefusal { get; init; }
+
+    /// <summary>For a signed refusal: its problem type when it is one of core section 8.2's; null otherwise.</summary>
+    internal string? Refusal { get; init; }
+
     /// <summary>An error of code Internal (the forms .NET expects of an exception).</summary>
     public MsfpException()
         : this(MsfpError.Internal)

@@ -286,6 +286,12 @@ public sealed record CatalogReadEnded(string Peer, string Name, int Titles, bool
 {
     /// <inheritdoc/>
     public override string? PeerId => Peer;
+
+    /// <summary>Why it failed, as a closed code (<see cref="ReadFailure"/>); null when it read, or when the host cancelled it.</summary>
+    public string? Failure { get; init; }
+
+    /// <summary>For <see cref="ReadFailure.Refused"/>: the problem type of the peer's refusal (<see cref="LastReading.Refusal"/>).</summary>
+    public string? Refusal { get; init; }
 }
 
 /// <summary>

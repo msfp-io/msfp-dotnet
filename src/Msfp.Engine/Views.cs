@@ -106,6 +106,14 @@ public sealed record PeerView
 
     /// <summary>It used one of our codes for this group and waits for our operator (state ours): a request to join that group.</summary>
     public string JoiningGroup { get; init; } = "";
+
+    /// <summary>
+    /// How the last reading of its titles went (ReadNowAsync, the scheduled
+    /// readings, TheirLibrariesAsync, SetWantsAsync): when, and why it failed,
+    /// as a closed code a page can name (<see cref="ReadFailure"/>). Null when
+    /// none ended since the engine started.
+    /// </summary>
+    public LastReading? Reading { get; init; }
 }
 
 /// <summary>A peer's key the operator is shown: its fingerprint, and when.</summary>
@@ -200,6 +208,7 @@ public sealed partial class MsfpEngine
             Groups = [.. p.Groups ?? []], Individual = Individual(p), ByHand = Individual(p),
             IndividualAsked = Asked(p), IndividualAsks = Asks(p) && !p.KeepChoice, KeepChoice = p.KeepChoice,
             JoiningGroup = p.JoiningGroup ?? "",
+            Reading = LastReadingOf(p.Id),
         };
     }
 

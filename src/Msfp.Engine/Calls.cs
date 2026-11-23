@@ -225,7 +225,7 @@ public sealed partial class MsfpEngine
         }
         catch (TaskCanceledException e) when (!ct.IsCancellationRequested)
         {
-            throw new MsfpException(MsfpError.Unreachable, "timed out", e) { NoConnection = true };
+            throw new MsfpException(MsfpError.Unreachable, "timed out", e) { NoConnection = true, Failure = ReadFailure.Timeout };
         }
 
         using (res)
@@ -235,12 +235,12 @@ public sealed partial class MsfpEngine
             if (headers.GetValues("Content-Encoding") is { Count: > 0 } ce &&
                 !ce.All(c => c.Trim().Equals("identity", StringComparison.OrdinalIgnoreCase)))
             {
-                throw new MsfpException(MsfpError.Unreachable, "a coded answer");
+                throw new MsfpException(MsfpError.Unreachable, "a coded answer") { Failure = ReadFailure.NotUnderstood };
             }
 
             var stream = await res.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
             var answer = await ReadAtMostAsync(stream, MaxAnswer, ct).ConfigureAwait(false)
-                         ?? throw new MsfpException(MsfpError.Unreachable, "an answer over 4 MiB");
+                         ?? throw new MsfpException(MsfpError.Unreachable, "an answer over 4 MiB") { Failure = ReadFailure.NotUnderstood };
             var status = (int)res.StatusCode;
             string? contentType = null;
             var ctOk = true;
@@ -287,12 +287,12 @@ public sealed partial class MsfpEngine
 
             if (!isSigned)
             {
-                throw new MsfpException(MsfpError.Unreachable, "an answer not signed by its key");
+                throw new MsfpException(MsfpError.Unreachable, "an answer not signed by its key") { Failure = ReadFailure.RefusedUnsigned };
             }
 
             if (contentType != "application/json")
             {
-                throw new MsfpException(MsfpError.Unreachable, "an answer that isn't JSON");
+                throw new MsfpException(MsfpError.Unreachable, "an answer that isn't JSON") { Failure = ReadFailure.NotUnderstood };
             }
 
             return new Reply(status, null, 0, answer);
@@ -405,7 +405,7 @@ public sealed partial class MsfpEngine
         }
         catch (ProtocolException e)
         {
-            throw new MsfpException(MsfpError.Unreachable, e.Message, e);
+            throw new MsfpException(MsfpError.Unreachable, e.Message, e) { Failure = ReadFailure.NotUnderstood };
         }
     }
 }

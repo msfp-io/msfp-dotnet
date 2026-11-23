@@ -21,7 +21,7 @@
 //   preview <code>     what a code says, before redeeming it
 //   redeem <code>      redeem another server's code
 //   accept <id>        accept a peer that redeemed our code
-//   peers              list the pairings
+//   peers              list the pairings (and why a peer's titles weren't read, when they weren't)
 //   check <id>         send a peer a hello now
 //   end <id>           end a pairing
 //   server             this server's fingerprint and next key
@@ -379,7 +379,8 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
                     var pending = p.Pending is null ? "" : "  new key to confirm: " + p.Pending.Fingerprint;
                     var relation = p.Individual ? "  individual" : p.IndividualAsked ? "  asked" : p.IndividualAsks ? "  asks-you" : "";
                     var groups = p.Groups.Count > 0 ? $"  groups={p.Groups.Count}" : "";
-                    Console.WriteLine($"{p.Id}  {p.State.Value,-7} {p.Fingerprint}  {p.Name}  {p.Address}{relation}{groups}{pending}");
+                    var reading = p.Reading?.Failure is { } why ? $"  titles not read: {why} {p.Reading.Refusal}" : "";
+                    Console.WriteLine($"{p.Id}  {p.State.Value,-7} {p.Fingerprint}  {p.Name}  {p.Address}{relation}{groups}{pending}{reading}");
                 }
 
                 break;
