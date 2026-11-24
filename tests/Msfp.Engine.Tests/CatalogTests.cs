@@ -274,6 +274,27 @@ public sealed class CatalogTests
         Assert.Equal([after], l.Since);
     }
 
+    // A host's copy with more subtitle tracks than MSFP allows leaves with
+    // the first 64 (video section 3.2): the engine sends nothing a receiver
+    // would drop.
+    [Fact]
+    public async Task OwnSubtitleTracksCapped()
+    {
+        var h = new FakeHost();
+        h.Film("films", "movie/tmdb/1", "en");
+        var m = (VideoTitle)h.Titles["movie/tmdb/1"];
+        m.Copies![0] = m.Copies[0] with
+        {
+            SubtitleTracks = [.. Enumerable.Range(0, 70).Select(i => new CopySubtitle("s" + i.ToString(System.Globalization.CultureInfo.InvariantCulture), "subrip") { Language = "fr" })],
+        };
+        using var s = await Sharing.StartAsync(h);
+        var got = (VideoTitle)(await s.PeerTitlesAsync())["movie/tmdb/1"];
+        Assert.Equal(Copies.MaxSubtitleTracks, got.Copies![0].SubtitleTracks.Count);
+        var body = s.Exchanges("titles")[^1].ResponseBody;
+        Assert.Equal(Copies.MaxSubtitleTracks, body.Split("\"format\":\"subrip\"").Length - 1);
+        Assert.DoesNotContain("\"s64\"", body, StringComparison.Ordinal);
+    }
+
     // Keys MSFP doesn't take never leave: leading zeros, another kind, an
     // unknown scheme; members are cleaned before they go.
     [Fact]

@@ -288,7 +288,8 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
     // Describes a video file as the catalog lists a copy (MSFP video section
     // 3.2): its exact size, its media type and etag, what ffprobe says of it
     // (Probes.cs, with the Msfp.Describe package), its .vtt subtitles
-    // (numbered after the file's streams), its previews' layout. Its ID is its
+    // (numbered after the file's streams; the file's own tracks first, at
+    // most 64 in all), its previews' layout. Its ID is its
     // handle: its path in the folder.
     private Protocol.Copy? CopyOf(string rel)
     {
@@ -314,7 +315,9 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
         {
             Id = rel,
             Size = info.Length,
-            SubtitleTracks = [.. c.SubtitleTracks, .. external],
+            // A copy lists at most 64 subtitle tracks (video section 3.2):
+            // the file's own first.
+            SubtitleTracks = [.. c.SubtitleTracks.Concat(external).Take(Copies.MaxSubtitleTracks)],
             PreviewLayout = Previews(path),
         };
     }

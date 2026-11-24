@@ -85,6 +85,24 @@ public sealed class FolderTests : IDisposable
         Assert.Equal(MsfpError.NotFound, (await Assert.ThrowsAsync<MsfpException>(async () => await f.DescribeAsync(Other, heat.Id, Ct))).Code);
     }
 
+    // A copy lists at most 64 subtitle tracks (video section 3.2): of 70
+    // .vtt files beside a film, the first 64 by name.
+    [Fact]
+    public async Task SubtitlesCapped()
+    {
+        Write("Heat (1995) [tmdbid-949].mkv", "heat");
+        for (var i = 0; i < 70; i++)
+        {
+            Write("Heat (1995) [tmdbid-949]." + (100 + i).ToString(System.Globalization.CultureInfo.InvariantCulture) + ".vtt", "WEBVTT\n");
+        }
+
+        var f = new Folder(dir) { Opaque = s => "o" + s.Length };
+        var page = await f.TitlesAsync([], "", 100, Ct);
+        var subs = page.Titles.Cast<VideoTitle>().Single(t => t.Key == "movie/tmdb/949").Copies![0].SubtitleTracks;
+        Assert.Equal(Copies.MaxSubtitleTracks, subs.Count);
+        Assert.Equal(("s0", "s63", true), (subs[0].Id, subs[63].Id, subs[63].External));
+    }
+
     // Shared through the engine: what a peer reads of it (local titles once
     // allowed), and a download of a film's file.
     [Fact]
