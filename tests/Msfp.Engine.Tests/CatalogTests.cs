@@ -274,6 +274,35 @@ public sealed class CatalogTests
         Assert.Equal([after], l.Since);
     }
 
+    // A titles answer comes after a change the host told of, even while the
+    // refresh CatalogChanged started in the background is still reading the
+    // host's titles: it waits for it, rather than answering from the log as
+    // it was (the cause of TitleCopies' and LocalTitlesAndExtras' rare
+    // failures).
+    [Fact]
+    public async Task ChangeWaitsForRefresh()
+    {
+        var h = new FakeHost();
+        h.Film("films", "movie/tmdb/1", "en");
+        h.Film("films", "movie/tmdb/2", "en");
+        using var s = await Sharing.StartAsync(h);
+        var hold = new TaskCompletionSource();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (h.Lock)
+        {
+            (h.TitlesHold, h.TitlesEntered) = (hold.Task, entered);
+        }
+
+        h.Remove("movie/tmdb/2");
+        s.A.Engine.CatalogChanged();
+        await entered.Task; // the background refresh is reading the host's titles
+        var read = s.B.Engine.ReadNowAsync(s.OnB);
+        Assert.NotSame(read, await Task.WhenAny(read, Task.Delay(200, TestContext.Current.CancellationToken)));
+        hold.SetResult();
+        await read;
+        Assert.Equal(["movie/tmdb/1"], (await s.PeerTitlesAsync()).Keys.Order(StringComparer.Ordinal));
+    }
+
     // A host's copy with more subtitle tracks than MSFP allows leaves with
     // the first 64 (video section 3.2): the engine sends nothing a receiver
     // would drop.

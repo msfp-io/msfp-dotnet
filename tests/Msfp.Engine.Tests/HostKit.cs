@@ -139,6 +139,14 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
 
     public SemaphoreSlim? Entered { get; set; }
 
+    /// <summary>
+    /// Makes the next TitlesAsync wait until it completes, telling
+    /// TitlesEntered first (once: both are cleared then).
+    /// </summary>
+    public Task? TitlesHold { get; set; }
+
+    public TaskCompletionSource? TitlesEntered { get; set; }
+
     private int _handles;
 
     public object Lock => _lock;
@@ -235,8 +243,22 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
         }
     }
 
-    public ValueTask<TitlePage> TitlesAsync(IReadOnlyList<string> libraries, string after, int limit, CancellationToken ct)
+    public async ValueTask<TitlePage> TitlesAsync(IReadOnlyList<string> libraries, string after, int limit, CancellationToken ct)
     {
+        Task? hold;
+        TaskCompletionSource? entered;
+        lock (_lock)
+        {
+            (hold, entered) = (TitlesHold, TitlesEntered);
+            (TitlesHold, TitlesEntered) = (null, null);
+        }
+
+        if (hold is not null)
+        {
+            entered?.TrySetResult();
+            await hold.ConfigureAwait(false);
+        }
+
         lock (_lock)
         {
             var page = new List<Title>();
@@ -258,7 +280,7 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
                 page.Add(TitleJson.Unmarshal(TitleJson.Marshal(t)));
             }
 
-            return ValueTask.FromResult(new TitlePage(page, more));
+            return new TitlePage(page, more);
         }
     }
 

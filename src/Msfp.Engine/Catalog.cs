@@ -295,6 +295,14 @@ public sealed partial class MsfpEngine
         {
             await RefreshOwnAsync(ct).ConfigureAwait(false);
         }
+        else
+        {
+            // A refresh under way (CatalogChanged's, in the background) has
+            // cleared the hint but not yet logged what changed: wait for it,
+            // so that this answer comes after the change it was told of.
+            await _ownLock.WaitAsync(ct).ConfigureAwait(false);
+            _ownLock.Release();
+        }
 
         long seq = 0, floor = 0;
         await _store.ReadAsync(async tx =>

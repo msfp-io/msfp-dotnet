@@ -241,6 +241,14 @@ proposal 17's, and wins where the parts before name a member it removed.
   `ISheetEncoder` they need), local titles' images, downloads, scan
   access, `HEAD` on media URLs.
 
+### Fixed
+
+- With the change log kept by the engine, a titles answer given while
+  the refresh that `CatalogChanged()` starts in the background was still
+  reading the host's titles came from the log as it was: a changes
+  reading with nothing in it, the change seen only at the next reading.
+  The answer now waits for that refresh.
+
 ### Migration guide
 
 **A host that shares (the owning side):**
