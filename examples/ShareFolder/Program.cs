@@ -163,7 +163,11 @@ notifier.RemotePlaybackEnded = watches.Stop;
 var me = await engine.ServerAsync();
 Console.WriteLine($"this server: {me.Address} {me.Fingerprint}");
 
-for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
+// SIGTERM and SIGINT (Ctrl+C) stop the host (ASP.NET Core's console
+// lifetime catches them): the loop stops waiting for a command then.
+var stopping = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+using var onStop = app.Lifetime.ApplicationStopping.Register(() => stopping.TrySetResult());
+for (Console.Write("> "); await NextLineAsync() is { } line; Console.Write("> "))
 {
     var words = line.Trim().Split(' ', 2, StringSplitOptions.TrimEntries);
     var (cmd, arg) = (words[0], words.Length > 1 ? words[1] : "");
@@ -385,8 +389,7 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
 
                 break;
             case "quit":
-                await stop.CancelAsync();
-                await app.StopAsync();
+                await ShutDownAsync();
                 return;
             case "":
                 break;
@@ -405,8 +408,25 @@ for (Console.Write("> "); Console.ReadLine() is { } line; Console.Write("> "))
     }
 }
 
-await stop.CancelAsync();
-await app.StopAsync();
+await ShutDownAsync();
+
+// The next command typed, or null at the end of the input or when the host
+// is stopping. Console.ReadLine can't be cancelled: a read left waiting
+// ends with the process.
+async Task<string?> NextLineAsync()
+{
+    var read = Task.Run(Console.ReadLine);
+    return await Task.WhenAny(read, stopping.Task) == read ? await read : null;
+}
+
+// Stops the engine's background work and the server: requests still open
+// (a peer's stream, say) get 2 seconds, then their connections are cut.
+async Task ShutDownAsync()
+{
+    await stop.CancelAsync();
+    using var grace = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+    await app.StopAsync(grace.Token);
+}
 
 // Fetches the seek-bar previews of a peer's title's first copy, sheet by
 // sheet: someone opened it (MSFP video section 5.5).

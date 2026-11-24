@@ -54,6 +54,18 @@ internal sealed partial class Folder
         try
         {
             using var p = Process.Start(start) ?? throw new InvalidOperationException("ffmpeg didn't start");
+            // A start given up (its request cut, the server stopping) ends ffmpeg too.
+            using var end = ct.Register(() =>
+            {
+                try
+                {
+                    p.Kill(entireProcessTree: true);
+                }
+                catch (InvalidOperationException)
+                {
+                    // already exited
+                }
+            });
             var errors = await p.StandardError.ReadToEndAsync(ct);
             await p.WaitForExitAsync(ct);
             if (p.ExitCode != 0)
