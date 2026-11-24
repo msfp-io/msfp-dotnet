@@ -418,8 +418,8 @@ msfp-go v0.7.0 in .NET.
 
 - Automatically accepting new members (`SetGroupAnswerAsync` true) accepts
   a request as soon as it arrives: the group's `waitDays` changes nothing
-  (groups section 4.1). Requests that waited before it was turned on keep
-  waiting for the operator.
+  (groups section 4.1). Requests already waiting when it is turned on
+  are accepted too, by the engine's loop (`RunAsync`).
 - `SetWantsAsync` no longer counts for a server known only through a
   group: what its groups show does.
 

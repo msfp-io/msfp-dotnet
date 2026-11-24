@@ -348,7 +348,7 @@ requests waiting, and `pair <group> <mail>` to accept one. Relations:
 ## Versions
 
 The library follows [semantic versioning](https://semver.org). Its
-major.minor version is shared with the other MSFP engines: msfp-dotnet
+major.minor version is shared with the other MSFP engine: msfp-dotnet
 0.8.x-preview follows the same API design as msfp-go 0.8.x (the spec's api/).
 Patch versions are each library's own. The library's version is separate
 from the protocol's: from 0.4.0-preview it speaks MSFP version 0, groups
