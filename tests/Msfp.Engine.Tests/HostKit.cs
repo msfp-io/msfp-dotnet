@@ -103,10 +103,14 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
     /// <summary>What LyricsAsync gives, by copy handle.</summary>
     public Dictionary<string, IReadOnlyList<LyricsSet>> Lyrics { get; } = new(StringComparer.Ordinal);
 
-    public ValueTask<IReadOnlyList<LyricsSet>> LyricsAsync(string copy, CancellationToken ct)
+    /// <summary>The peers DescribeAsync, LyricsAsync and ServeAsync were called for, in order, by call.</summary>
+    public List<(string Call, PeerRef Peer)> Peers { get; } = [];
+
+    public ValueTask<IReadOnlyList<LyricsSet>> LyricsAsync(PeerRef peer, string copy, CancellationToken ct)
     {
         lock (_lock)
         {
+            Peers.Add(("lyrics", peer));
             return Lyrics.TryGetValue(copy, out var l) ? ValueTask.FromResult(l) : throw new MsfpException(MsfpError.NotFound);
         }
     }
@@ -207,6 +211,14 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
         }
     }
 
+    public List<(string Call, PeerRef Peer)> PeerCalls()
+    {
+        lock (_lock)
+        {
+            return [.. Peers];
+        }
+    }
+
     public List<StartRequest> Starts()
     {
         lock (_lock)
@@ -250,10 +262,11 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
         }
     }
 
-    public ValueTask<CopyInfo> DescribeAsync(string copy, CancellationToken ct)
+    public ValueTask<CopyInfo> DescribeAsync(PeerRef peer, string copy, CancellationToken ct)
     {
         lock (_lock)
         {
+            Peers.Add(("describe", peer));
             return ValueTask.FromResult(Info.GetValueOrDefault(copy) ?? new CopyInfo());
         }
     }
@@ -378,12 +391,13 @@ internal sealed class FakeHost : ICatalog, IPlayback, IMedia, IImages, ILyrics
         _ => "video/mp4",
     };
 
-    async ValueTask IMedia.ServeAsync(string handle, MediaPath path, ByteRange? range, IResponseSink output, CancellationToken ct)
+    async ValueTask IMedia.ServeAsync(PeerRef peer, string handle, MediaPath path, ByteRange? range, IResponseSink output, CancellationToken ct)
     {
         Func<MediaPath, ByteRange?, IResponseSink, CancellationToken, ValueTask>? serve;
         byte[]? body;
         lock (_lock)
         {
+            Peers.Add(("serve", peer));
             serve = Serve;
             Files.TryGetValue(MediaName(path), out body);
         }

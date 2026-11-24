@@ -64,6 +64,12 @@ internal sealed class LivePlayback
     /// <summary>The host's libraries holding the title, offered when it started.</summary>
     public IReadOnlyList<string> Libraries { get; init; } = [];
 
+    /// <summary>The host's libraries offered to the peer when it started (<see cref="PeerRef.Libraries"/>).</summary>
+    public IReadOnlyList<string> Offers { get; init; } = [];
+
+    /// <summary>The peer, for the host's media calls of this playback.</summary>
+    public PeerRef Ref => new(Peer, PeerName, Offers);
+
     public string Handle { get; init; } = "";
 
     public string Method { get; init; } = "";
@@ -696,7 +702,7 @@ public sealed partial class MsfpEngine
         CopyInfo info;
         try
         {
-            info = await _cfg.Playback.DescribeAsync(chosen.Handle, ct).ConfigureAwait(false);
+            info = await _cfg.Playback.DescribeAsync(PeerRefOf(p), chosen.Handle, ct).ConfigureAwait(false);
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
@@ -779,7 +785,7 @@ public sealed partial class MsfpEngine
         {
             Copy = chosen.Handle, Title = @in.Title, AudioOnly = audioOnly, Purpose = purpose, Delivery = @in.Delivery,
             MediaType = @in.MediaType, Transcode = @in.Transcode, Served = served, AudioRenditions = @in.AudioRenditions,
-            Parts = Math.Max(chosen.Copy.Parts ?? 1, 1), Peer = new PeerRef(p.Id, p.Name), AudioTrack = audio, StartMs = start,
+            Parts = Math.Max(chosen.Copy.Parts ?? 1, 1), Peer = PeerRefOf(p), AudioTrack = audio, StartMs = start,
             MaxBitrateKbps = kbps, Queue = queued,
             Admit = method =>
             {
@@ -995,7 +1001,7 @@ public sealed partial class MsfpEngine
         var pb = new LivePlayback
         {
             Id = id, Peer = p.Id, PeerName = p.Name, Title = @in.Title, Queue = queue.Select(q => q.Title).ToList(), Libraries = libs,
-            Handle = s.Handle, Method = s.Method, Purpose = @in.Purpose, AudioOnly = audioOnly,
+            Offers = PeerRefOf(p).Libraries, Handle = s.Handle, Method = s.Method, Purpose = @in.Purpose, AudioOnly = audioOnly,
             Ticket = SHA256.HashData(Encoding.UTF8.GetBytes(ticket)), Started = now, Used = now, Slot = slot,
             Facts = new ServedFacts(c.Copy, audio, served),
         };

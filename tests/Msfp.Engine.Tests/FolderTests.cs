@@ -13,6 +13,10 @@ public sealed class FolderTests : IDisposable
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    // A peer offered the folder, and one that isn't.
+    private static readonly PeerRef Peer = new("peer", "Peer", ["folder"]);
+    private static readonly PeerRef Other = new("other", "Other", []);
+
     public void Dispose() => Directory.Delete(dir, recursive: true);
 
     private void Write(string rel, string body)
@@ -71,10 +75,14 @@ public sealed class FolderTests : IDisposable
 
         // Its subtitles by stretch, and nothing outside the folder.
         var sink = new MemorySink();
-        await f.ServeAsync("file " + heat.Id, new MediaPath { Kind = MediaKind.Subtitles, Track = "s0", Part = 0 }, null, sink, Ct);
+        await f.ServeAsync(Peer, "file " + heat.Id, new MediaPath { Kind = MediaKind.Subtitles, Track = "s0", Part = 0 }, null, sink, Ct);
         Assert.Contains("Bonjour", sink.Text, StringComparison.Ordinal);
         Assert.Equal(MsfpError.NotFound, (await Assert.ThrowsAsync<MsfpException>(async () =>
-            await f.ServeAsync("file ../x.mkv", new MediaPath { Kind = MediaKind.File }, null, new MemorySink(), Ct))).Code);
+            await f.ServeAsync(Peer, "file ../x.mkv", new MediaPath { Kind = MediaKind.File }, null, new MemorySink(), Ct))).Code);
+        // A peer the folder isn't offered to finds no copy of it.
+        Assert.Equal(MsfpError.NotFound, (await Assert.ThrowsAsync<MsfpException>(async () =>
+            await f.ServeAsync(Other, "file " + heat.Id, new MediaPath { Kind = MediaKind.Subtitles, Track = "s0", Part = 0 }, null, new MemorySink(), Ct))).Code);
+        Assert.Equal(MsfpError.NotFound, (await Assert.ThrowsAsync<MsfpException>(async () => await f.DescribeAsync(Other, heat.Id, Ct))).Code);
     }
 
     // Shared through the engine: what a peer reads of it (local titles once
@@ -133,9 +141,9 @@ public sealed class FolderTests : IDisposable
             { Id: "s2", Format: "subrip", Language: "fr", External: false },
             { Id: "s3", Format: "ass", Language: "en", Forced: true, External: false },
             { Id: "s4", Format: "webvtt", Language: "de", External: true }]);
-        Assert.Equal(["s2", "s3"], (await f.DescribeAsync(heat.Id, Ct)).NotApart);
+        Assert.Equal(["s2", "s3"], (await f.DescribeAsync(Peer, heat.Id, Ct)).NotApart);
         var sink = new MemorySink();
-        await f.ServeAsync("file " + heat.Id, new MediaPath { Kind = MediaKind.Subtitles, Track = "s4", Whole = true }, null, sink, Ct);
+        await f.ServeAsync(Peer, "file " + heat.Id, new MediaPath { Kind = MediaKind.Subtitles, Track = "s4", Whole = true }, null, sink, Ct);
         Assert.Contains("Hallo", sink.Text, StringComparison.Ordinal);
         var avi = byKey["movie/tmdb/78"].Copies![0];
         Assert.Equal(("video/avi", "mpeg4", "a1"), (avi.MediaType, avi.Video?.Codec, Assert.Single(avi.AudioTracks).Id));

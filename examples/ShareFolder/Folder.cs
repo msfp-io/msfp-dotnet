@@ -351,12 +351,19 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
     }
 
     /// <summary>
+    /// Whether the folder's one library is among those offered to the peer a
+    /// call is made for: a copy's handle (its file's path) is resolved only
+    /// then.
+    /// </summary>
+    private static bool OfferedHere(PeerRef peer) => peer.Libraries.Contains(Lib);
+
+    /// <summary>
     /// Tells what the catalog doesn't: no fonts; every .vtt file is served
     /// apart (as text: video section 5.4), the subtitle tracks inside the file
     /// aren't (they play with the file as it is).
     /// </summary>
-    public ValueTask<CopyInfo> DescribeAsync(string copy, CancellationToken ct) =>
-        ValueTask.FromResult(new CopyInfo
+    public ValueTask<CopyInfo> DescribeAsync(PeerRef peer, string copy, CancellationToken ct) =>
+        !OfferedHere(peer) ? throw new MsfpException(MsfpError.NotFound) : ValueTask.FromResult(new CopyInfo
         {
             NotApart = Local(copy) && CopyOf(copy) is { } c ? c.SubtitleTracks.Where(s => !s.External).Select(s => s.Id).ToList() : null,
         });
@@ -376,7 +383,7 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
     /// </summary>
     public ValueTask<Started> StartAsync(StartRequest request, CancellationToken ct)
     {
-        if (!Local(request.Copy))
+        if (!Local(request.Copy) || !OfferedHere(request.Peer))
         {
             throw new MsfpException(MsfpError.NotFound);
         }
@@ -418,10 +425,10 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
     /// Answers what a playback's ticket opens (or, for a sheet under a
     /// previews ticket, OfCopy, a copy's: its handle is then the file's path).
     /// </summary>
-    public async ValueTask ServeAsync(string handle, MediaPath path, ByteRange? range, IResponseSink output, CancellationToken ct)
+    public async ValueTask ServeAsync(PeerRef peer, string handle, MediaPath path, ByteRange? range, IResponseSink output, CancellationToken ct)
     {
         var rel = path.OfCopy ? handle : handle[(handle.IndexOf(' ', StringComparison.Ordinal) + 1)..];
-        if (!Local(rel) || path.Entry != 0)
+        if (!Local(rel) || path.Entry != 0 || !OfferedHere(peer))
         {
             throw new MsfpException(MsfpError.NotFound);
         }

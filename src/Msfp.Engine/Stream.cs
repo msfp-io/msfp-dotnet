@@ -326,14 +326,14 @@ public sealed partial class MsfpEngine
                         case MediaKind.Subtitles or MediaKind.Ass or MediaKind.Pictures or MediaKind.Font:
                             return await ServeSmallAsync(pb, media, output, token).ConfigureAwait(false);
                         case MediaKind.Sheet:
-                            return await ServeSheetAsync(pb.Handle, media, pb.SheetWidth, pb.SheetHeight, output, token).ConfigureAwait(false);
+                            return await ServeSheetAsync(pb.Ref, pb.Handle, media, pb.SheetWidth, pb.SheetHeight, output, token).ConfigureAwait(false);
                     }
 
                     var sink = new GuardedSink(output, token, pb.Pace);
                     Exception? error = null;
                     try
                     {
-                        await _cfg.Media.ServeAsync(pb.Handle, media, range, sink, token).ConfigureAwait(false);
+                        await _cfg.Media.ServeAsync(pb.Ref, pb.Handle, media, range, sink, token).ConfigureAwait(false);
                     }
                     catch (Exception e)
                     {
@@ -505,7 +505,7 @@ public sealed partial class MsfpEngine
             Exception? error = null;
             try
             {
-                await _cfg.Media!.ServeAsync(pb.Handle, path, ranged ? new ByteRange(start, end, 0) : null, sink, ct).ConfigureAwait(false);
+                await _cfg.Media!.ServeAsync(pb.Ref, pb.Handle, path, ranged ? new ByteRange(start, end, 0) : null, sink, ct).ConfigureAwait(false);
             }
             catch (Exception e)
             {
@@ -604,7 +604,7 @@ public sealed partial class MsfpEngine
         Exception? error = null;
         try
         {
-            await _cfg.Media!.ServeAsync(pb.Handle, path, null, buffer, ct).ConfigureAwait(false);
+            await _cfg.Media!.ServeAsync(pb.Ref, pb.Handle, path, null, buffer, ct).ConfigureAwait(false);
         }
         catch (Exception e)
         {
@@ -699,7 +699,7 @@ public sealed partial class MsfpEngine
     // that only its pixels leave: whatever else the host's file holds
     // (metadata, trailing bytes) stays here. One outside the layout isn't
     // sent. Sheets are offered only with a SheetEncoder (Register, previews).
-    private async Task<StreamOutcome> ServeSheetAsync(string handle, MediaPath path, int width, int height, IResponseSink output,
+    private async Task<StreamOutcome> ServeSheetAsync(PeerRef peer, string handle, MediaPath path, int width, int height, IResponseSink output,
         CancellationToken ct)
     {
         if (_cfg.SheetEncoder is not { } encoder)
@@ -714,7 +714,7 @@ public sealed partial class MsfpEngine
             Exception? error = null;
             try
             {
-                await _cfg.Media!.ServeAsync(handle, path, null, buffer, ct).ConfigureAwait(false);
+                await _cfg.Media!.ServeAsync(peer, handle, path, null, buffer, ct).ConfigureAwait(false);
             }
             catch (Exception e)
             {
@@ -819,7 +819,7 @@ public sealed partial class MsfpEngine
         Exception? error = null;
         try
         {
-            await _cfg.Media!.ServeAsync(pb.Handle, path, null, buffer, ct).ConfigureAwait(false);
+            await _cfg.Media!.ServeAsync(pb.Ref, pb.Handle, path, null, buffer, ct).ConfigureAwait(false);
         }
         catch (Exception e)
         {

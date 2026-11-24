@@ -132,7 +132,12 @@ A host that shares gives the engine its libraries and playback
 `IMedia`): each film, episode and extra with its copies described as
 facts: the file's media type, the MSFP registry's codec and subtitle
 tokens, RFC 6381 codecs strings, H.273 colour, exact values, the layout
-of its previews; its copies in its order of preference. The engine
+of its previews; its copies in its order of preference. A copy's ID in
+the catalog is the host's handle of it: it names the copy alone, not
+where its file is. Each call given a handle for a peer is given the
+peer and the host's libraries offered to it (`PeerRef.Libraries`): the
+host resolves the handle to a file in one of them, and throws
+`MsfpError.NotFound` when it is in none. The engine
 serves a copy's file by byte ranges itself, against the size and etag
 the catalog gave, serves exactly the names a playback's answer opened,
 and checks or rebuilds what leaves (playlists, served the same on every

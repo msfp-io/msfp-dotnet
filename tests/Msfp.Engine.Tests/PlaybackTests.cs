@@ -31,6 +31,28 @@ public sealed class PlaybackTests
         (await s.B.Engine.CallForTestAsync(s.OnB, call, HostKit.Bytes(body))).Status;
 
     [Fact]
+    public async Task HostCallsCarryOfferedLibraries()
+    {
+        // Every host call given a copy's handle for a peer is given the peer
+        // and the host's libraries offered to it (sorted), those not offered
+        // left out: Describe, Start and Serve of a playback's media.
+        var h = HostKit.FilmHost();
+        h.Libs = [new Library { Id = "zz", Name = "Zz" }, new Library { Id = "films", Name = "Films" }, new Library { Id = "docs", Name = "Docs" }];
+        using var s = await Sharing.StartAsync(h);
+        await s.A.Engine.SetOffersAsync(s.OnA, ["zz", "films"]);
+        var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film, VersionId = await PlatformTests.CopyIdAsync(s, Film, 0) });
+        await FetchAsync(s.B, pb.Id, new MediaPath { Kind = MediaKind.Master });
+        var started = Assert.Single(h.Starts()).Peer;
+        Assert.Equal(s.OnA, started.Id);
+        Assert.NotEmpty(started.Name);
+        Assert.Equal(["films", "zz"], started.Libraries);
+        var calls = h.PeerCalls();
+        Assert.Contains(calls, c => c.Call == "describe");
+        Assert.Contains(calls, c => c.Call == "serve");
+        Assert.All(calls, c => Assert.Equal((started.Id, started.Name, "films,zz"), (c.Peer.Id, c.Peer.Name, string.Join(',', c.Peer.Libraries))));
+    }
+
+    [Fact]
     public async Task PlayAndRelay()
     {
         var h = HostKit.FilmHost();

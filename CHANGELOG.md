@@ -147,6 +147,17 @@ proposal 17's, and wins where the parts before name a member it removed.
 
 ### Changed
 
+- The host calls given a copy's handle for a peer are given the peer
+  and the host's libraries offered to it (`PeerRef.Libraries`, sorted
+  ordinally): `IPlayback.DescribeAsync(peer, copy, ct)`,
+  `StartRequest.Peer`, `ILyrics.LyricsAsync(peer, copy, ct)` and
+  `IMedia.ServeAsync(peer, handle, …)` (a playback's media: those
+  offered when it started). A handle can then name the copy alone,
+  wherever its files are, and the version ID a peer sees stays the same
+  when a file moves to another library: the host resolves the handle to
+  a file in one of those libraries, and throws `MsfpError.NotFound` when
+  the copy is in none. Not a protocol change. The ShareFolder example
+  serves its folder only to a peer offered it.
 - Titles carry their copies: `VideoTitle.Copies` and `MusicTitle.Copies`
   are `Protocol.Copy` and `MusicCopy`, each copy's ID the host's handle
   (the engine sends the version ID `play` gives). `VideoTitle.Audio`,
@@ -259,6 +270,10 @@ proposal 17's, and wins where the parts before name a member it removed.
    IDs. Sheets are JPEGs within the layout; the engine re-encodes them
    with `MsfpConfig.SheetEncoder`, which you give (.NET has no JPEG
    codec), or no sheets are served.
+   `IPlayback.DescribeAsync`, `ILyrics.LyricsAsync` and
+   `IMedia.ServeAsync` take the `PeerRef` the call is made for, first;
+   with `StartRequest.Peer`, its `Libraries` are the libraries offered to
+   the peer: resolve a copy's handle to a file in one of them.
 6. Extras: titles of kind `extra`, keyed `<film, series or season
    key>/x/<opaque>`, with `ExtraType` and an optional `Name` (theme
    songs and videos too, since proposal 17).

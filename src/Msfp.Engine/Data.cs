@@ -388,10 +388,23 @@ public sealed record CopyInfo
     public Dictionary<string, string>? Forms { get; set; }
 }
 
-/// <summary>A peer, for the host's live view: its ID and name, never a person.</summary>
+/// <summary>
+/// The peer a host call is made for: its ID and name (for the host's live
+/// view; never a person), and the host's libraries offered to it when the
+/// call is made. Every host call that is given a copy's handle for a peer is
+/// given it too (<see cref="IPlayback.DescribeAsync"/>,
+/// <see cref="StartRequest.Peer"/>, <see cref="ILyrics.LyricsAsync"/>,
+/// <see cref="IMedia.ServeAsync"/>), so that a handle can name the copy
+/// alone, wherever its files are: the host resolves it to a file in one of
+/// these libraries, and finds none (<see cref="MsfpError.NotFound"/>) when
+/// the copy is only in libraries the peer isn't offered. For a playback's
+/// media, they are those of when it started (a playback ends once its title
+/// is in none of the libraries offered).
+/// </summary>
 /// <param name="Id">The peer's ID.</param>
 /// <param name="Name">The peer's name.</param>
-public sealed record PeerRef(string Id, string Name);
+/// <param name="Libraries">The host's libraries offered to the peer (their IDs, sorted ordinally).</param>
+public sealed record PeerRef(string Id, string Name, IReadOnlyList<string> Libraries);
 
 /// <summary>What the engine asks <see cref="IPlayback.StartAsync"/> to serve.</summary>
 public sealed record StartRequest
@@ -478,8 +491,8 @@ public sealed record StartRequest
     /// </summary>
     public int Parts { get; init; }
 
-    /// <summary>The peer playing.</summary>
-    public PeerRef Peer { get; init; } = new("", "");
+    /// <summary>The peer playing, with the libraries offered to it: the copy is resolved within them.</summary>
+    public PeerRef Peer { get; init; } = new("", "", []);
 
     /// <summary>
     /// The audio track played: the one the request named, else the file's

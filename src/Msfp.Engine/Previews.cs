@@ -135,9 +135,11 @@ public sealed partial class MsfpEngine
             return StreamOutcome.NotFound;
         }
 
+        PeerRef peer;
         try
         {
             var p = await PeerRecordAsync(it.Peer, ct).ConfigureAwait(false);
+            peer = PeerRefOf(p);
             if (p.State != PeerState.Paired || p.Suspended is not null || !On(p, Versions.PartVideo))
             {
                 return StreamOutcome.NotFound;
@@ -162,7 +164,7 @@ public sealed partial class MsfpEngine
 
         try
         {
-            return await ServeSheetAsync(it.Handle, new MediaPath { Kind = MediaKind.Sheet, Sheet = path.Sheet, OfCopy = true },
+            return await ServeSheetAsync(peer, it.Handle, new MediaPath { Kind = MediaKind.Sheet, Sheet = path.Sheet, OfCopy = true },
                 it.SheetWidth, it.SheetHeight, output, ct).ConfigureAwait(false);
         }
         finally
@@ -216,7 +218,7 @@ public sealed partial class MsfpEngine
         IReadOnlyList<LyricsSet> sets;
         try
         {
-            sets = await host.LyricsAsync(c.Handle, ct).ConfigureAwait(false);
+            sets = await host.LyricsAsync(PeerRefOf(p), c.Handle, ct).ConfigureAwait(false);
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {

@@ -427,9 +427,10 @@ public interface ILyrics
     /// keeps them (<see cref="Music.ReadLyrics"/>) before they leave.
     /// <see cref="MsfpError.NotFound"/> for none.
     /// </summary>
+    /// <param name="peer">The peer it is for, with the libraries offered to it: the copy is resolved within them.</param>
     /// <param name="copy">The copy's handle.</param>
     /// <param name="ct">Cancels.</param>
-    ValueTask<IReadOnlyList<LyricsSet>> LyricsAsync(string copy, CancellationToken ct);
+    ValueTask<IReadOnlyList<LyricsSet>> LyricsAsync(PeerRef peer, string copy, CancellationToken ct);
 }
 
 /// <summary>
@@ -448,9 +449,10 @@ public interface IPlayback
     /// it can't serve apart, the forms of those of formats video section 5.4
     /// doesn't list.
     /// </summary>
+    /// <param name="peer">The peer it is for, with the libraries offered to it: the copy is resolved within them, as Start's.</param>
     /// <param name="copy">The copy's handle.</param>
     /// <param name="ct">Cancels.</param>
-    ValueTask<CopyInfo> DescribeAsync(string copy, CancellationToken ct);
+    ValueTask<CopyInfo> DescribeAsync(PeerRef peer, string copy, CancellationToken ct);
 
     /// <summary>
     /// Starts serving the copy for its purpose and delivery. Without a
@@ -497,12 +499,13 @@ public interface IPlayback
 public interface IMedia
 {
     /// <summary>Serves what path asks for, of the playback, to output.</summary>
+    /// <param name="peer">The peer it is for, with the libraries offered to it (for a playback, when it started): a copy's handle is resolved within them.</param>
     /// <param name="handle">The playback's handle (a copy's, for <see cref="MediaPath.OfCopy"/>).</param>
     /// <param name="path">What is asked for.</param>
     /// <param name="range">The byte range asked for; null for the whole.</param>
     /// <param name="output">Where to write the answer.</param>
     /// <param name="ct">Cancelled when the playback ends or the request goes.</param>
-    ValueTask ServeAsync(string handle, MediaPath path, ByteRange? range, IResponseSink output, CancellationToken ct);
+    ValueTask ServeAsync(PeerRef peer, string handle, MediaPath path, ByteRange? range, IResponseSink output, CancellationToken ct);
 }
 
 /// <summary>

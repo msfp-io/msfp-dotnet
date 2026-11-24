@@ -1057,6 +1057,10 @@ public sealed partial class MsfpEngine
         return output;
     }
 
+    // The peer as the host calls given a copy's handle for it see it: its ID,
+    // name and the libraries offered to it, sorted.
+    internal static PeerRef PeerRefOf(PeerRecord p) => new(p.Id, p.Name, Offered(p).Order(StringComparer.Ordinal).ToList());
+
     // The host libraries whose local titles a link is shared: those its
     // individual relation offers when it shares local titles, and those of
     // its groups that do (catalog section 5, groups section 9: a relation
