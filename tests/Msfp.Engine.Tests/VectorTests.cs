@@ -112,8 +112,10 @@ public sealed class VectorTests
         Assert.Equal(["catalog"], recA.Versions.Parts!.Keys);
         Assert.Equal(["E7UUIjYbkigLNKPjmSGixyA-pslmiFKckCEX_A6IZlM"], recA.Pins!);
         // The request A sent is the vector's, byte for byte but for the
-        // hello's own members, which are A's (it speaks every part).
-        var sent = net.SeenBy(b.Host)[^1];
+        // hello's own members, which are A's (it speaks every part). (Its
+        // last hello: the discovery document A reads at the pairing, in the
+        // background, can reach B after it.)
+        var sent = net.SeenBy(b.Host).Last(s => s.Target.EndsWith("/hello", StringComparison.Ordinal));
         Assert.Equal(hello.S("signature").Length, sent.RequestSignature.Length);
 
         answering = vs["refused hello"];
