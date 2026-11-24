@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased: the revision of version 0 (proposals 16 and 17)
+## v0.8.0-preview (2026-11-24): the revision of version 0 (proposals 16 and 17)
 
 MSFP version 0 is revised, and stays a draft until version 1: titles
 carry their copies, plays ask a delivery and a purpose (downloads and
@@ -125,7 +125,8 @@ proposal 17's, and wins where the parts before name a member it removed.
   codecs strings, H.273 colour, Dolby Vision, objects and track IDs from
   ffprobe, an etag from the file's content (SHA-256, kept by size and
   time), the previews' layout in the catalog, a remux by its segments'
-  media type.
+  media type; at most 64 subtitle tracks a copy (the file's own, then
+  the .vtt beside it).
 
 ### Removed by proposal 17
 
@@ -248,6 +249,9 @@ proposal 17's, and wins where the parts before name a member it removed.
   reading the host's titles came from the log as it was: a changes
   reading with nothing in it, the change seen only at the next reading.
   The answer now waits for that refresh.
+- The ShareFolder example stops on SIGTERM and SIGINT: the command loop
+  waited on the console, so the process never exited; requests still
+  open get 2 seconds.
 
 ### Migration guide
 

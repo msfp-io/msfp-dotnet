@@ -1,5 +1,5 @@
-# Publishes Msfp.Protocol and Msfp.Engine on nuget.org when a version tag
-# is pushed (v0.1.0-preview, say). The tag must match <Version> in
+# Publishes Msfp.Protocol, Msfp.Engine and Msfp.Describe on nuget.org when
+# a version tag is pushed (v0.1.0-preview, say). The tag must match <Version> in
 # Directory.Build.props. No key is stored: nuget.org's Trusted Publishing
 # gives this workflow a key for one hour (policy: msfp-io/msfp-dotnet,
 # release.yml, environment release). The release environment can ask for
@@ -49,6 +49,7 @@ jobs:
         run: |
           dotnet pack src/Msfp.Protocol --no-build -c Release -o artifacts
           dotnet pack src/Msfp.Engine --no-build -c Release -o artifacts
+          dotnet pack src/Msfp.Describe --no-build -c Release -o artifacts
 
       - name: nuget.org login (a key for one hour)
         id: login
@@ -56,8 +57,11 @@ jobs:
         with:
           user: ${{ secrets.NUGET_USER }}
 
+      # --skip-duplicate: a re-run after a partial push (one package
+      # refused) pushes only what nuget.org doesn't have yet.
       - name: Push
         run: >-
           dotnet nuget push "artifacts/*.nupkg"
           --api-key "${{ steps.login.outputs.NUGET_API_KEY }}"
           --source https://api.nuget.org/v3/index.json
+          --skip-duplicate

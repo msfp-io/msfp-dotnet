@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>0.7.1-preview</Version>
+    <Version>0.8.0-preview</Version>
     <Authors>The MSFP contributors</Authors>
     <Copyright>Copyright (c) 2026 The MSFP contributors</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

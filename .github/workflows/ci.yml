@@ -34,3 +34,4 @@ jobs:
         run: |
           dotnet pack src/Msfp.Protocol --no-build -c Release -o artifacts
           dotnet pack src/Msfp.Engine --no-build -c Release -o artifacts
+          dotnet pack src/Msfp.Describe --no-build -c Release -o artifacts

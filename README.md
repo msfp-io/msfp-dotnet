@@ -19,9 +19,8 @@ it writes none of the protocol itself.
 - The protocol: [msfp-io/msfp-spec](https://github.com/msfp-io/msfp-spec),
   version 0 as revised by proposals 16 and 17, still a draft until version 1
   ([spec/v0](https://github.com/msfp-io/msfp-spec/tree/main/spec/v0)).
-  The code here, not released yet, speaks the revised draft;
-  0.7.1-preview and before speak the draft before it, and servers on the
-  two don't pair. The [changelog](CHANGELOG.md) says what hosts change.
+  0.8.0-preview and later speak the revised draft; 0.7.1-preview and
+  before speak the draft before it, and servers on the two don't pair. The [changelog](CHANGELOG.md) says what hosts change.
 - The engine's API in words: [api/](https://github.com/msfp-io/msfp-spec/tree/main/api)
   in the spec's repository, mainly
   [engine.md](https://github.com/msfp-io/msfp-spec/blob/main/api/engine.md)
@@ -29,8 +28,8 @@ it writes none of the protocol itself.
   This library follows the same design as the Go engine,
   [msfp-go](https://github.com/msfp-io/msfp-go), in .NET's own style.
 
-**Status: 0.7.1-preview**, published on NuGet as previews (`Msfp.Engine`,
-`Msfp.Protocol`); before 1.0 the API may change. The protocol layer is complete
+**Status: 0.8.0-preview**, published on NuGet as previews (`Msfp.Engine`,
+`Msfp.Protocol`, `Msfp.Describe`); before 1.0 the API may change. The protocol layer is complete
 and passes every test vector of MSFP version 0. The engine pairs (keys,
 codes, `pair`, `hello`, accepting and ending, signed answers, limits),
 rotates and revokes its key (with its next key, or replaced without it),
@@ -57,7 +56,7 @@ holds it.
 | `Msfp.Describe` (namespace `Msfp.Describe`) | a media file as a copy, with ffprobe: the media type sniffed, ffprobe run safely, codecs strings from the codec records, the copy shaped (msfp-go's `describe`) |
 | `Msfp.Protocol` (namespace `Msfp.Protocol`) | the protocol's pieces: keys, pairing codes, signatures, strict JSON, statements, title keys, the media checks |
 
-Both have the same version. The only dependency beyond .NET is
+All three have the same version. The only dependency beyond .NET is
 [BouncyCastle.Cryptography](https://www.nuget.org/packages/BouncyCastle.Cryptography)
 for Ed25519 and X25519, which .NET doesn't have, and the engine's use of
 `Microsoft.Extensions.Logging.Abstractions`. It needs .NET 10.
@@ -350,11 +349,11 @@ requests waiting, and `pair <group> <mail>` to accept one. Relations:
 
 The library follows [semantic versioning](https://semver.org). Its
 major.minor version is shared with the other MSFP engines: msfp-dotnet
-0.7.x-preview follows the same API design as msfp-go 0.7.x (the spec's api/).
+0.8.x-preview follows the same API design as msfp-go 0.8.x (the spec's api/).
 Patch versions are each library's own. The library's version is separate
 from the protocol's: from 0.4.0-preview it speaks MSFP version 0, groups
 included; 0.2.0-preview and before speak the same protocol numbered 1, and
-the two don't talk. The next release speaks version 0 as revised
+the two don't talk. From 0.8.0-preview it speaks version 0 as revised
 (proposals 16 and 17), which doesn't talk with 0.7.1-preview and before either.
 
 ## Testing
