@@ -97,6 +97,23 @@ public sealed class JsonFileStoreTests : IDisposable
         }
     }
 
+    // A file that isn't JSON is an error that names it, never read as empty
+    // (a server must not start afresh, without its keys and pairings); the
+    // failed Open lets the lock go.
+    [Theory]
+    [InlineData("state.json")]
+    [InlineData("own.json")]
+    [InlineData("")]
+    public void DamagedFilesRefused(string name)
+    {
+        JsonFileStore.Open(dir).Dispose();
+        File.WriteAllBytes(Path.Combine(dir, name.Length > 0 ? name : "state.json"), B(name.Length > 0 ? "{\"peers\":" : ""));
+        var e = Assert.Throws<IOException>(() => JsonFileStore.Open(dir));
+        Assert.Contains(name.Length > 0 ? name : "state.json", e.Message, StringComparison.Ordinal);
+        File.WriteAllBytes(Path.Combine(dir, name.Length > 0 ? name : "state.json"), B("{}"));
+        JsonFileStore.Open(dir).Dispose();
+    }
+
     [Fact]
     public void OpenedOnce()
     {
