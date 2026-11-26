@@ -25,7 +25,7 @@ internal sealed class Probes
     /// etag, length, picture, audio and subtitle tracks and chapters; and how
     /// many streams it has. The rest is the caller's.
     /// </summary>
-    public (Protocol.Copy Copy, int Streams) Describe(string path, FileInfo info)
+    public async Task<(Protocol.Copy Copy, int Streams)> DescribeAsync(string path, FileInfo info, CancellationToken ct)
     {
         lock (_done)
         {
@@ -39,8 +39,9 @@ internal sealed class Probes
         var streams = 0;
         try
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
-            var pr = _prober.ProbeAsync(path, cts.Token).GetAwaiter().GetResult();
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromMinutes(2));
+            var pr = await _prober.ProbeAsync(path, cts.Token);
             c = Shaper.Shape(pr, null);
             streams = pr.Format.Streams;
             foreach (var s in pr.Streams)
@@ -48,7 +49,7 @@ internal sealed class Probes
                 streams = Math.Max(streams, s.Index + 1);
             }
         }
-        catch (Exception e) when (e is DescribeException or OperationCanceledException)
+        catch (Exception e) when (e is DescribeException || (e is OperationCanceledException && !ct.IsCancellationRequested))
         {
             c = new Protocol.Copy("", 0, MediaTypeOf(path), info.Length, "", []); // no ffprobe, or a file it can't read
         }
@@ -60,6 +61,30 @@ internal sealed class Probes
         }
 
         return (c, streams);
+    }
+
+    /// <summary>How many files' descriptions are kept.</summary>
+    public int Count
+    {
+        get
+        {
+            lock (_done)
+            {
+                return _done.Count;
+            }
+        }
+    }
+
+    /// <summary>Forgets what the files outside here gave.</summary>
+    public void Keep(IReadOnlySet<string> here)
+    {
+        lock (_done)
+        {
+            foreach (var path in _done.Keys.Where(p => !here.Contains(p)).ToList())
+            {
+                _done.Remove(path);
+            }
+        }
     }
 
     // The media type of a file ffprobe didn't read: from its first bytes

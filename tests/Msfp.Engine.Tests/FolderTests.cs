@@ -26,6 +26,21 @@ public sealed class FolderTests : IDisposable
         File.WriteAllText(p, body);
     }
 
+    // A first titles page forgets the probes of files no longer there.
+    [Fact]
+    public async Task ForgetsRemovedFiles()
+    {
+        Write("Heat (1995) [tmdbid-949].mkv", "heat");
+        Write("Alien (1979) [tmdbid-348].mp4", "alien");
+        var f = new Folder(dir) { Opaque = s => "o" + s.Length };
+        await f.TitlesAsync([], "", 100, Ct);
+        Assert.Equal(2, f.Probed);
+        File.Delete(Path.Combine(dir, "Heat (1995) [tmdbid-949].mkv"));
+        var page = await f.TitlesAsync([], "", 100, Ct);
+        Assert.Single(page.Titles);
+        Assert.Equal(1, f.Probed);
+    }
+
     // The folder's titles: films by TMDB ID, loose or in a folder with its
     // extras; a series with its seasons, an episode by its TMDB episode ID
     // (placed) and one by its numbers; a local film with its image; copies

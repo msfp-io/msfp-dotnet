@@ -10,8 +10,8 @@ namespace Msfp.Examples.ShareFolder;
 /// A folder of films and series, shared as one library: the engine's
 /// catalog (with images), playback and media. What it reads:
 /// <code>
-/// Heat (1995) [tmdbid-949].mkv             a film, by its TMDB ID
-/// Heat (1995) [tmdbid-949].fr.vtt          its subtitles, a file per language
+/// Heat (1995) [tmdbid-949].mkv             a film, by its TMDB ID (.mp4 .m4v .mkv .webm .mov .ts .avi)
+/// Heat (1995) [tmdbid-949].fr.vtt          its subtitles, a file per language, after the file's own
 /// Heat (1995) [tmdbid-949].hls/            an HLS copy made beforehand (master.m3u8 and what it names)
 /// Heat (1995) [tmdbid-949].trickplay/      seek-bar previews: layout.json, 0.jpg, 1.jpg…
 /// Alien (1979) [tmdbid-348]/               a film in a folder of its own (its largest video file)
@@ -42,6 +42,9 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
     private const string Lib = "folder";
 
     private readonly Probes _probes = new();
+
+    // How many files' probes are kept (for the tests).
+    internal int Probed => _probes.Count;
 
     /// <summary>The engine's OpaqueKeyPart, set once it is open.</summary>
     public Func<string, string> Opaque { get; set; } = _ => throw new InvalidOperationException("the engine isn't open yet");
@@ -243,9 +246,15 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
     public ValueTask<IReadOnlyList<Library>> LibrariesAsync(CancellationToken ct) =>
         ValueTask.FromResult<IReadOnlyList<Library>>([new Library { Id = Lib, Name = Path.GetFileName(Path.TrimEndingDirectorySeparator(dir)) }]);
 
-    public ValueTask<TitlePage> TitlesAsync(IReadOnlyList<string> libraries, string after, int limit, CancellationToken ct)
+    public async ValueTask<TitlePage> TitlesAsync(IReadOnlyList<string> libraries, string after, int limit, CancellationToken ct)
     {
         var items = Scan();
+        if (after.Length == 0)
+        {
+            // A first page: the files no longer in the folder leave the probes.
+            _probes.Keep(items.Values.Where(it => it.Video.Length > 0).Select(it => Path.Combine(dir, it.Video)).ToHashSet(StringComparer.Ordinal));
+        }
+
         var titles = new List<Title>();
         var more = false;
         foreach (var key in items.Keys.Order(StringComparer.Ordinal))
@@ -265,7 +274,7 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
             var t = it.Title with { Image = it.Image.Length > 0 };
             if (it.Video.Length > 0)
             {
-                if (CopyOf(it.Video) is not { } copy)
+                if (await CopyOfAsync(it.Video, ct) is not { } copy)
                 {
                     continue;
                 }
@@ -276,7 +285,7 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
             titles.Add(t);
         }
 
-        return ValueTask.FromResult(new TitlePage(titles, more));
+        return new TitlePage(titles, more);
     }
 
     /// <summary>A local film's or series' image (MSFP catalog section 4.4).</summary>
@@ -291,7 +300,7 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
     // (numbered after the file's streams; the file's own tracks first, at
     // most 64 in all), its previews' layout. Its ID is its
     // handle: its path in the folder.
-    private Protocol.Copy? CopyOf(string rel)
+    private async ValueTask<Protocol.Copy?> CopyOfAsync(string rel, CancellationToken ct)
     {
         var path = Path.Combine(dir, rel);
         var info = new FileInfo(path);
@@ -300,7 +309,7 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
             return null;
         }
 
-        var (c, streams) = _probes.Describe(path, info);
+        var (c, streams) = await _probes.DescribeAsync(path, info, ct);
         if (c.ETag.Length == 0)
         {
             return null;
@@ -365,11 +374,16 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
     /// apart (as text: video section 5.4), the subtitle tracks inside the file
     /// aren't (they play with the file as it is).
     /// </summary>
-    public ValueTask<CopyInfo> DescribeAsync(PeerRef peer, string copy, CancellationToken ct) =>
-        !OfferedHere(peer) ? throw new MsfpException(MsfpError.NotFound) : ValueTask.FromResult(new CopyInfo
+    public async ValueTask<CopyInfo> DescribeAsync(PeerRef peer, string copy, CancellationToken ct)
+    {
+        if (!OfferedHere(peer))
         {
-            NotApart = Local(copy) && CopyOf(copy) is { } c ? c.SubtitleTracks.Where(s => !s.External).Select(s => s.Id).ToList() : null,
-        });
+            throw new MsfpException(MsfpError.NotFound);
+        }
+
+        var c = Local(copy) ? await CopyOfAsync(copy, ct) : null;
+        return new CopyInfo { NotApart = c?.SubtitleTracks.Where(s => !s.External).Select(s => s.Id).ToList() };
+    }
 
     /// <summary>
     /// Serves what the engine decided (the request's Served), or refuses: the
@@ -455,7 +469,7 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
                 return;
             case MediaKind.Subtitles:
                 var subs = Subtitles(file);
-                var (_, streams) = _probes.Describe(file, new FileInfo(file));
+                var (_, streams) = await _probes.DescribeAsync(file, new FileInfo(file), ct);
                 var n = path.Track.StartsWith('s') && int.TryParse(path.Track.AsSpan(1), NumberStyles.None, CultureInfo.InvariantCulture, out var i)
                     ? i - streams : -1;
                 if (n < 0 || n >= subs.Count)
