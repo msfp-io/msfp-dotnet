@@ -184,12 +184,19 @@ public sealed class DeliveryTests
         o = await FetchAsync(s, pb.Id, file);
         Assert.Equal((200, "0123456789abcdefghij"), (o.Status, o.Text));
         Assert.Equal(MsfpError.RangeNotSatisfiable, await FetchErrorAsync(s, pb.Id, file, "bytes=30-"));
-        // Another etag, another size, a 200 to a range: the copy changed.
+        // Another etag, another size, a 200 to a range: the copy changed; a
+        // 206 for another range than the one asked: a failed fetch.
         foreach (var (name, f) in new (string, Func<HeaderList, byte[], byte[]>)[]
         {
             ("another etag", (hl, b) => { hl.Set("ETag", "\"e9\""); return b; }),
             ("a weak etag", (hl, b) => { hl.Set("ETag", "W/\"e0\""); return b; }),
             ("another size", (hl, b) => { hl.Set("Content-Range", "bytes 2-5/21"); return b; }),
+            // A 206 that isn't the range asked (media section 2.1, checking a 206).
+            ("another start", (hl, b) => { hl.Set("Content-Range", "bytes 3-6/20"); return b; }),
+            ("an end past last", (hl, b) => { hl.Set("Content-Range", "bytes 2-9/20"); return HostKit.Bytes("23456789"); }),
+            ("an unknown total", (hl, b) => { hl.Set("Content-Range", "bytes 2-5/*"); return b; }),
+            ("malformed", (hl, b) => { hl.Set("Content-Range", "bytes 2-5"); return b; }),
+            ("end before start", (hl, b) => { hl.Set("Content-Range", "bytes 5-2/20"); return b; }),
             ("a 200", (hl, b) => { hl.Remove("Content-Range"); return HostKit.Bytes("0123456789abcdefghij"); }),
         })
         {
