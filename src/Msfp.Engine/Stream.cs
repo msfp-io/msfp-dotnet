@@ -75,7 +75,45 @@ internal sealed class BoundedSink(int max) : IResponseSink
 /// A sink that notes whether it started, writes nothing once its token is
 /// cancelled, and paces a download's body.
 /// </summary>
-internal sealed class GuardedSink(IResponseSink inner, CancellationToken ct, Pacer? pace = null) : IResponseSink
+// The token of the writes to a host's response of unknown length: the
+// request's, and once the playback ends, 2 s more for a write under way. A
+// write cancelled in flight makes Kestrel reset an HTTP/2 stream
+// (INTERNAL_ERROR), so that the viewer's server sees its relay cut; an
+// answer ended between two writes ends cleanly, as Go's engine ends it.
+internal sealed class WriteGrace : IDisposable
+{
+    internal static readonly TimeSpan Grace = TimeSpan.FromSeconds(2);
+    private readonly CancellationTokenSource _cts;
+    private readonly CancellationTokenRegistration _ended;
+
+    public WriteGrace(CancellationToken request, CancellationToken ended)
+    {
+        _cts = CancellationTokenSource.CreateLinkedTokenSource(request);
+        _ended = ended.Register(() =>
+        {
+            try
+            {
+                _cts.CancelAfter(Grace);
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        });
+    }
+
+    public CancellationToken Token => _cts.Token;
+
+    public void Dispose()
+    {
+        _ended.Dispose();
+        _cts.Dispose();
+    }
+}
+
+// The sink of a host's answer: nothing more is written once ct ends (the
+// playback ended, or the peer left); a write under way goes on with write,
+// when given (WriteGrace), else ends with ct.
+internal sealed class GuardedSink(IResponseSink inner, CancellationToken ct, Pacer? pace = null, CancellationToken? write = null) : IResponseSink
 {
     // How many bytes of a download go at a time.
     internal const int PaceChunk = 16 << 10;
@@ -104,7 +142,7 @@ internal sealed class GuardedSink(IResponseSink inner, CancellationToken ct, Pac
 
         if (pace is null)
         {
-            await inner.WriteAsync(data, ct).ConfigureAwait(false);
+            await inner.WriteAsync(data, write ?? ct).ConfigureAwait(false);
             return;
         }
 
@@ -112,7 +150,8 @@ internal sealed class GuardedSink(IResponseSink inner, CancellationToken ct, Pac
         {
             var n = Math.Min(data.Length, PaceChunk);
             await pace.TakeAsync(n, ct).ConfigureAwait(false);
-            await inner.WriteAsync(data[..n], ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            await inner.WriteAsync(data[..n], write ?? ct).ConfigureAwait(false);
             data = data[n..];
         }
     }
@@ -329,7 +368,8 @@ public sealed partial class MsfpEngine
                             return await ServeSheetAsync(pb.Ref, pb.Handle, media, pb.SheetWidth, pb.SheetHeight, output, token).ConfigureAwait(false);
                     }
 
-                    var sink = new GuardedSink(output, token, pb.Pace);
+                    using var grace = new WriteGrace(ct, pb.Ended.Token);
+                    var sink = new GuardedSink(output, token, pb.Pace, grace.Token);
                     Exception? error = null;
                     try
                     {

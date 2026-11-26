@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A playback ended while the owning server was writing an answer of
+  unknown length (a live transcode's segment) reset the HTTP/2 stream
+  (`INTERNAL_ERROR`): the write was cancelled in flight, and the viewer's
+  relay saw its stream cut. A write under way now gets 2 seconds to
+  finish, no new write starts, and the answer ends cleanly, as msfp-go's
+  does. The rare `KestrelTests.ShareAndPlayOverTls` failure was this.
+- ShareFolder (the example): ffprobe is awaited, not waited on from a
+  request thread; the probes of files no longer in the folder are
+  forgotten.
+
 ## v0.8.0-preview (2026-11-24): the revision of version 0 (proposals 16 and 17)
 
 MSFP version 0 is revised, and stays a draft until version 1: titles

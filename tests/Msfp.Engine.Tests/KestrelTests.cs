@@ -236,4 +236,62 @@ public sealed class KestrelTests
         Assert.Equal(200, held.Status);
         Assert.Empty(a.Engine.Playbacks());
     }
+
+    // A stop while a write of the held answer is under way (big writes, so
+    // one nearly always is): the answer still ends cleanly, not reset
+    // (WriteGrace); before, the viewer's relay saw HTTP/2 INTERNAL_ERROR.
+    [Fact]
+    public async Task StopDuringAWriteEndsCleanly()
+    {
+        var h = HostKit.FilmHost();
+        h.Libs = [new Library { Id = "films", Name = "Films" }];
+        await using var a = await StartAsync("Server A", h);
+        await using var b = await StartAsync("Server B");
+        await Task.Delay(1100);
+        var (code, _) = await a.Engine.MakeCodeAsync(null);
+        var onB = (await b.Engine.RedeemCodeAsync(code)).Id;
+        var onA = Assert.Single(await a.Engine.PeersAsync()).Id;
+        await a.Engine.AcceptAsync(onA);
+        await a.Engine.CheckAsync(onA);
+        await b.Engine.CheckAsync(onB);
+        await a.Engine.SetOffersAsync(onA, ["films"]);
+        var libs = await b.Engine.TheirLibrariesAsync(onB);
+        await b.Engine.SetWantsAsync(onB, [libs[0].Id]);
+        Assert.Equal(1, await b.Engine.ReadNowAsync(onB));
+        var pb = await b.Engine.PlayAsync(onB, new PlayRequest { Title = "movie/tmdb/949" });
+        var master = new MemorySink();
+        await b.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.Master }, "", master);
+        Assert.Equal(HostKit.FilledMaster, master.Text);
+        // The media playlist first: the owning server serves only the names
+        // its playlists gave (media section 1).
+        await b.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.Playlist, Name = "v0.m3u8" }, "", new MemorySink());
+        var part = new MemorySink();
+        await b.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.Segment, Name = "seg0.m4s" }, "bytes=2-5", part);
+        Assert.Equal((206, "2345", "bytes 2-5/20"), (part.Status, part.Text, part.ContentRange));
+        // A response held open, as a live transcode: cut at the end.
+        lock (h.Lock)
+        {
+            h.Serve = async (_, _, output, ct) =>
+            {
+                output.Start(200, "video/mp4", -1, "");
+                while (true)
+                {
+                    await output.WriteAsync(new byte[4 << 20], ct);
+                }
+            };
+        }
+
+        var held = new MemorySink();
+        var fetch = b.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.Segment, Name = "seg0.m4s" }, "", held);
+        while (held.Body.Length < (8 << 20))
+        {
+            await Task.Delay(10);
+        }
+
+        a.Engine.StopPlayback(Assert.Single(a.Engine.Playbacks()).Id);
+        // The owning side ends its answer there; the relay ends with it.
+        await fetch.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(200, held.Status);
+        Assert.Empty(a.Engine.Playbacks());
+    }
 }
