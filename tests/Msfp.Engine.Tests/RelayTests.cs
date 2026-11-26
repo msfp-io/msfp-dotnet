@@ -156,6 +156,23 @@ public sealed class RelayTests
             return b;
         });
         Assert.Equal(MsfpError.NotFound, (await FetchAsync(s, pb.Id, seg, "bytes=2-5")).Error);
+        // For a segment, unlike the file, an unknown total is fine; and a 200
+        // to a range is the whole segment, accepted (media section 2.1).
+        x.Set("seg0.m4s", (hl, b) =>
+        {
+            hl.Set("Content-Range", "bytes 2-5/*");
+            return b;
+        });
+        var star = await FetchAsync(s, pb.Id, seg, "bytes=2-5");
+        Assert.Equal(((MsfpError?)null, 206, "2345"), (star.Error, star.Out?.Status, star.Out?.Text));
+        x.Set("seg0.m4s", (hl, _) =>
+        {
+            hl.Remove("Content-Range");
+            hl.Set("X-Test-Status", "200");
+            return HostKit.Bytes("0123456789abcdefghij");
+        });
+        var whole = await FetchAsync(s, pb.Id, seg, "bytes=2-5");
+        Assert.Equal(((MsfpError?)null, 200, "0123456789abcdefghij"), (whole.Error, whole.Out?.Status, whole.Out?.Text));
         x.Set("seg0.m4s", (hl, b) =>
         {
             hl.Set("Content-Length", "99");

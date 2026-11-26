@@ -288,13 +288,21 @@ internal sealed class Network : HttpMessageHandler
             hl.Remove("Content-Length"); // the body's own, unless the rewrite sets one
             if (rw.Rewrite(uri.AbsolutePath, hl, res.Body.ToArray()) is { } changed)
             {
+                // A rewrite may change the status too, by this header.
+                var status = res.Status;
+                if (hl.Get("X-Test-Status") is { } code)
+                {
+                    hl.Remove("X-Test-Status");
+                    status = int.Parse(code, System.Globalization.CultureInfo.InvariantCulture);
+                }
+
                 if (hl.Get(Signing.HeaderSignature) is not null)
                 {
-                    hl.Set(Signing.HeaderSignature, Signing.SignResponse(rw.Key(), headers.Get(Signing.HeaderNonce) ?? "", res.Status,
+                    hl.Set(Signing.HeaderSignature, Signing.SignResponse(rw.Key(), headers.Get(Signing.HeaderNonce) ?? "", status,
                         Signing.MediaType(hl.Get("Content-Type")) is { Length: > 0 } t ? t : null, changed));
                 }
 
-                res = new MsfpResponse { Status = res.Status, Headers = hl.Items, Body = changed };
+                res = new MsfpResponse { Status = status, Headers = hl.Items, Body = changed };
             }
         }
         var output = new HttpResponseMessage((HttpStatusCode)res.Status) { Content = new ByteArrayContent(res.Body.ToArray()) };
