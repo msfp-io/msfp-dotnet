@@ -1,6 +1,6 @@
 namespace Msfp.Tests;
 
-// Byte ranges, as a Range header gives them (media section 2.1).
+// Byte ranges, as a Range header gives them (MSFP Media fetching 2.1).
 public sealed class RangeTests
 {
     [Theory]

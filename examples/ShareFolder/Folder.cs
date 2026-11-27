@@ -288,14 +288,14 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
         return new TitlePage(titles, more);
     }
 
-    /// <summary>A local film's or series' image (MSFP catalog section 4.4).</summary>
+    /// <summary>A local film's or series' image (MSFP Media listing 4.4).</summary>
     public async ValueTask<byte[]> ImageAsync(string key, CancellationToken ct) =>
         Scan().TryGetValue(key, out var it) && it.Image.Length > 0
             ? await File.ReadAllBytesAsync(it.Image, ct)
             : throw new MsfpException(MsfpError.NotFound);
 
-    // Describes a video file as the catalog lists a copy (MSFP video section
-    // 3.2): its exact size, its media type and etag, what ffprobe says of it
+    // Describes a video file as the catalog lists a copy (MSFP
+    // Media video 3.2): its exact size, its media type and etag, what ffprobe says of it
     // (Probes.cs, with the Msfp.Describe package), its .vtt subtitles
     // (numbered after the file's streams; the file's own tracks first, at
     // most 64 in all), its previews' layout. Its ID is its
@@ -324,7 +324,7 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
         {
             Id = rel,
             Size = info.Length,
-            // A copy lists at most 64 subtitle tracks (video section 3.2):
+            // A copy lists at most 64 subtitle tracks (MSFP Media video 3.2):
             // the file's own first.
             SubtitleTracks = [.. c.SubtitleTracks.Concat(external).Take(Copies.MaxSubtitleTracks)],
             PreviewLayout = Previews(path),
@@ -371,7 +371,7 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
 
     /// <summary>
     /// Tells what the catalog doesn't: no fonts; every .vtt file is served
-    /// apart (as text: video section 5.4), the subtitle tracks inside the file
+    /// apart (as text: MSFP Media video 5.4), the subtitle tracks inside the file
     /// aren't (they play with the file as it is).
     /// </summary>
     public async ValueTask<CopyInfo> DescribeAsync(PeerRef peer, string copy, CancellationToken ct)
@@ -395,8 +395,8 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
     /// HLS copy then taken to be the same streams); without delivery outside
     /// it, a transcode ffmpeg makes (Baseline.cs). It makes no transcode asked
     /// by delivery, and no audio renditions, which the answer then says
-    /// (<see cref="Started"/>'s AudioRenditions false: MSFP playback section
-    /// 2.3). The handle is the protocol and the file's path.
+    /// (<see cref="Started"/>'s AudioRenditions false: MSFP
+    /// Media playing 2.3). The handle is the protocol and the file's path.
     /// </summary>
     public ValueTask<Started> StartAsync(StartRequest request, CancellationToken ct)
     {

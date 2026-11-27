@@ -25,7 +25,7 @@ internal sealed class CallRequest(MsfpRequest http, byte[] body)
 
 public sealed partial class MsfpEngine
 {
-    /// <summary>The longest request body (core section 3).</summary>
+    /// <summary>The longest request body (MSFP core section 3).</summary>
     internal const int MaxBody = 64 << 10;
 
     internal const string CallPair = "pair";
@@ -43,7 +43,7 @@ public sealed partial class MsfpEngine
 
     /// <summary>
     /// The federation routes peers call, under
-    /// <c>&lt;Prefix&gt;/api/v1/federation/</c> (core sections 6 and 8):
+    /// <c>&lt;Prefix&gt;/api/v1/federation/</c> (MSFP core sections 6 and 8):
     /// give every request there to this method, on the raw target (never
     /// with a prefix stripped: the signature covers the path as sent), with
     /// no authentication in front, and write the answer as it is, with no
@@ -102,7 +102,7 @@ public sealed partial class MsfpEngine
         }
 
         // Every 200 and 202 is signed; a refusal only to a key this server
-        // knows, or knew (core section 6.6).
+        // knows, or knew (MSFP core section 6.6).
         var signer = req?.Signer;
         if (signer is null && res.Status is 200 or 202)
         {
@@ -149,8 +149,8 @@ public sealed partial class MsfpEngine
         _ => Answer.Refuse(ProblemType.NotSupported),
     };
 
-    // Reads and checks a request within the limits on calls here (core
-    // sections 6.4 and 8.3): free is null when res is the answer, and
+    // Reads and checks a request within the limits on calls here (MSFP
+    // core sections 6.4 and 8.3): free is null when res is the answer, and
     // otherwise frees the request's slots once its call is handled.
     private async Task<(CallRequest? Req, Answer Res, Action? Free)> CheckAsync(MsfpRequest r, string call, CancellationToken ct)
     {
@@ -166,7 +166,7 @@ public sealed partial class MsfpEngine
         }
 
         // Content-Type application/json, and no browser's cross-site marker
-        // (core section 3).
+        // (MSFP core section 3).
         var cts = r.Headers.GetValues("Content-Type");
         var site = r.Headers.GetValues("Sec-Fetch-Site");
         if (cts.Count != 1 || Signing.MediaType(cts[0]) != "application/json" ||
@@ -185,7 +185,7 @@ public sealed partial class MsfpEngine
         {
             req.Verified = f.Verified;
             // A server whose pairing ended when our key was stolen: its hello
-            // gets the revocation, for 30 days (core section 12.7).
+            // gets the revocation, for 30 days (MSFP core section 12.7).
             var (revocation, replaced) = await RevocationAnswerAsync(req, call, ct).ConfigureAwait(false);
             if (revocation is not null)
             {
@@ -199,7 +199,7 @@ public sealed partial class MsfpEngine
                 return (null, Answer.PlainRefusal, null);
             }
 
-            // A server whose pairing ended: "unknown", signed (core section 7.4).
+            // A server whose pairing ended: "unknown", signed (MSFP core section 7.4).
             req.Signer = Current();
             return (req, Answer.Refuse(ProblemType.NotFound), null);
         }
@@ -211,7 +211,7 @@ public sealed partial class MsfpEngine
         req.Verified = v;
         req.Ours = v.Former ? FormerHost() ?? OurHost() : OurHost();
         // A stranger is heard on pair (a code of ours live) and on
-        // group-pair (a member of one of our groups) only (core section 6.5,
+        // group-pair (a member of one of our groups) only (MSFP core section 6.5,
         // groups section 8).
         if (!v.Known && call is not (CallPair or CallGroupPair))
         {
@@ -230,16 +230,16 @@ public sealed partial class MsfpEngine
             req.Peer = p;
             req.Signer = SignerFor(p);
             // Which of our addresses it calls: one still on our former is told
-            // of the new one (core section 13.1).
+            // of the new one (MSFP core section 13.1).
             await HeardAtAsync(p, v.Former, ct).ConfigureAwait(false);
-            // A revoked key is heard for rotate and revoke only (core section 12.6).
+            // A revoked key is heard for rotate and revoke only (MSFP core section 12.6).
             if (p.Suspended is not null && call is not (CallRotate or CallRevoke))
             {
                 return (req, Answer.Refuse(ProblemType.NotFound), null);
             }
 
             // A peer still on our old key: told of the new one again, at each
-            // contact (core section 12.4), in the background.
+            // contact (MSFP core section 12.4), in the background.
             if (p.OurKey == KeyOld && p.Inbound == Inbound.Yes && p.Suspended is null)
             {
                 RotateSoon(p);
@@ -317,7 +317,7 @@ public sealed partial class MsfpEngine
         }
     }
 
-    // Whether a key may be heard (core section 6.5): a peer's current key,
+    // Whether a key may be heard (MSFP core section 6.5): a peer's current key,
     // in any state; its previous one while still heard; anyone while a
     // code of ours is live (on pair: the check of the call is pair's); a
     // member of one of our groups (on group-pair, groups section 8), heard
@@ -354,7 +354,7 @@ public sealed partial class MsfpEngine
     }
 
     // The peer whose key this is: its current key, or its previous one
-    // while still heard (core section 12.4); null for none.
+    // while still heard (MSFP core section 12.4); null for none.
     internal async ValueTask<PeerRecord?> PeerHeardAsync(byte[] key, CancellationToken ct)
     {
         PeerRecord? found = null;

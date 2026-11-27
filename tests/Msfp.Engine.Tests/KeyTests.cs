@@ -5,7 +5,7 @@ using Msfp.Stores;
 namespace Msfp.Tests;
 
 /// <summary>
-/// Changes of key (core section 12) between engines on one fake clock, and
+/// Changes of key (MSFP core section 12) between engines on one fake clock, and
 /// by requests signed by hand with a server's keys (msfp-go's keys_test.go).
 /// </summary>
 public sealed class KeyTests

@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// The discovery document (core section 11): an unsigned JSON document a
+/// The discovery document (MSFP core section 11): an unsigned JSON document a
 /// server may serve at GET /.well-known/msfp, saying where its federation
 /// calls are (its base path) and, before any pairing, which versions it
 /// speaks. It proves nothing: the versions used are always those of the
@@ -22,31 +22,42 @@ public sealed class Discovery
 
     private const int MaxBase = 256; // bytes
 
-    // The parts whose lists a document's parts must give as lists (core
-    // section 10.2); any other part is ignored, whatever its value.
+    // The parts whose lists a document's parts must give as lists (MSFP
+    // core section 10.2); any other part is ignored, whatever its value.
     private static readonly string[] KnownParts = ["catalog", "playback", "media", "video", "music"];
 
-    private Discovery(JsonArray? core, JsonObject? parts, string basePath)
+    private Discovery(JsonArray? core, JsonObject? parts, string basePath, IReadOnlyList<int>? msfpMedia)
     {
         Core = core;
         Parts = parts;
         Base = basePath;
+        MsfpMedia = msfpMedia;
     }
 
-    /// <summary>Its core member, a list, as sent (read as in a hello, core section 10.2); null when absent.</summary>
+    /// <summary>The versions of MSFP Media that version 0 of the parts carries (MSFP core section 10.1): MSFP Media version 0.</summary>
+    public static IReadOnlyList<int> MsfpMediaVersions { get; } = [0];
+
+    /// <summary>
+    /// The versions of MSFP Media its part versions carry, read as a list of
+    /// hello is (MSFP core section 10.2); null when it gives none. For
+    /// information only: the part versions decide (MSFP core section 10.1).
+    /// </summary>
+    public IReadOnlyList<int>? MsfpMedia { get; }
+
+    /// <summary>Its core member, a list, as sent (read as in a hello, MSFP core section 10.2); null when absent.</summary>
     public JsonArray? Core { get; }
 
     /// <summary>Its parts member, an object whose known parts are lists, as sent; null when absent.</summary>
     public JsonObject? Parts { get; }
 
-    /// <summary>The versions the document lists, read as a hello's are (core section 10.2).</summary>
+    /// <summary>The versions the document lists, read as a hello's are (MSFP core section 10.2).</summary>
     public Versions Versions => Versions.Read(Core, Parts, (Core is not null, Parts is not null));
 
     /// <summary>Its base path, <see cref="DefaultBase"/> when it gives none.</summary>
     public string Base { get; }
 
     /// <summary>
-    /// Checks a base path in its one form (core section 11): at most 256
+    /// Checks a base path in its one form (MSFP core section 11): at most 256
     /// bytes, an absolute path of segments of A-Z a-z 0-9 . _ ~ -, none
     /// empty, "." or "..", no percent-encoding at all, ending in
     /// /api/v1/federation/. So the path means the same before and after any
@@ -80,7 +91,7 @@ public sealed class Discovery
 
     /// <summary>
     /// The part of a valid base before /api/v1/federation/: the server's
-    /// prefix, "" by default (core section 11). Its stream root is
+    /// prefix, "" by default (MSFP core section 11). Its stream root is
     /// &lt;address&gt;&lt;prefix&gt;/api/v1/stream/.
     /// </summary>
     public static string Prefix(string basePath)
@@ -91,7 +102,7 @@ public sealed class Discovery
 
     /// <summary>
     /// Reads a discovery document's body. A body that isn't a JSON object, a
-    /// core or parts member of the wrong type, and a base that isn't a string
+    /// core, parts or msfpMedia member of the wrong type, and a base that isn't a string
     /// of <see cref="CheckBase"/>'s form, make it no document: its reader
     /// then uses <see cref="DefaultBase"/>.
     /// </summary>
@@ -109,12 +120,13 @@ public sealed class Discovery
             }
         }
 
+        IReadOnlyList<int>? msfpMedia = m.TryGetPropertyValue("msfpMedia", out var mm) ? Versions.ReadList(mm) : null;
         var basePath = m.GetString("base");
         if (basePath is not null)
         {
             CheckBase(basePath);
         }
 
-        return new Discovery(core, parts, basePath ?? DefaultBase);
+        return new Discovery(core, parts, basePath ?? DefaultBase, msfpMedia);
     }
 }

@@ -227,7 +227,7 @@ public class VideoTests
         return n;
     }
 
-    // Video title keys in their one canonical form (video section 4): any
+    // Video title keys in their one canonical form (MSFP Media video 4): any
     // other form of the same title is refused.
     [Fact]
     public void ParseVideoKey()
@@ -283,8 +283,8 @@ public class VideoTests
         Assert.Null(new VideoKey("movie", "tmdb", 1).Parent);
     }
 
-    // What a receiver keeps of a title (catalog section 3.3, video section
-    // 3.1): a bad member skipped, or counted as absent, not the whole title.
+    // What a receiver keeps of a title (MSFP Media listing 3.3, MSFP
+    // Media video 3.1): a bad member skipped, or counted as absent, not the whole title.
     [Fact]
     public void ReadVideoTitle()
     {

@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// A well-formed Range header (media section 2.1): bytes
+/// A well-formed Range header (MSFP Media fetching 2.1): bytes
 /// <see cref="First"/> to <see cref="Last"/>, both included (Last -1: to
 /// the end), or, when <see cref="Suffix"/> is above 0, the last Suffix
 /// bytes. <see cref="Media.TryParseRange"/> reads one.
@@ -48,7 +48,7 @@ public readonly record struct ByteRange(long First, long Last, long Suffix)
 
 /// <summary>
 /// What a viewer's server checks of an answer for the file or a segment
-/// (media sections 2.1 and 3.2): its status and headers, null for one absent.
+/// (MSFP Media fetching 2.1 and 3.2): its status and headers, null for one absent.
 /// </summary>
 /// <param name="Status">The answer's status.</param>
 /// <param name="ETag">Its ETag header.</param>
@@ -56,8 +56,8 @@ public readonly record struct ByteRange(long First, long Last, long Suffix)
 /// <param name="ContentLength">Its Content-Length header.</param>
 public sealed record MediaAnswer(int Status, string? ETag = null, string? ContentRange = null, string? ContentLength = null);
 
-// The file and segments, read by byte ranges (media sections 2.1, 3.2
-// and 4.2): the Range a request may carry, the answers a viewer's server
+// The file and segments, read by byte ranges (MSFP
+// Media fetching 2.1 and 3.2, MSFP media section 4.2): the Range a request may carry, the answers a viewer's server
 // relays, and the cap of a scan ticket.
 public static partial class Media
 {
@@ -68,7 +68,7 @@ public static partial class Media
     private static partial Regex ContentRangeForm();
 
     /// <summary>
-    /// Reads a Range header in one of media section 2.1's three forms,
+    /// Reads a Range header in one of MSFP Media fetching 2.1's three forms,
     /// bytes=&lt;first&gt;-&lt;last&gt; (first ≤ last), bytes=&lt;first&gt;- and
     /// bytes=-&lt;count&gt; (count ≥ 1): numbers of 1 to 15 digits, leading
     /// zeros accepted; false for any other, several ranges and bytes=-
@@ -108,8 +108,8 @@ public static partial class Media
     public static string UnsatisfiedRange(long size) => string.Create(CultureInfo.InvariantCulture, $"bytes */{size}");
 
     /// <summary>
-    /// What a viewer's server checks of an answer for the file (media
-    /// sections 2.1, 2.3 and 3.2), to the Range it sent (null or "" for
+    /// What a viewer's server checks of an answer for the file (MSFP
+    /// Media fetching 2.1, 2.3 and 3.2), to the Range it sent (null or "" for
     /// none, never a malformed one), of a copy of <paramref name="size"/>
     /// bytes and the given etag: a 200 only without Range, with
     /// Content-Length the size; a 206 only to a Range, answering it, its
@@ -165,8 +165,8 @@ public static partial class Media
     }
 
     /// <summary>
-    /// What a viewer's server checks of an answer for a segment (media
-    /// section 2.1), to the Range it sent (null or "" for none): a 200 is the
+    /// What a viewer's server checks of an answer for a segment (MSFP
+    /// Media fetching 2.1), to the Range it sent (null or "" for none): a 200 is the
     /// whole segment, accepted with or without Range; a 206, only to a
     /// Range, answers it, its total a number or "*" (unknown; never with a
     /// suffix range, whose start can't be checked).
@@ -201,7 +201,7 @@ public static partial class Media
     /// <summary>
     /// What the owning server sends for a fetch under a scan ticket that has
     /// sent <paramref name="sent"/> bytes so far, a byte sent twice counted
-    /// twice, of a copy of <paramref name="size"/> bytes (media section 4.2):
+    /// twice, of a copy of <paramref name="size"/> bytes (MSFP media section 4.2):
     /// a 206 of start to end, the range cut short at <paramref name="cap"/>
     /// when it would pass it. The cap is the scanBytes the scan's answer
     /// states (<see cref="Playback.ScanCapOf"/>: the floor,

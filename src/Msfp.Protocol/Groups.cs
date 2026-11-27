@@ -153,8 +153,8 @@ public sealed record GroupEvent
 
     /// <summary>
     /// Reads a payload: I-JSON, an object, each member this version knows
-    /// of its type and never null; unknown members ignored (core section
-    /// 2.3). Absent settings members are their defaults (groups section 3.3).
+    /// of its type and never null; unknown members ignored (MSFP
+    /// Media base 2.2). Absent settings members are their defaults (groups section 3.3).
     /// </summary>
     /// <exception cref="ProtocolException"><see cref="ProtocolError.Json"/>.</exception>
     public static GroupEvent Read(ReadOnlySpan<byte> payload)
@@ -223,16 +223,16 @@ public sealed record GroupMail
 /// <summary>What a mail carries, once opened (groups section 5): no name, a member's being its latest profile's, or its joined's until its profile arrives.</summary>
 public sealed record SealedContent
 {
-    /// <summary>The sender's address (core section 5.2).</summary>
+    /// <summary>The sender's address (MSFP core section 5.2).</summary>
     public string Address { get; init; } = "";
 
     /// <summary>Its next key commitment, base64url.</summary>
     public string NextCommitment { get; init; } = "";
 
-    /// <summary>Whether it can be called (core section 7.5).</summary>
+    /// <summary>Whether it can be called (MSFP core section 7.5).</summary>
     public bool Inbound { get; init; }
 
-    /// <summary>The pins of the certificates its address serves (core section 3.2), for group-pair to check; null for none.</summary>
+    /// <summary>The pins of the certificates its address serves (MSFP core section 3.2), for group-pair to check; null for none.</summary>
     public IReadOnlyList<string>? Certificates { get; init; }
 
     /// <summary>The JSON sealed.</summary>

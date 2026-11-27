@@ -5,7 +5,7 @@ using System.Security.Cryptography.X509Certificates;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// Certificates between servers (core section 3.2): a server's key vouches
+/// Certificates between servers (MSFP core section 3.2): a server's key vouches
 /// for the certificates its address serves, named by pin in its signed
 /// hello. A connection to a peer is accepted when its certificate is
 /// publicly trusted, or is one the peer named.
@@ -30,7 +30,7 @@ public static class Pins
 
     /// <summary>
     /// Keeps the first <see cref="Max"/> valid pins, each once, in the order
-    /// sent (core section 3.2), then sorted, so that two lists compare as sets.
+    /// sent (MSFP core section 3.2), then sorted, so that two lists compare as sets.
     /// </summary>
     public static List<string> Clean(IEnumerable<string> pins)
     {

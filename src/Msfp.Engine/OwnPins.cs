@@ -6,7 +6,7 @@ using Msfp.Protocol;
 
 namespace Msfp;
 
-// This server's own certificate pins (core section 3.2), named in its
+// This server's own certificate pins (MSFP core section 3.2), named in its
 // hellos: MsfpConfig.Pins when the host gives them, read from nothing;
 // otherwise read by connecting to its own address as a peer would, with SNI
 // set to its host name, and naming the pin of the leaf certificate served

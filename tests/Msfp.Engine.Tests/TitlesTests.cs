@@ -15,7 +15,7 @@ public sealed class TitlesTests
     private static List<string> Keys(Dictionary<string, Title> titles) => [.. titles.Keys.Order(StringComparer.Ordinal)];
 
     // A page ends early at 3 MiB of answer, next set: the reader asks on,
-    // and keeps every title (catalog section 3.1).
+    // and keeps every title (MSFP Media listing 3.1).
     [Fact]
     public async Task PagesBoundedBySize()
     {
@@ -77,8 +77,8 @@ public sealed class TitlesTests
     }
 
     // Local titles are shared only once the owner allows it, per pairing
-    // (catalog section 5): the change forces a whole reading. Extras go with
-    // their title only, theme songs among them (video section 3.9).
+    // (MSFP catalog section 5): the change forces a whole reading. Extras go with
+    // their title only, theme songs among them (MSFP Media video 3.9).
     [Fact]
     public async Task LocalTitlesAndExtras()
     {
@@ -114,7 +114,7 @@ public sealed class TitlesTests
         Assert.Empty(await s.PeerTitlesAsync());
     }
 
-    // The image of a local title (catalog section 4.4): asked for, served
+    // The image of a local title (MSFP Media listing 4.4): asked for, served
     // under its ticket only, checked and re-encoded.
     [Fact]
     public async Task LocalTitleImage()

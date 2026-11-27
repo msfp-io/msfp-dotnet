@@ -27,7 +27,7 @@ public static class ReadFailure
     /// </summary>
     public const string RefusedUnsigned = "refused-unsigned";
 
-    /// <summary>A refusal signed by its key; <see cref="LastReading.Refusal"/> is its MSFP problem type (core section 8.2).</summary>
+    /// <summary>A refusal signed by its key; <see cref="LastReading.Refusal"/> is its MSFP problem type (MSFP core section 8.2).</summary>
     public const string Refused = "refused";
 
     /// <summary>It isn't paired with this server (any more), or must pair again (it never moved to this server's new key).</summary>

@@ -217,7 +217,7 @@ public sealed partial class MsfpEngine
 
                 if (await tx.ForgottenAsync(SHA256.HashData(key)).ConfigureAwait(false) is { Blocked: true } || g.Refused?.Contains(m.From) == true)
                 {
-                    throw new MsfpException(MsfpError.NotFound); // blocked or refused: dropped (core section 7.4)
+                    throw new MsfpException(MsfpError.NotFound); // blocked or refused: dropped (MSFP core section 7.4)
                 }
 
                 if (await tx.PeerByKeyAsync(key).ConfigureAwait(false) is { } p)
@@ -319,7 +319,7 @@ public sealed partial class MsfpEngine
     }
 
     // Pushes events and mail to these peers, in the background; a peer
-    // that can't be called is never pushed to (core section 7.5).
+    // that can't be called is never pushed to (MSFP core section 7.5).
     private void PushTo(List<PeerRecord> to, string id, IReadOnlyList<StoredEvent> events, IReadOnlyList<StoredMail> mail)
     {
         if (events.Count == 0 && mail.Count == 0)
@@ -734,7 +734,7 @@ public sealed partial class MsfpEngine
             member = StateOf(g).Members.Values.FirstOrDefault(m => m.Key == k)?.Id ?? throw new MsfpException(MsfpError.NotMember);
             if (await tx.ForgottenAsync(SHA256.HashData(key)).ConfigureAwait(false) is { Blocked: true })
             {
-                throw new MsfpException(MsfpError.NotFound); // blocked: kept away from groups (core section 7.4)
+                throw new MsfpException(MsfpError.NotFound); // blocked: kept away from groups (MSFP core section 7.4)
             }
 
             var sent = g.Sent?.FirstOrDefault(x => x.Id == mailId && x.To == member) ?? throw new MsfpException(MsfpError.NotFound);
@@ -773,7 +773,7 @@ public sealed partial class MsfpEngine
             if (p is null)
             {
                 // Linked again: an ended key comes off the forgotten list
-                // (core section 7.4); a blocked one never gets this far.
+                // (MSFP core section 7.4); a blocked one never gets this far.
                 await tx.UnforgetAsync(SHA256.HashData(key)).ConfigureAwait(false);
                 var now = NowSecond();
                 p = new PeerRecord
@@ -1311,7 +1311,7 @@ public sealed partial class MsfpEngine
     }
 
     // Tells this server's groups of its new key: a rotated event in each,
-    // signed with it (core section 12, groups section 3.3).
+    // signed with it (MSFP core section 12, groups section 3.3).
     private async Task GroupsRotatedAsync(CancellationToken ct)
     {
         var k = OurKeys();
@@ -1352,7 +1352,7 @@ public sealed partial class MsfpEngine
     // group-sync with it, for each group they share, pushes the events it
     // lacks. Those signed for the change (rotated; revoked, after a stolen
     // key) were pushed while it still knew the old key, or held this server
-    // suspended (core section 12.6), and may have been refused; without
+    // suspended (MSFP core section 12.6), and may have been refused; without
     // this, they and every event after them would wait for the next round
     // of group-sync.
     private void SyncGroupsSoon(string peerId) => Background(async ct =>

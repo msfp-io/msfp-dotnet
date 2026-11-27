@@ -2,13 +2,13 @@ using System.Text.Json.Nodes;
 
 namespace Msfp.Protocol;
 
-/// <summary>The body of a previews call (video section 5.6): the key of a film, an episode or an extra, and its copy's ID.</summary>
+/// <summary>The body of a previews call (MSFP Media video 5.6): the key of a film, an episode or an extra, and its copy's ID.</summary>
 /// <param name="Title">The title's key, canonical, of a film, an episode or an extra.</param>
 /// <param name="VersionId">The copy's ID.</param>
 public sealed record PreviewsRequest(string Title, string VersionId);
 
 /// <summary>
-/// A previews answer as kept (video section 5.6): the ticket the copy's
+/// A previews answer as kept (MSFP Media video 5.6): the ticket the copy's
 /// sheets are fetched under (<see cref="MediaUrls.Sheet"/>), for 10 minutes,
 /// and the copy's etag as the owning server holds it now. When the etag
 /// isn't the catalog's, the viewer's server reads the title again before it
@@ -17,7 +17,7 @@ public sealed record PreviewsRequest(string Title, string VersionId);
 public sealed record PreviewsAnswer(string Ticket, string ETag);
 
 /// <summary>
-/// A subtitle track an owning server serves apart (video section 5.3), as
+/// A subtitle track an owning server serves apart (MSFP Media video 5.3), as
 /// play's answer lists it: as WebVTT (<see cref="Form"/> text, at
 /// subtitles/&lt;id&gt;), and also as ASS when <see cref="Ass"/> (ass/&lt;id&gt;),
 /// or as PGS (picture, at pictures/&lt;id&gt;).
@@ -28,16 +28,16 @@ public sealed record PreviewsAnswer(string Ticket, string ETag);
 public sealed record ServedSubtitle(string Id, string Form, bool Ass = false);
 
 /// <summary>
-/// Seek-bar previews and the video members of play's answer (MSFP video
-/// sections 5.3 to 5.6): the previews call's request and answer, the
+/// Seek-bar previews and the video members of play's answer (MSFP
+/// Media video 5.3 to 5.6): the previews call's request and answer, the
 /// subtitles served apart and the copy's fonts.
 /// </summary>
 public static partial class Video
 {
-    /// <summary>A subtitle track served as WebVTT (video section 5.3).</summary>
+    /// <summary>A subtitle track served as WebVTT (MSFP Media video 5.3).</summary>
     public const string FormText = "text";
 
-    /// <summary>A subtitle track served as PGS (video section 5.3).</summary>
+    /// <summary>A subtitle track served as PGS (MSFP Media video 5.3).</summary>
     public const string FormPicture = "picture";
 
     /// <summary>The most entries play's answer's subtitles keeps.</summary>
@@ -54,7 +54,7 @@ public static partial class Video
 
     /// <summary>
     /// How a track of <paramref name="format"/> is served, known before play
-    /// (video section 5.4): subrip, webvtt, mov_text and ttml as text; ass and
+    /// (MSFP Media video 5.4): subrip, webvtt, mov_text and ttml as text; ass and
     /// ssa as text with ass; hdmv_pgs_subtitle, dvd_subtitle and dvb_subtitle
     /// as picture. Null for another format, or none: such a track waits for
     /// the answer to know its form, and may not be served apart.
@@ -66,7 +66,7 @@ public static partial class Video
     }
 
     /// <summary>
-    /// Reads play's answer's subtitles (video section 5.3) against the
+    /// Reads play's answer's subtitles (MSFP Media video 5.3) against the
     /// copy's subtitle tracks in the catalog: at most <see cref="MaxServed"/>
     /// entries; an entry that isn't an object, whose id isn't a track of the
     /// copy or repeats an earlier entry's, or whose form is neither text nor
@@ -110,13 +110,13 @@ public static partial class Video
         return out_;
     }
 
-    /// <summary>Reads play's answer's fontCount (video section 5.3): 0 to <see cref="Font.MaxFonts"/>; absent, or anything else, 0.</summary>
+    /// <summary>Reads play's answer's fontCount (MSFP Media video 5.3): 0 to <see cref="Font.MaxFonts"/>; absent, or anything else, 0.</summary>
     public static int ReadFontCount(JsonNode? fontCount) =>
         Copies.Integer(fontCount, 0, Font.MaxFonts, out var n) ? (int)n : 0;
 
     /// <summary>
-    /// Reads a previews request as the owning server does (video section
-    /// 5.6). Whether it offers the caller that title and copy, with a
+    /// Reads a previews request as the owning server does (MSFP
+    /// Media video 5.6). Whether it offers the caller that title and copy, with a
     /// previewLayout in the catalog, is its own to check (404 otherwise); 404
     /// not-supported when video is off comes first, before the body is read.
     /// </summary>
@@ -152,7 +152,7 @@ public static partial class Video
     }
 
     /// <summary>
-    /// Reads a previews answer (video section 5.6): its ticket and etag, each
+    /// Reads a previews answer (MSFP Media video 5.6): its ticket and etag, each
     /// 1 to 64 characters of A-Z a-z 0-9 _ -. Unknown members (the layout of
     /// earlier drafts among them) are ignored.
     /// </summary>

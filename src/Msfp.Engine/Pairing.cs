@@ -55,7 +55,7 @@ public sealed partial class MsfpEngine
     public const int MaxCodeUses = 100;
 
     /// <summary>
-    /// Makes a pairing code (core sections 5 and 7.1), noted as note for the
+    /// Makes a pairing code (MSFP core sections 5 and 7.1), noted as note for the
     /// panel, and gives its text, to show once. It works once, for 24 hours.
     /// </summary>
     /// <exception cref="MsfpException"><see cref="MsfpError.NoCodes"/>: this server can't be called (the other operator makes one).</exception>
@@ -63,7 +63,7 @@ public sealed partial class MsfpEngine
         MakeCodeWithAsync(new CodeOptions { Note = note }, ct);
 
     /// <summary>
-    /// Makes a pairing code with its options (core section 5.1): its uses,
+    /// Makes a pairing code with its options (MSFP core section 5.1): its uses,
     /// its lifetime, and for a group's code the group (MSFP groups section 2).
     /// </summary>
     /// <exception cref="MsfpException"><see cref="MsfpError.NoCodes"/>, <see cref="MsfpError.CodeOptions"/> (uses or
@@ -89,7 +89,7 @@ public sealed partial class MsfpEngine
         var rec = await ServerRecordAsync(ct).ConfigureAwait(false);
         if (rec.Uncallable || SaysUncallable())
         {
-            // Nobody could redeem it (core section 7.5): the other operator makes one.
+            // Nobody could redeem it (MSFP core section 7.5): the other operator makes one.
             throw new MsfpException(MsfpError.NoCodes);
         }
 
@@ -212,7 +212,7 @@ public sealed partial class MsfpEngine
         if (known is not null && !(c.Group is not null && known.State == PeerState.Paired))
         {
             // To pair again with a peer that is gone, its operator removes it
-            // first (core section 7.1, step 2).
+            // first (MSFP core section 7.1, step 2).
             throw new MsfpException(MsfpError.AlreadyPeer);
         }
 
@@ -276,7 +276,7 @@ public sealed partial class MsfpEngine
             throw new MsfpException(MsfpError.CodeRefused);
         }
 
-        // Its commitment is required (core section 9.1): without it, the
+        // Its commitment is required (MSFP core section 9.1): without it, the
         // answer fails like a badly signed one, and nothing is kept.
         var ans = ReadAnswerBody(r.Body);
         byte[] theirs;
@@ -307,13 +307,13 @@ public sealed partial class MsfpEngine
                 throw new MsfpException(MsfpError.AlreadyPeer);
             }
 
-            // Redeeming a code is consent to pair again (core section 7.1, step 5).
+            // Redeeming a code is consent to pair again (MSFP core section 7.1, step 5).
             await tx.UnforgetAsync(SHA256.HashData(c.Key)).ConfigureAwait(false);
             if (c.Group is not null)
             {
                 // A group's code: this server joins it through the maker
-                // (MSFP groups section 4), the group relation only (core
-                // section 7.7).
+                // (MSFP groups section 4), the group relation only (MSFP
+                // core section 7.7).
                 await JoinViaAsync(tx, c, p.Id, ct).ConfigureAwait(false);
                 p.NotByHand = true;
             }
@@ -324,7 +324,7 @@ public sealed partial class MsfpEngine
         return View(p);
     }
 
-    // pair: another server redeeming one of our codes (core sections 7.1,
+    // pair: another server redeeming one of our codes (MSFP core section 7.1,
     // step 4, and 9.1).
     private async Task<Answer> PairAsync(CallRequest req, CancellationToken ct)
     {
@@ -363,7 +363,7 @@ public sealed partial class MsfpEngine
             await _store.UpdateAsync(async tx =>
             {
                 // The code and the proof first, then whether the key is known
-                // (core section 9.1).
+                // (MSFP core section 9.1).
                 var c = await tx.CodeByHashAsync(hash).ConfigureAwait(false);
                 if (c is null || c.Expires <= Now() || c.Secret is null)
                 {
@@ -391,10 +391,10 @@ public sealed partial class MsfpEngine
                     throw new MsfpException(MsfpError.AlreadyPeer); // the code stays live
                 }
 
-                // One use spent; the code goes with its last (core section 5.1).
+                // One use spent; the code goes with its last (MSFP core section 5.1).
                 await SpendCodeAsync(tx, c).ConfigureAwait(false);
                 p.JoiningGroup = c.Group;
-                p.NotByHand = !string.IsNullOrEmpty(c.Group); // a group's code: the group relation only (core section 7.7)
+                p.NotByHand = !string.IsNullOrEmpty(c.Group); // a group's code: the group relation only (MSFP core section 7.7)
                 await tx.UnforgetAsync(SHA256.HashData(key)).ConfigureAwait(false);
                 await tx.PutPeerAsync(p).ConfigureAwait(false);
             }, ct).ConfigureAwait(false);
@@ -413,7 +413,7 @@ public sealed partial class MsfpEngine
         Notify(new PeerWaiting(p.Id, p.Name, Keys.Fingerprint(p.Key)));
         if (!uncallable)
         {
-            // Its base path, from its discovery document (core section 11),
+            // Its base path, from its discovery document (MSFP core section 11),
             // for every call to it; in the background.
             var (id, at) = (p.Id, p.Address);
             Background(ct => KeepBaseAsync(id, at, ct));

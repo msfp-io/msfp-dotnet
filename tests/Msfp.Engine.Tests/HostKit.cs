@@ -645,7 +645,7 @@ internal static class HostKit
 
     /// <summary>
     /// The stream's path of a play answer, built from its ticket as a
-    /// viewer's server builds it (MSFP media section 1): the answer carries no
+    /// viewer's server builds it (MSFP Media fetching 1): the answer carries no
     /// URL.
     /// </summary>
     public static string StreamPath(string answer)

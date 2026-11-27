@@ -4,7 +4,7 @@ using Msfp.Protocol;
 namespace Msfp.Describe;
 
 /// <summary>
-/// Codecs strings (MSFP video section 3.5, implementers' notes "Building
+/// Codecs strings (MSFP Media video 3.5, implementers' notes "Building
 /// codecs"): built from the stream's record where it has one (exact), else
 /// from ffprobe's fields under the spec's tolerance: profile, level and bit
 /// depth always the stream's own; H.264 constraint flags zero, HEVC
@@ -239,7 +239,7 @@ public static class CodecsStrings
     }
 
     // A VP9 stream's level guessed from its size and frame rate (a consumer
-    // ignores VP9's level: video section 3.5).
+    // ignores VP9's level: MSFP Media video 3.5).
     private static int Vp9Level(Stream s)
     {
         var picture = (long)s.Width * s.Height;

@@ -66,8 +66,8 @@ public sealed record PeerEnded(string Peer, string Name, bool ByThem) : MsfpEven
 
 /// <summary>
 /// Why this server and a peer are linked changed: the individual relation
-/// was asked, accepted, refused or ended, by either side (MSFP core section
-/// 7.7).
+/// was asked, accepted, refused or ended, by either side (MSFP
+/// core section 7.7).
 /// </summary>
 /// <param name="Peer">The peer's ID.</param>
 /// <param name="Name">Its name.</param>
@@ -275,7 +275,7 @@ public sealed record CallsFailed(string Peer, string Name) : MsfpEvent
 /// <summary>
 /// A reading of a peer's titles ended: Titles kept (new or changed, for a
 /// reading of changes), or Error, why it failed; what was kept before a
-/// failed reading stays (MSFP catalog section 3.2).
+/// failed reading stays (MSFP Media listing 3.2).
 /// </summary>
 /// <param name="Peer">The peer's ID.</param>
 /// <param name="Name">Its name.</param>
@@ -296,8 +296,8 @@ public sealed record CatalogReadEnded(string Peer, string Name, int Titles, bool
 
 /// <summary>
 /// Libraries this server wants of a peer (their public IDs) weren't in its
-/// last libraries answer: it no longer offers them (MSFP catalog section
-/// 2.2). Their titles go with the next reading.
+/// last libraries answer: it no longer offers them (MSFP
+/// Media listing 2.2). Their titles go with the next reading.
 /// </summary>
 /// <param name="Peer">The peer's ID.</param>
 /// <param name="Name">Its name.</param>
@@ -308,7 +308,7 @@ public sealed record WantsGone(string Peer, string Name, IReadOnlyList<string> L
     public override string? PeerId => Peer;
 }
 
-/// <summary>A peer's playback of Title started here (MSFP playback section 6.1), for the host's live view.</summary>
+/// <summary>A peer's playback of Title started here (MSFP Media playing 5), for the host's live view.</summary>
 /// <param name="Peer">The peer's ID.</param>
 /// <param name="Name">Its name.</param>
 /// <param name="Playback">The playback's ID.</param>

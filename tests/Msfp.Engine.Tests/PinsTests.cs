@@ -6,7 +6,7 @@ using Msfp.Protocol;
 
 namespace Msfp.Tests;
 
-/// <summary>This server's own pins, read at its addresses (core section 3.2; msfp-go's TestBothPinsDuringMove).</summary>
+/// <summary>This server's own pins, read at its addresses (MSFP core section 3.2; msfp-go's TestBothPinsDuringMove).</summary>
 public sealed class PinsTests
 {
     // Connections to each host serve that host's certificate over TLS, on a

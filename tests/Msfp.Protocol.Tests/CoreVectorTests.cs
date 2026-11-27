@@ -6,8 +6,8 @@ namespace Msfp.Protocol.Tests;
 /// <summary>
 /// MSFP's version 0 test vectors of the core (keys.json, code.json,
 /// exchanges.json, rotation.json, revocation.json, strict.json) and the
-/// canonical forms of test-draft-strict.json that hold for core 0 (core section
-/// 17), recomputed with the code: msfp-go's wire/vectors_test.go,
+/// canonical forms of test-draft-strict.json that hold for core 0 (MSFP
+/// core section 17), recomputed with the code: msfp-go's wire/vectors_test.go,
 /// json_test.go, rotation_test.go and uncallable_test.go.
 /// </summary>
 public sealed class CoreVectorTests

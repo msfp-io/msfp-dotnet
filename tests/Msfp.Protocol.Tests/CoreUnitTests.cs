@@ -9,7 +9,7 @@ public sealed class CoreUnitTests
 
     private static Hello Ans(string body) => Hello.Read(Encoding.UTF8.GetBytes(body), answer: true);
 
-    // A group's code (core section 5.1): its ID and cleaned name go and
+    // A group's code (MSFP core section 5.1): its ID and cleaned name go and
     // come back; a bad flag, an empty name or no address left is refused.
     [Fact]
     public void GroupCodes()

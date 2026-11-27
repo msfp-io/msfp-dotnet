@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// A hello message, request or answer (core section 9.2), as it is read:
+/// A hello message, request or answer (MSFP core section 9.2), as it is read:
 /// what its sender says of the pairing, the versions it speaks, the
 /// certificates its address serves and its address; whether it can be
 /// called; and the members that go one way only.
@@ -19,7 +19,7 @@ public sealed record Hello
     /// <summary>The state "ended".</summary>
     public const string StateEnded = "ended";
 
-    /// <summary>What a hello request from a server that can't be called says of a rotation it refused (core section 12.4, step 3).</summary>
+    /// <summary>What a hello request from a server that can't be called says of a rotation it refused (MSFP core section 12.4, step 3).</summary>
     public const string RotationRefused = "refused";
 
     private static readonly string[] Members =
@@ -195,7 +195,7 @@ public sealed record Hello
 
     /// <summary>
     /// Reads the statements of a hello answer, which verified under key,
-    /// at now (core sections 12.4 and 12.6): a revocation of that key and a
+    /// at now (MSFP core sections 12.4 and 12.6): a revocation of that key and a
     /// rotation from it, each null when the answer carries none, or one
     /// that doesn't check (section 18, point 34). They apply in this order:
     /// the revocation, then the rotation.

@@ -4,7 +4,7 @@ namespace Msfp.Tests;
 public sealed class CallTests
 {
     // After a call the peer didn't answer, calls made in the background hold
-    // off (core section 8.3), 2 seconds give or take a quarter, then twice
+    // off (MSFP core section 8.3), 2 seconds give or take a quarter, then twice
     // as long each time; the operator's calls go all the same.
     [Fact]
     public async Task BackgroundCallsBackOff()

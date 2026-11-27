@@ -4,8 +4,8 @@ using System.Text.RegularExpressions;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// What a viewer's server decides by in a stream's codecs string (video
-/// section 3.5): the parts it reads (profile, tier, level, chroma, HEVC's
+/// What a viewer's server decides by in a stream's codecs string (MSFP
+/// Media video 3.5): the parts it reads (profile, tier, level, chroma, HEVC's
 /// constraint bytes, AAC's mp4a part), the parts it ignores left out (H.264
 /// constraint flags, HEVC compatibility flags, VP9 level, AV1 colour),
 /// bitDepth from the stream's own field when it has one (the authoritative
@@ -42,7 +42,7 @@ public sealed record CodecsFacts(string Codec, string? Codecs)
 }
 
 /// <summary>
-/// RFC 6381 codecs strings as MSFP carries them (video section 3.5): which
+/// RFC 6381 codecs strings as MSFP carries them (MSFP Media video 3.5): which
 /// codecs require one, how a viewer's server reads one, and the Dolby
 /// Vision sample entries. Decisions go by codecs when it is present;
 /// profile, level, tier and chroma are its facts, bit depth the stream's
@@ -53,7 +53,7 @@ public static partial class Rfc6381
     /// <summary>The codecs for which codecs is required: h264, hevc, av1 and vp9 (video), aac and dts (audio).</summary>
     public static readonly IReadOnlyList<string> RequiredFor = ["h264", "hevc", "av1", "vp9", "aac", "dts"];
 
-    // The Dolby Vision sample entry of each base 4CC (video section 3.5).
+    // The Dolby Vision sample entry of each base 4CC (MSFP Media video 3.5).
     private static readonly Dictionary<string, string> DvEntry = new(StringComparer.Ordinal)
     {
         ["hvc1"] = "dvh1", ["hev1"] = "dvhe", ["av01"] = "dav1", ["avc1"] = "dva1", ["avc3"] = "dvav",
@@ -89,8 +89,8 @@ public static partial class Rfc6381
     public static string? DolbyVisionEntry(string baseFourCC) => DvEntry.GetValueOrDefault(baseFourCC);
 
     /// <summary>
-    /// Reads a stream's or a track's codecs as a viewer's server does (video
-    /// section 3.5), given the stream as kept: its codec, its codecs
+    /// Reads a stream's or a track's codecs as a viewer's server does (MSFP
+    /// Media video 3.5), given the stream as kept: its codec, its codecs
     /// (<paramref name="codecs"/>, null when absent), its own bitDepth and its
     /// dv. Null when the viewer's server treats the copy as one it can't play
     /// as it is, <paramref name="why"/> saying why: codecs missing where it is

@@ -6,7 +6,7 @@ using Msfp.Protocol;
 namespace Msfp.Examples.ShareFolder;
 
 /// <summary>
-/// Describes video files as MSFP video section 3.2 lists a copy, with the
+/// Describes video files as MSFP Media video 3.2 lists a copy, with the
 /// Msfp.Describe package: its media type from its first bytes, its length,
 /// its picture, its tracks and chapters from ffprobe when it is installed
 /// (two runs, the codec records read, attachments never), shaped into MSFP's
@@ -112,7 +112,7 @@ internal sealed class Probes
     }
 
     // The file's etag: from its content, so that it changes whenever its
-    // bytes change, and only then (MSFP video section 3.2): the first 16
+    // bytes change, and only then (MSFP Media video 3.2): the first 16
     // bytes of its SHA-256, base64url. "" when it can't be read.
     internal static string ContentTag(string path)
     {

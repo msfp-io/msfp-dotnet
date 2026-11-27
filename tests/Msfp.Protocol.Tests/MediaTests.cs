@@ -43,7 +43,7 @@ public class MediaTests
         return error is not null && error.Contains(want + ":", StringComparison.Ordinal);
     }
 
-    // The names an owning server serves under a ticket (media section 1).
+    // The names an owning server serves under a ticket (MSFP Media fetching 1).
     [Fact]
     public void NameVectors()
     {
@@ -74,7 +74,7 @@ public class MediaTests
         TestVectors.NoFailures(failures, cases.Count, "media.json names");
     }
 
-    // The media type a viewer's server relays (media section 3).
+    // The media type a viewer's server relays (MSFP Media fetching 3).
     [Fact]
     public void RelayTypeVectors()
     {

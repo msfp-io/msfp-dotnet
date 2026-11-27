@@ -1,6 +1,83 @@
 # Changelog
 
-## Unreleased
+## Unreleased: MSFP Media (proposal 19)
+
+MSFP's media language is now MSFP Media version 0, which MSFP carries
+between servers. Doc comments cite the language's rules as MSFP Media's
+(base, listing, playing, fetching, video, music) and the federation's as
+MSFP's. The wire changes below don't talk with 0.8.0-preview on every
+point (draft rules: no compatibility between drafts). They match msfp-go's
+of the same proposal.
+
+### Added
+
+- `progressSeconds` in play's answer: the engine as owning server sends
+  `MsfpConfig.ProgressSeconds` (45 to 120, 60 by default) and ends a
+  playback idle for twice it; as viewer's server it reports at the
+  interval each answer gave. `PlayAnswer.ProgressSeconds`,
+  `Playback.ProgressInterval`, `Playback.IdleLimit`,
+  `Playback.MinProgressSeconds`, `MaxProgressSeconds`,
+  `DefaultProgressSeconds`.
+- `paused` in progress: sent by the engine (`Progress`'s `paused`), read
+  as a boolean (another type: 400), passed to the host as
+  `Report.Paused`. `PlayReport.Paused`, `ReportOutcome.Paused`.
+- `replaces` in play: `PlayRequest.Replaces` now names the old playback
+  to the peer instead of stopping it first (a playback on another peer
+  is still stopped first); on a 200 the peer ends it, and the engine
+  forgets it. As owning server, the engine counts a play and the one it
+  replaces as one (a play frees its stream and transcode, a download its
+  download but not the day's count, a scan nothing), ends the old one
+  with `EndReason.Replaced`, and tells the host `StartRequest.Replaces`.
+  `RestartAsync` of a live playback replaces it.
+  `Protocol.PlayRequest.Replaces` (malformed: 400), `LimitUse.Without`.
+- `target-refused` (409): a target the source doesn't make (a remux's
+  media type or a segment format that can't carry the copy, a transcode
+  codec, a range, a copy no segment format carries, a subtitle to burn);
+  `delivery-refused` is now for the delivery as such.
+  `MsfpError.TargetRefused`, `Playback.ProblemTargetRefused`; a host's
+  `StartAsync` may throw it.
+- The language's other refusals: `Playback.ProblemGone`
+  (`MsfpError.Gone` from `PlayAsync`; the peer's titles are read again),
+  `Playback.ProblemUnreachable` (a host's `StartAsync` throwing
+  `Unreachable` answers 503 unreachable), `Playback.ProblemTicketRefused`;
+  `Protocol.Problems`: `TryGet`, `All`, `Temporary`, `LanguageProblem`,
+  `Meaning` (a type read by its status when not known) and
+  `ReadPlayRefusal` (what a caller tells its viewer, a
+  `PlayRefusalReading`).
+- `instead` on delivery-refused and target-refused:
+  `MsfpException.Instead` gives what the peer would serve instead;
+  `Protocol.Instead`, `Problems.ReadInstead`, `Problems.MaxInstead`.
+- `titles`: `libraries` optional (absent: every library offered), the
+  `kind` and `under` filters, `since` ignored with `under`, a changes
+  answer filtered by kind (its `gone` too). `TitlesRequest` (`Read`,
+  `ToJson`, `SinceAllowed`), `TitleFilter` (`Passes`, `UnderPrefix`,
+  `Changes`, `None`, `KnownKind`), `FilterFacts`. The engine as viewer's
+  server still asks for its wanted libraries, unfiltered.
+- `msfpMedia` in the discovery document: `[0]` when a part that carries
+  MSFP Media is listed. `Discovery.MsfpMedia`,
+  `Discovery.MsfpMediaVersions`.
+- The capability list's types and forms, for a host serving its own
+  players with MSFP Media (MSFP refuses it; the engine never sends one,
+  and matching a copy against it is the host's): `Capabilities` (`Read`),
+  `VideoCapability`, `AudioCapability`, `PlayReader` (`Read`, with
+  `Capabilities` and `Purposes`), `Protocol.PlayRequest.Capabilities`,
+  `PlayAsked.Capabilities`.
+
+### Changed
+
+- `Playback.ReadPlay` refuses `capabilities` with 400 (it was an unknown
+  member, ignored).
+- `Playback.RefuseDelivery`, `Encoders`' codec checks and a music queue
+  entry's remux to another media type refuse targets with
+  `target-refused`; hosts matching `ProblemDeliveryRefused` match both.
+- `Playback.IdleEnd` is the idle limit at the default interval (still 2
+  minutes); a playback's own is `Playback.IdleLimit` of its answer's
+  `progressSeconds`.
+- The title of `delivery-refused` is "This delivery is refused".
+- `MsfpError` gains `TargetRefused` and `Gone` after `DeliveryRefused`:
+  the numbers of the codes after them move by two (match codes by name).
+- The vectors are msfp-spec's of proposal 19 (with the `replaces`,
+  `refusals`, `titleOffer` and `titleRequests` groups).
 
 ### Fixed
 

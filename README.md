@@ -17,10 +17,20 @@ the two shipped stores) and hands the engine the requests peers send it;
 it writes none of the protocol itself.
 
 - The protocol: [msfp-io/msfp-spec](https://github.com/msfp-io/msfp-spec),
-  version 0 as revised by proposals 16 and 17, still a draft until version 1
-  ([spec/v0](https://github.com/msfp-io/msfp-spec/tree/main/spec/v0)).
+  version 0 as revised by proposals 16, 17 and 19, still a draft until
+  version 1 ([spec/v0](https://github.com/msfp-io/msfp-spec/tree/main/spec/v0)).
   0.8.0-preview and later speak the revised draft; 0.7.1-preview and
-  before speak the draft before it, and servers on the two don't pair. The [changelog](CHANGELOG.md) says what hosts change.
+  before speak the draft before it, and servers on the two don't pair.
+- The media language MSFP carries between servers:
+  [MSFP Media](https://github.com/msfp-io/msfp-media) version 0 (titles,
+  copies, listing, playing, fetching), split out of MSFP by proposal 19.
+  The language's rules (`Msfp.Protocol`'s keys, copies, `RefuseDelivery`,
+  play's request and answer, refusals) cite it; the federation's
+  (pairing, limits, what is shared, scans) cite MSFP. A host that serves
+  its own players with MSFP Media may use `Msfp.Protocol`'s readers for
+  them too (`PlayReader` with `Capabilities`, `TitlesRequest.Read`); the
+  engine itself only speaks MSFP.
+  The [changelog](CHANGELOG.md) says what hosts change.
 - The engine's API in words: [api/](https://github.com/msfp-io/msfp-spec/tree/main/api)
   in the spec's repository, mainly
   [engine.md](https://github.com/msfp-io/msfp-spec/blob/main/api/engine.md)
@@ -172,7 +182,7 @@ The operator offers libraries with `SetOffersAsync` and sets limits
 with `SetLimitsAsync`; the host calls `CatalogChanged()` when its titles
 change. An episode keyed by its TMDB episode ID
 (`series/tmdb/<id>/e<episode id>`) needs its place in TMDB's numbering,
-`VideoTitle.Place` (`Season`, `Episode`; MSFP video section 4.1): without
+`VideoTitle.Place` (`Season`, `Episode`; MSFP Media video 4.1): without
 one it isn't sent, and a new place is a change of the title. A peer's such
 episodes come with theirs. To read a peer's titles: `TheirLibrariesAsync`, `SetWantsAsync`,
 then `RunAsync` reads them on schedule (or `ReadNowAsync`) into the
@@ -184,8 +194,13 @@ copy (`VersionId`), its audio (`AudioTrack`) and its subtitles, and asks
 a delivery (the file as it is, a remux to `video/mp2t` or `video/mp4`
 segments, a transcode, a stream of which may be `copy`, to SDR or
 keeping the range), or none for the baseline every server plays, H.264
-and AAC in HLS; nothing of the device is sent, and every media URL is
-built from the peer's ticket: none a peer wrote is fetched.
+and AAC in HLS; nothing of the device is sent (between servers the ask
+is always explicit: MSFP refuses a capability list), and every media URL
+is built from the peer's ticket: none a peer wrote is fetched. A change of
+track, copy or quality is a new `PlayAsync` whose `Replaces` names the
+old playback: the peer counts the two as one and ends the old one once
+the new one is answered. A delivery or a target refused may come with
+what the peer would serve instead (`MsfpException.Instead`).
 `Rfc6381.Read` reads a copy's codecs strings. The host serves the media
 at its own route through `FetchAsync` (`MediaPath.TryParse` reads its
 URL), and reports with `Progress` and `StopAsync` (a download's late
@@ -207,8 +222,8 @@ too, or they last until a restart. A download's pace follows
 `MsfpConfig.TimeProvider` and waits with its timers.
 
 Preview sheets are re-encoded, so that only their pixels pass: those a
-peer sends before they reach a viewer (MSFP video section 7), and the
-host's own before they leave (video section 6.2), each checked against
+peer sends before they reach a viewer (MSFP Media video 7), and the
+host's own before they leave (MSFP Media video 6.2), each checked against
 its layout first; a peer's JPEG image of a local title too. .NET has no
 JPEG codec, so the engine has no default `ISheetEncoder` (msfp-go's is
 `JPEGSheets`): give one (ImageSharp, SkiaSharp, ffmpeg as the example

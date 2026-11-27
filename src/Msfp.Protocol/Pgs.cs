@@ -27,7 +27,7 @@ public static class Pgs
     /// presentations', windows' and palettes' sizes, and every picture's
     /// run-length data decoded (counted, not drawn) within the size it says
     /// it has. An empty part, of no segments, is valid: it is the answer for
-    /// a stretch with no subtitles (video section 6.4).
+    /// a stretch with no subtitles (MSFP Media video 6.4).
     /// </summary>
     /// <exception cref="ProtocolException">The track isn't well-formed (<see cref="ProtocolError.Pgs"/>).</exception>
     public static void Check(ReadOnlySpan<byte> raw)

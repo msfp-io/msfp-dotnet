@@ -12,7 +12,7 @@ public sealed record LyricsRequest(string Title, string VersionId)
 }
 
 /// <summary>
-/// A set of lyrics, one per language, kind and timing (music section 6). A
+/// A set of lyrics, one per language, kind and timing (MSFP Media music 6). A
 /// set is synced when every line carries its start, plain when none does;
 /// no synced, offset or display member is sent: the owner applies any
 /// offset before sending, and the names to show are the track's.
@@ -44,7 +44,7 @@ public sealed record LyricsSet(string Lang, string Kind, IReadOnlyList<LyricsLin
 public sealed record LyricsLine(long? Start, string Value);
 
 /// <summary>
-/// The lyrics call (MSFP music section 6): a signed call, with no ticket,
+/// The lyrics call (MSFP Media music 6): a signed call, with no ticket,
 /// for a copy whose lyrics is plain or synced, answered with lyrics shaped
 /// as OpenSubsonic's structuredLyrics, times in milliseconds.
 /// </summary>
@@ -64,7 +64,7 @@ public static partial class Music
 
     /// <summary>
     /// A lyrics set's kinds as OpenSubsonic names them; the field is open
-    /// (core section 8.5): another token is kept, a value that isn't one
+    /// (MSFP Media base 3): another token is kept, a value that isn't one
     /// (or none) reads as the first, main.
     /// </summary>
     public static readonly IReadOnlyList<string> LyricsKinds = ["main", "translation", "pronunciation"];
@@ -103,7 +103,7 @@ public static partial class Music
     }
 
     /// <summary>
-    /// What the viewer's server keeps of a lyrics answer (music section 6):
+    /// What the viewer's server keeps of a lyrics answer (MSFP Media music 6):
     /// per set, lang a valid tag, else absent; kind a token, kept as it is,
     /// else main; synced, offset, displayArtist and displayTitle of earlier
     /// drafts ignored. Per line, a line that isn't an object or whose value

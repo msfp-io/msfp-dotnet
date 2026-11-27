@@ -4,8 +4,8 @@ using System.Text.RegularExpressions;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// Playback (MSFP playback, video section 5) and its media's URLs (media
-/// section 1, video section 6.1): the forms of what a play answer gives,
+/// Playback (MSFP playback, MSFP Media video 5) and its media's URLs (MSFP
+/// Media fetching 1, MSFP Media video 6.1): the forms of what a play answer gives,
 /// as the viewer's server checks them.
 /// </summary>
 public static partial class Playback
@@ -14,7 +14,7 @@ public static partial class Playback
     private static partial Regex IdRe();
 
     /// <summary>
-    /// Whether <paramref name="s"/> is a playback ID (playback section 2.3):
+    /// Whether <paramref name="s"/> is a playback ID (MSFP Media playing 2.3):
     /// the common opaque form, 1 to 64 characters of A–Z a–z 0–9 _ -. The
     /// owning server makes it from at least 128 bits of a cryptographically
     /// secure random source, as it makes tickets.
@@ -27,8 +27,8 @@ public static partial class Playback
 
     /// <summary>
     /// Whether <paramref name="s"/> has the form of a library's, a track's
-    /// or a version's ID (catalog section 2, playback section 2.3), and of a
-    /// ticket (media section 1): 1 to 64 characters of A–Z a–z 0–9 _ -.
+    /// or a version's ID (MSFP Media listing 2, MSFP Media playing 2.3), and of a
+    /// ticket (MSFP Media fetching 1): 1 to 64 characters of A–Z a–z 0–9 _ -.
     /// </summary>
     public static bool Id(string s)
     {
@@ -38,7 +38,7 @@ public static partial class Playback
 
     /// <summary>
     /// Reads a track ID of the given kind ('a' for audio, 's' for
-    /// subtitles; playback section 2.1, video section 5.1): the letter and a
+    /// subtitles; MSFP Media playing 2.1, MSFP Media video 5.1): the letter and a
     /// number from 0 to 999 without leading zeros (a01 is malformed); false
     /// for anything else.
     /// </summary>
@@ -66,7 +66,7 @@ public static partial class Playback
         return true;
     }
 
-    /// <summary>A server's stream root (media section 1) at <paramref name="address"/>, without a discovery document: &lt;address&gt;/api/v1/stream/.</summary>
+    /// <summary>A server's stream root (MSFP media section 1) at <paramref name="address"/>, without a discovery document: &lt;address&gt;/api/v1/stream/.</summary>
     public static string StreamRoot(string address)
     {
         ArgumentNullException.ThrowIfNull(address);
@@ -75,7 +75,7 @@ public static partial class Playback
 
     /// <summary>
     /// The Content-Type a viewer's server gives the file or a segment it
-    /// relays (media section 3): the owning server's when it is a video/ or
+    /// relays (MSFP Media fetching 3): the owning server's when it is a video/ or
     /// audio/ type made of letters, digits and .+- only (never a
     /// playlist's), application/octet-stream otherwise.
     /// </summary>
@@ -107,8 +107,8 @@ public static partial class Playback
 }
 
 /// <summary>
-/// The media URLs a viewer's server builds (media section 1, video section
-/// 6.1, music section 5.2): answers carry no URLs, so every one is the
+/// The media URLs a viewer's server builds (MSFP Media fetching 1, MSFP
+/// Media video 6.1, MSFP Media music 5.2): answers carry no URLs, so every one is the
 /// owning server's stream root, a ticket an answer gave and a fixed name,
 /// and a viewer's server never fetches an address a peer wrote. The ticket
 /// must have been checked against its form (<see cref="Playback.Id"/>); the
@@ -129,7 +129,7 @@ public static class MediaUrls
         Base(root, ticket) + (protocol == "file" ? "file" : "master.m3u8");
 
     /// <summary>
-    /// The base of a subtitle track served apart (video section 6.1), to
+    /// The base of a subtitle track served apart (MSFP Media video 6.1), to
     /// which /&lt;part&gt; or /whole is added: subtitles/&lt;id&gt; for text
     /// (WebVTT), pictures/&lt;id&gt; for picture (PGS), ass/&lt;id&gt; for its ASS
     /// form (<paramref name="ass"/>).
@@ -148,10 +148,10 @@ public static class MediaUrls
     public static string Sheet(string root, string ticket, int n) =>
         Base(root, ticket) + "trickplay/" + n.ToString(CultureInfo.InvariantCulture);
 
-    /// <summary>Queue entry <paramref name="n"/>'s stream (music section 5.2): queue/&lt;n&gt;/file or queue/&lt;n&gt;/master.m3u8, n its place in the request's queue.</summary>
+    /// <summary>Queue entry <paramref name="n"/>'s stream (MSFP Media music 5.2): queue/&lt;n&gt;/file or queue/&lt;n&gt;/master.m3u8, n its place in the request's queue.</summary>
     public static string Queue(string root, string ticket, int n, string protocol) =>
         Base(root, ticket) + "queue/" + n.ToString(CultureInfo.InvariantCulture) + "/" + (protocol == "file" ? "file" : "master.m3u8");
 
-    /// <summary>A local title's image (catalog section 4.4), under the ticket of image's answer.</summary>
+    /// <summary>A local title's image (MSFP Media listing 4.4), under the ticket of image's answer.</summary>
     public static string Image(string root, string ticket) => Base(root, ticket) + "image";
 }

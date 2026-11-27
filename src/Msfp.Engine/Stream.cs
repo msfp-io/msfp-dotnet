@@ -209,7 +209,7 @@ internal sealed class FileSink(IResponseSink inner, CancellationToken ct, string
     }
 }
 
-// Media, on the owning side (MSFP media sections 1 to 4, video section 6):
+// Media, on the owning side (MSFP Media fetching, MSFP media sections 1 to 4, MSFP Media video 6):
 // the stream routes of peers' tickets. Every request is checked before the
 // host serves a byte: the ticket, live and of a pairing still paired, and of
 // a kind that opens that URL; GET only (HEAD and the rest 405); no query; no
@@ -220,7 +220,7 @@ internal sealed class FileSink(IResponseSink inner, CancellationToken ct, string
 // subset, its subtitles and fonts rebuilt or checked, before they leave.
 public sealed partial class MsfpEngine
 {
-    // Bounds of the fetches at once on a peer's tickets (media section 2.4):
+    // Bounds of the fetches at once on a peer's tickets (MSFP Media fetching 2.4):
     // per ticket and per peer, each with a queue as long, waited in for 10
     // seconds at most.
     private const int FetchesPerPlayback = 8;
@@ -246,8 +246,8 @@ public sealed partial class MsfpEngine
     /// Allow: GET to a 405 (HEAD and every method but GET get one).
     /// The 405 is the engine's on every media URL form
     /// (<see cref="MediaPath.TryParse"/>, and <c>&lt;ticket&gt;/image</c>),
-    /// whatever the ticket: live, ended or never given (MSFP media section
-    /// 2.2); Fallback is given GETs only there. A host that answers its own
+    /// whatever the ticket: live, ended or never given (MSFP
+    /// Media fetching 2.2); Fallback is given GETs only there. A host that answers its own
     /// clients' HEAD (a copy presented as a file) does so on a route of its
     /// own.
     /// </summary>
@@ -281,7 +281,7 @@ public sealed partial class MsfpEngine
         }
 
         // HEAD and the rest get 405 on every media URL, whatever its ticket:
-        // live, ended, or never given (media section 2.2).
+        // live, ended, or never given (MSFP Media fetching 2.2).
         if ((name == "image" || MediaPath.TryParse(name, out _)) && MediaMethod(request, output) is { } refused)
         {
             return refused;
@@ -409,8 +409,8 @@ public sealed partial class MsfpEngine
     }
 
     // Answers a media request of another method than GET with 405 (the
-    // host's sink adds Allow: GET), HEAD included, never 404 (media section
-    // 2.2): null when it is a GET.
+    // host's sink adds Allow: GET), HEAD included, never 404 (MSFP
+    // Media fetching 2.2): null when it is a GET.
     private static StreamOutcome? MediaMethod(MsfpRequest request, IResponseSink output)
     {
         if (request.Method == "GET")
@@ -423,7 +423,7 @@ public sealed partial class MsfpEngine
     }
 
     // Whether a media request is as a viewer's server sends it: no query,
-    // none of a browser's headers (media section 2): a browser must never
+    // none of a browser's headers (MSFP media section 1, MSFP Media fetching 2): a browser must never
     // use a peer's ticket.
     private static bool PlainMediaRequest(MsfpRequest request)
     {
@@ -433,7 +433,7 @@ public sealed partial class MsfpEngine
     }
 
     // What a request asks of a peer's playback here: false for anything its
-    // ticket doesn't open (media section 4: a scan's opens the file only; a
+    // ticket doesn't open (MSFP Media fetching 4.2, MSFP media section 4: a scan's opens the file only; a
     // download's the stream, its subtitles and fonts; a queue entry's stream
     // a play's only) or the playback doesn't serve (another protocol's names,
     // a playlist or segment no playlist served gave, a queue entry it hasn't,
@@ -457,7 +457,7 @@ public sealed partial class MsfpEngine
 
                 if (path.Kind is MediaKind.Playlist or MediaKind.Segment)
                 {
-                    // Exactly the names its playlists gave (media section 1).
+                    // Exactly the names its playlists gave (MSFP Media fetching 1).
                     lock (pb.Names)
                     {
                         return entry.Protocol == "hls" && pb.Names.Contains(path.Entry.ToString(CultureInfo.InvariantCulture) + "/" + path.Name);
@@ -481,7 +481,7 @@ public sealed partial class MsfpEngine
     }
 
     // Serves the file of a playback, or of a queue entry, by byte ranges
-    // (media sections 2.1, 3.2, 4.1 and 4.2): its exact size and etag, 206
+    // (MSFP Media fetching 2.1, 3.2 and 4.3, MSFP media section 4.2): its exact size and etag, 206
     // for a range it can satisfy, 416 with bytes */<size> for one it can't or
     // a malformed one; under a scan's ticket, a range only, at most 2 at
     // once, cut at the cap; a download's paced.
@@ -523,7 +523,7 @@ public sealed partial class MsfpEngine
                 // The range is held against the cap while it is served, so
                 // that two fetches at once never pass it together; what wasn't
                 // sent (a fetch cut, a host's failure) is given back after:
-                // the cap counts the bytes sent (media section 4.2).
+                // the cap counts the bytes sent (MSFP media section 4.2).
                 pb.ScanSent += end - start + 1;
                 pb.ScanReads++;
             }
@@ -617,7 +617,7 @@ public sealed partial class MsfpEngine
     }
 
     // Serves a playlist the host made, once checked against MSFP's subset
-    // (media section 3.1): complete, and in a master playlist audio
+    // (MSFP Media fetching 3.1): complete, and in a master playlist audio
     // renditions named by the copy's audio track IDs only. One the host made
     // outside it is refused, with a warning, rather than refused by every
     // peer.
@@ -735,7 +735,7 @@ public sealed partial class MsfpEngine
     }
 
     // Serves a preview sheet the host made, checked (a JPEG within the
-    // layout, video section 6.2) and re-encoded with the SheetEncoder, so
+    // layout, MSFP Media video 6.2) and re-encoded with the SheetEncoder, so
     // that only its pixels leave: whatever else the host's file holds
     // (metadata, trailing bytes) stays here. One outside the layout isn't
     // sent. Sheets are offered only with a SheetEncoder (Register, previews).
@@ -826,7 +826,7 @@ public sealed partial class MsfpEngine
 
     // Notes font n of a copy, of size bytes, among those a playback served or
     // relayed (sizes, by index), and says whether they stay within 64 MiB in
-    // all (video section 6.6): a font past that isn't served, and isn't
+    // all (MSFP Media video 6.6): a font past that isn't served, and isn't
     // noted.
     internal static bool FontsWithin(Dictionary<int, int> sizes, int n, int size)
     {
@@ -850,7 +850,7 @@ public sealed partial class MsfpEngine
 
     // Serves what is read whole: a stretch or a whole text track, rebuilt as
     // WebVTT or ASS; a stretch of a picture track, checked as PGS; a font,
-    // checked (video sections 6.3 to 6.6). What the host made outside MSFP's
+    // checked (MSFP Media video 6.3 to 6.6). What the host made outside MSFP's
     // rules isn't sent.
     private async Task<StreamOutcome> ServeSmallAsync(LivePlayback pb, MediaPath path, IResponseSink output, CancellationToken ct)
     {
@@ -929,7 +929,7 @@ public sealed partial record MediaPath
     /// "trickplay/&lt;n&gt;", "queue/&lt;n&gt;/file",
     /// "queue/&lt;n&gt;/master.m3u8" or "queue/&lt;n&gt;/&lt;name&gt;", or a
     /// bare name, a playlist when it ends in .m3u8 and a segment otherwise.
-    /// Each part is checked as MSFP media section 1 says, compared as sent:
+    /// Each part is checked as MSFP Media fetching 1 says, compared as sent:
     /// nothing decoded; false for anything else. A host's viewer route
     /// serves playlists unchanged this way: their bare names resolve under
     /// it. Go's ParseMediaPath.
@@ -1039,7 +1039,7 @@ public sealed partial record MediaPath
 public sealed partial record ByteRange
 {
     /// <summary>
-    /// Reads a Range header of MSFP media section 2.1: one range of bytes in
+    /// Reads a Range header of MSFP Media fetching 2.1: one range of bytes in
     /// one of three forms, each number 1 to 15 digits; never several ranges,
     /// "bytes=-" or "bytes=-0", nor a first byte past the last. Go's
     /// ParseRange.

@@ -165,7 +165,7 @@ public interface IStoreTx
 
     /// <summary>
     /// Which of these title keys the peer was ever sent; a changes answer
-    /// names in gone only those (MSFP catalog section 3.2).
+    /// names in gone only those (MSFP Media listing 3.2).
     /// </summary>
     /// <param name="peer">The peer's ID.</param>
     /// <param name="keys">The keys.</param>
@@ -243,8 +243,8 @@ public interface IGroupsTx
 
 /// <summary>
 /// What a transaction implements, besides <see cref="IStoreTx"/>, to keep
-/// downloads for their late reports across restarts (MSFP playback section
-/// 7): those of peers here, and this server's on peers. The shipped stores
+/// downloads for their late reports across restarts (MSFP
+/// Media playing 6): those of peers here, and this server's on peers. The shipped stores
 /// implement it; without it, downloads are kept in memory only, and a
 /// restart forgets them (a late report then gets 410, or
 /// <see cref="MsfpError.NotFound"/>).
@@ -318,7 +318,7 @@ public interface IOwnLogTx
 /// <remarks>
 /// A title is a <see cref="VideoTitle"/> or a <see cref="MusicTitle"/>.
 /// Films, episodes, extras and tracks carry their copies, described as their
-/// files are (MSFP video section 3.2, music section 3.3), so that a viewer's
+/// files are (MSFP Media video 3.2, MSFP Media music 3.3), so that a viewer's
 /// server lists them as files of its own before anyone plays; each copy's ID
 /// is the host's handle of it, the one <see cref="IPlayback"/> and
 /// <see cref="IMedia"/> are given. play takes the title's copies as the
@@ -330,7 +330,7 @@ public interface IOwnLogTx
 /// libraries. Titles no public database names are keyed under the local
 /// scheme ("movie/local/&lt;opaque&gt;"), with a name (and a year, an image)
 /// of the host's; their opaque parts, and extras', are made with
-/// <see cref="MsfpEngine.OpaqueKeyPart"/> or as catalog section 4.2 says.
+/// <see cref="MsfpEngine.OpaqueKeyPart"/> or as MSFP Media listing 4.2 says.
 /// </remarks>
 public interface ICatalog
 {
@@ -354,7 +354,7 @@ public interface ICatalog
 
 /// <summary>
 /// What an <see cref="ICatalog"/> implements, besides ICatalog, when it
-/// shares the images of its local titles (MSFP catalog section 4.4): the
+/// shares the images of its local titles (MSFP Media listing 4.4): the
 /// local films, series, artists and albums whose Image it sets. Without it,
 /// no image is given, whatever Image says.
 /// </summary>
@@ -416,14 +416,14 @@ public interface ISeqBumper
 
 /// <summary>
 /// What an <see cref="ICatalog"/> implements, besides ICatalog, when it
-/// shares the lyrics of its tracks (MSFP music section 6): the copies whose
+/// shares the lyrics of its tracks (MSFP Media music 6): the copies whose
 /// Lyrics says "plain" or "synced".
 /// </summary>
 public interface ILyrics
 {
     /// <summary>
     /// A copy's lyrics (its handle), at most 8 sets, times in milliseconds
-    /// (MSFP music section 6). The engine cleans them as a viewer's server
+    /// (MSFP Media music 6). The engine cleans them as a viewer's server
     /// keeps them (<see cref="Music.ReadLyrics"/>) before they leave.
     /// <see cref="MsfpError.NotFound"/> for none.
     /// </summary>
@@ -446,7 +446,7 @@ public interface IPlayback
 {
     /// <summary>
     /// What the catalog doesn't say of a copy: its fonts, the subtitle tracks
-    /// it can't serve apart, the forms of those of formats video section 5.4
+    /// it can't serve apart, the forms of those of formats MSFP Media video 5.4
     /// doesn't list.
     /// </summary>
     /// <param name="peer">The peer it is for, with the libraries offered to it: the copy is resolved within them, as Start's.</param>
@@ -462,7 +462,11 @@ public interface IPlayback
     /// the file); it serves exactly the delivery asked otherwise; then it
     /// calls
     /// <see cref="StartRequest.Admit"/> before starting any work. Errors:
-    /// NotPlayable, DeliveryRefused, ServerBusy, StreamLimitReached.
+    /// NotPlayable, DeliveryRefused (the delivery as such), TargetRefused (a
+    /// target it doesn't make), ServerBusy (its transcode budget used; a play
+    /// that replaces another, <see cref="StartRequest.Replaces"/>, counts as
+    /// it), Unreachable (it can't reach the media now: 503 unreachable),
+    /// StreamLimitReached.
     /// </summary>
     /// <param name="request">What to start.</param>
     /// <param name="ct">Cancels.</param>

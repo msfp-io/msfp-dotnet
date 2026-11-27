@@ -8,8 +8,8 @@ namespace Msfp.Tests;
 // attributes it fills (msfp-go's names_test.go).
 public sealed class NamesTests
 {
-    // The names served under a ticket (media.json's names, MSFP media
-    // sections 1 and 4): exactly those its answer opened, 404 past the
+    // The names served under a ticket (media.json's names, MSFP
+    // Media fetching 1 and 4.2): exactly those its answer opened, 404 past the
     // counts.
     [Fact]
     public void ServedNames()
@@ -77,7 +77,7 @@ public sealed class NamesTests
     }
 
     // The master playlist's attributes the copy's facts tell, filled when the
-    // host leaves them out (media section 3.1).
+    // host leaves them out (MSFP Media fetching 3.1).
     [Fact]
     public void MasterAttributes()
     {

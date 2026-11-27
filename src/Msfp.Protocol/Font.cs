@@ -13,17 +13,17 @@ namespace Msfp.Protocol;
 /// </summary>
 public static class Font
 {
-    /// <summary>The most a font may be, in bytes: 10 MiB (video section 6.6, media section 2.4).</summary>
+    /// <summary>The most a font may be, in bytes: 10 MiB (MSFP Media video 6.6, MSFP Media fetching 2.4).</summary>
     public const int MaxFont = 10 << 20;
 
-    /// <summary>The most fonts a copy lists (video section 6.6): its font URLs run from fonts/0 to fonts/63.</summary>
+    /// <summary>The most fonts a copy lists (MSFP Media video 6.6): its font URLs run from fonts/0 to fonts/63.</summary>
     public const int MaxFonts = 64;
 
-    /// <summary>The most a copy's fonts may be in all, in bytes: 64 MiB (video section 6.6).</summary>
+    /// <summary>The most a copy's fonts may be in all, in bytes: 64 MiB (MSFP Media video 6.6).</summary>
     public const long MaxFontSet = 64 << 20;
 
     /// <summary>
-    /// Checks one copy's fonts against the bounds of video section 6.6,
+    /// Checks one copy's fonts against the bounds of MSFP Media video 6.6,
     /// given their sizes in bytes in the order of fonts: at most
     /// <see cref="MaxFonts"/>, each 1 to <see cref="MaxFont"/> bytes,
     /// <see cref="MaxFontSet"/> in all. The owning server lists a set only
@@ -52,10 +52,10 @@ public static class Font
         return true;
     }
 
-    /// <summary>The media type a TrueType font is served as (media section 3.4).</summary>
+    /// <summary>The media type a TrueType font is served as (MSFP Media fetching 3.4).</summary>
     public const string Ttf = "font/ttf";
 
-    /// <summary>The media type an OpenType font with CFF is served as (media section 3.4).</summary>
+    /// <summary>The media type an OpenType font with CFF is served as (MSFP Media fetching 3.4).</summary>
     public const string Otf = "font/otf";
 
     private const int MaxTables = 64;
@@ -64,7 +64,7 @@ public static class Font
     private static readonly string[] Required = ["cmap", "head", "hhea", "hmtx", "maxp", "name", "post"];
 
     /// <summary>
-    /// Checks a font as video section 6.6 says, in its steps: at most
+    /// Checks a font as MSFP Media video 6.6 says, in its steps: at most
     /// <see cref="MaxFont"/> bytes (1); TrueType (00 01 00 00, or Apple's
     /// "true") or OpenType with CFF ("OTTO"), never a collection, WOFF or
     /// another kind (2); 1 to 64 tables, the directory within the file (3),

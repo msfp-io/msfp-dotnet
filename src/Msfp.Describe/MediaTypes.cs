@@ -3,7 +3,7 @@ using System.Text;
 namespace Msfp.Describe;
 
 /// <summary>
-/// Media types (MSFP video section 3.5, the registry's section 4): read
+/// Media types (MSFP Media video 3.5, the registry's section 4): read
 /// from a file's first bytes where they tell it, else mapped from a
 /// container's name. Only the types sniffed here are probed: a file whose
 /// first bytes say none (a playlist, a script, a concat list, an SDP file
@@ -273,7 +273,7 @@ public static class MediaTypes
     }
 
     /// <summary>
-    /// The audio-or-video rule (video section 3.5) on a media type of the
+    /// The audio-or-video rule (MSFP Media video 3.5) on a media type of the
     /// pairs the registry lists: audio/&lt;sub&gt; for a file with no picture,
     /// video/&lt;sub&gt; for one with a picture. Other types are kept as they
     /// are (video/quicktime stays video/quicktime; audio/mpeg isn't video/mpeg).

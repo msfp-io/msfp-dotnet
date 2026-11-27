@@ -23,25 +23,25 @@ internal sealed class ResponseHeaders(HttpResponseMessage res) : IHeaderReader
 
 public sealed partial class MsfpEngine
 {
-    /// <summary>The most read of an answer (core section 3).</summary>
+    /// <summary>The most read of an answer (MSFP core section 3).</summary>
     internal const int MaxAnswer = 4 << 20;
 
     // Sends p a signed call with this body, and gives its answer: a
     // refusal that counts (signed, or any refusal of pair) is a reply, not
     // an error. Background marks the calls this server makes by itself:
-    // after calls the peer didn't answer, they hold off (core section 8.3).
+    // after calls the peer didn't answer, they hold off (MSFP core section 8.3).
     // Errors: Uncallable, Suspended, KeyLost, NotSupported, BackingOff,
     // RefusedDestination, CertificateRefused, Unreachable.
     internal async Task<Reply> CallAsync(PeerRecord p, string call, byte[] body, CancellationToken ct, bool background = false)
     {
         if (call != CallPair && p.Inbound.Value.Length > 0 && p.Inbound != Inbound.Yes)
         {
-            throw new MsfpException(MsfpError.Uncallable); // no connection at all (core section 7.5)
+            throw new MsfpException(MsfpError.Uncallable); // no connection at all (MSFP core section 7.5)
         }
 
         if (p.Suspended is not null && !(call == CallHello && background && SaysUncallable()))
         {
-            // Nothing is asked of a revoked key (core section 12.6), but the
+            // Nothing is asked of a revoked key (MSFP core section 12.6), but the
             // scheduled hello of a server that can't be called, so that a
             // rotation can still reach it.
             throw new MsfpException(MsfpError.Suspended);
@@ -50,7 +50,7 @@ public sealed partial class MsfpEngine
         if (p.OurKey == KeyLost && call != CallPair)
         {
             // It never moved to our new key, and knows no key of ours now
-            // (core section 12.4).
+            // (MSFP core section 12.4).
             throw new MsfpException(MsfpError.KeyLost);
         }
 
@@ -68,14 +68,14 @@ public sealed partial class MsfpEngine
         if (p.OurKey == KeyOld && call is not (CallRotate or CallPair))
         {
             // Still on our old key: told of the new one first, at each
-            // contact (core section 12.4).
+            // contact (MSFP core section 12.4).
             p = await RotateAtContactAsync(p, ct, background).ConfigureAwait(false);
         }
 
         if (call is not (CallHello or CallPair) && NotMoved(p, OurHost()))
         {
             // Still on our former address: told of the new one, at each
-            // contact (core section 13.1, step 2).
+            // contact (MSFP core section 13.1, step 2).
             AnnounceSoon(p);
         }
 
@@ -88,8 +88,8 @@ public sealed partial class MsfpEngine
         catch (MsfpException e) when (call != CallPair && e.NotHeard == 404)
         {
             // Maybe it just restarted, and refuses what is dated before: once
-            // more a second later, signed again with a new nonce (core section
-            // 6.5, "Retrying").
+            // more a second later, signed again with a new nonce (MSFP
+            // core section 6.5, "Retrying").
             await Task.Delay(RestartRetry, ct).ConfigureAwait(false);
             try
             {
@@ -152,7 +152,7 @@ public sealed partial class MsfpEngine
 
     // P not hearing our old key (an unsigned refusal): a hello signed with
     // the current key, whose signed answer, whatever it says, means p moved
-    // (core section 12.4).
+    // (MSFP core section 12.4).
     private async Task<(PeerRecord Peer, bool Moved)> HelloUnderNewAsync(PeerRecord p, CancellationToken ct)
     {
         var current = Current();
@@ -190,7 +190,7 @@ public sealed partial class MsfpEngine
     {
         if (Uncallables.Valid(p.Address))
         {
-            throw new MsfpException(MsfpError.Uncallable); // an address that never resolves (core section 5.2)
+            throw new MsfpException(MsfpError.Uncallable); // an address that never resolves (MSFP core section 5.2)
         }
 
         var basePath = string.IsNullOrEmpty(p.Base) ? Discovery.DefaultBase : p.Base;
@@ -219,8 +219,8 @@ public sealed partial class MsfpEngine
         }
         catch (HttpRequestException e)
         {
-            // It couldn't connect, as a hello answer's callsFailed says (core
-            // section 7.5).
+            // It couldn't connect, as a hello answer's callsFailed says (MSFP
+            // core section 7.5).
             throw new MsfpException(MsfpError.Unreachable, "couldn't connect", e) { NoConnection = true };
         }
         catch (TaskCanceledException e) when (!ct.IsCancellationRequested)
@@ -231,7 +231,7 @@ public sealed partial class MsfpEngine
         using (res)
         {
             var headers = new ResponseHeaders(res);
-            // No content coding (core section 3): refused like a badly signed answer.
+            // No content coding (MSFP core section 3): refused like a badly signed answer.
             if (headers.GetValues("Content-Encoding") is { Count: > 0 } ce &&
                 !ce.All(c => c.Trim().Equals("identity", StringComparison.OrdinalIgnoreCase)))
             {
@@ -258,7 +258,7 @@ public sealed partial class MsfpEngine
             if (status is not (200 or 202))
             {
                 // A refusal counts only signed by the peer's key; but pair's,
-                // whose maker doesn't know us yet (core section 6.6).
+                // whose maker doesn't know us yet (MSFP core section 6.6).
                 if (!isSigned && call != CallPair)
                 {
                     return new Reply(status, null, 0, answer, Unsigned: true);
@@ -299,8 +299,8 @@ public sealed partial class MsfpEngine
         }
     }
 
-    // A peer's base path, from its discovery document at address (core
-    // section 11); null for the default: for a 404, an answer that isn't a
+    // A peer's base path, from its discovery document at address (MSFP
+    // core section 11); null for the default: for a 404, an answer that isn't a
     // valid document, or none at all. A plain GET with no signature, any
     // certificate accepted, no redirects followed, 16 KiB read at most;
     // nothing is fetched at an address of the .invalid form.

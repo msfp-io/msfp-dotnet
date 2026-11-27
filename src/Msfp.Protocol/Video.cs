@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// A video title key, parsed (video section 4): movie/tmdb/949,
+/// A video title key, parsed (MSFP Media video 4): movie/tmdb/949,
 /// series/tmdb/1399, series/tmdb/1399/s1, series/tmdb/1399/e63056 (an
 /// episode by TMDB's ID of it), series/tmdb/1399/s1/e2 (an episode by its
 /// numbers), series/tvdb/81189/a27 (by its absolute number),
@@ -34,13 +34,13 @@ public readonly record struct VideoKey(
     string Extra = "",
     string ParentKind = "")
 {
-    /// <summary>Whether play takes the title, and whether it carries copies: a film, an episode or an extra (video section 5).</summary>
+    /// <summary>Whether play takes the title, and whether it carries copies: a film, an episode or an extra (MSFP Media video 5).</summary>
     public bool Playable => Kind is "movie" or "episode" or "extra";
 
     /// <summary>
     /// Whether the key names an episode by TMDB's ID of it
     /// (series/tmdb/&lt;id&gt;/e&lt;episode id&gt;): such an episode carries
-    /// its <see cref="Protocol.Place"/> (video sections 3.1 and 4.1).
+    /// its <see cref="Protocol.Place"/> (MSFP Media video 3.1 and 4.1).
     /// </summary>
     public bool ByEpisodeId => Kind == "episode" && EpisodeId > 0;
 
@@ -58,11 +58,11 @@ public readonly record struct VideoKey(
         }
     }
 
-    /// <summary>For an extra, the title it belongs to (video section 4.6); null for any other title.</summary>
+    /// <summary>For an extra, the title it belongs to (MSFP Media video 4.6); null for any other title.</summary>
     public VideoKey? Parent => Kind == "extra" ? this with { Kind = ParentKind, ParentKind = "", Extra = "" } : null;
 
     /// <summary>
-    /// Reads a video title key in its one canonical form (video section 4):
+    /// Reads a video title key in its one canonical form (MSFP Media video 4):
     /// the kind, the scheme (tmdb, tvdb for series only, local), the ID (1
     /// to 9,999,999,999) or the local identifier
     /// (<see cref="CatalogRules.OpaqueKeyPart"/>), then for a season
@@ -214,7 +214,7 @@ public readonly record struct VideoKey(
 }
 
 /// <summary>
-/// An episode's place in TMDB's numbering (video sections 3 and 4.1): the
+/// An episode's place in TMDB's numbering (MSFP Media video 3 and 4.1): the
 /// season and episode numbers TMDB gives it now, in the series' own season
 /// list. Carried by episodes keyed by their TMDB episode ID only, and
 /// required for them.
@@ -223,12 +223,12 @@ public readonly record struct VideoKey(
 /// <param name="Episode">The episode number, 0 (a pilot or prologue) to <see cref="Video.MaxEpisode"/>.</param>
 public sealed record Place(int Season, int Episode)
 {
-    /// <summary>Whether both numbers are in range (video section 3.1): what a sender sends, and a receiver keeps.</summary>
+    /// <summary>Whether both numbers are in range (MSFP Media video 3.1): what a sender sends, and a receiver keeps.</summary>
     public bool Valid => Season is >= 0 and <= Video.MaxSeason && Episode is >= 0 and <= Video.MaxEpisode;
 }
 
 /// <summary>
-/// A peer's video title, as kept (video section 3.1): its key, the kind the
+/// A peer's video title, as kept (MSFP Media video 3.1): its key, the kind the
 /// key names (a title carries no kind member), the library it gives, and
 /// the members video adds, cleaned; a list empty, a string empty and an
 /// object null when absent.
@@ -241,7 +241,7 @@ public sealed record Place(int Season, int Episode)
 /// <param name="With">The other episodes it holds (episodes).</param>
 /// <param name="Ids">Its other identifiers, by scheme in byte order (episodes of a public database, series keyed under tvdb).</param>
 /// <param name="ExtraType">What an extra is, a token (trailer, featurette, behindthescenes, deletedscene, interview, scene, short, clip, themesong, themevideo…), known or not; empty for any other title. An extra carries no name: it is shown by its type and a number.</param>
-/// <param name="Description">A local film's or series' description (video section 3.10), and always for them; null for any other title.</param>
+/// <param name="Description">A local film's or series' description (MSFP Media video 3.10), and always for them; null for any other title.</param>
 public sealed record VideoTitle(
     string Key,
     string Kind,
@@ -256,33 +256,33 @@ public sealed record VideoTitle(
 /// <summary>
 /// Video titles (MSFP video, sections 3 and 4): their keys, of the tmdb,
 /// tvdb and local schemes and of extras, and what a server keeps of a title
-/// a peer lists in titles (catalog section 3.3, video section 3.1). Copies
+/// a peer lists in titles (MSFP Media listing 3.3, MSFP Media video 3.1). Copies
 /// are in <see cref="Copies"/>; the previews call is in VideoPreviews.cs.
 /// </summary>
 public static partial class Video
 {
-    /// <summary>The scheme of TMDB's IDs (video section 4).</summary>
+    /// <summary>The scheme of TMDB's IDs (MSFP Media video 4).</summary>
     public const string SchemeTmdb = "tmdb";
 
-    /// <summary>The scheme of TheTVDB's IDs, for series only (video section 4.4).</summary>
+    /// <summary>The scheme of TheTVDB's IDs, for series only (MSFP Media video 4.4).</summary>
     public const string SchemeTvdb = "tvdb";
 
-    /// <summary>The scheme of a title of no public database, under an opaque identifier (video section 4.5).</summary>
+    /// <summary>The scheme of a title of no public database, under an opaque identifier (MSFP Media video 4.5).</summary>
     public const string SchemeLocal = "local";
 
     /// <summary>How many language tags a list of them holds at most (<see cref="Languages.SentTags"/>).</summary>
     public const int MaxTags = 12;
 
-    /// <summary>How many other episodes' keys an episode's with lists at most (video section 4.2).</summary>
+    /// <summary>How many other episodes' keys an episode's with lists at most (MSFP Media video 4.2).</summary>
     public const int MaxWith = 16;
 
-    /// <summary>The greatest season number of a <see cref="Place"/> (video section 3.1).</summary>
+    /// <summary>The greatest season number of a <see cref="Place"/> (MSFP Media video 3.1).</summary>
     public const int MaxSeason = 9999;
 
-    /// <summary>The greatest episode number of a <see cref="Place"/> (video section 3.1).</summary>
+    /// <summary>The greatest episode number of a <see cref="Place"/> (MSFP Media video 3.1).</summary>
     public const int MaxEpisode = 99999;
 
-    /// <summary>The values of a transcode's maxHeight (playback section 2.7).</summary>
+    /// <summary>The values of a transcode's maxHeight (MSFP Media playing 2.7).</summary>
     public static readonly IReadOnlyList<int> Heights = [480, 720, 1080, 1440, 2160, 4320];
 
     [GeneratedRegex(@"^tt[0-9]{7,10}\z")]
@@ -323,7 +323,7 @@ public static partial class Video
 
     /// <summary>
     /// Whether <paramref name="value"/> is an identifier of a known scheme
-    /// (video section 4.3, the registry's ids schemes: imdb, tvdb), in its
+    /// (MSFP Media video 4.3, the registry's ids schemes: imdb, tvdb), in its
     /// form; tmdb, which only a title keyed under another scheme carries, is
     /// <see cref="OtherId(VideoKey, string, string)"/>'s.
     /// </summary>
@@ -340,7 +340,7 @@ public static partial class Video
 
     /// <summary>
     /// Whether <paramref name="value"/> is an identifier a title of
-    /// <paramref name="key"/> carries in ids (video section 4.3, the
+    /// <paramref name="key"/> carries in ids (MSFP Media video 4.3, the
     /// registry's ids schemes): only episodes of the tmdb and tvdb schemes
     /// (imdb, tvdb, and tmdb when keyed under tvdb) and series keyed under
     /// tvdb (imdb, tmdb); never films and series keyed under tmdb, whose
@@ -364,7 +364,7 @@ public static partial class Video
     /// <summary>
     /// Steps a height down to the greatest of <see cref="Heights"/> not above
     /// it, 480 below 480: a transcode's maxHeight for a picture at most that
-    /// tall (playback section 2.7); 0 stays 0, not said.
+    /// tall (MSFP Media playing 2.7); 0 stays 0, not said.
     /// </summary>
     public static int StepHeight(int height)
     {
@@ -386,7 +386,7 @@ public static partial class Video
     }
 
     /// <summary>
-    /// Keeps of a video stream's hdr entries (video sections 3.3 and 3.8)
+    /// Keeps of a video stream's hdr entries (MSFP Media video 3.3 and 3.8)
     /// the tokens, known or not, each once, sorted in byte order, the first
     /// <see cref="Copies.MaxHdr"/>; an entry that isn't a token is skipped.
     /// </summary>
@@ -397,8 +397,8 @@ public static partial class Video
     }
 
     /// <summary>
-    /// Reads one entry of a titles answer as catalog section 3.3 and video
-    /// sections 3.1, 3.8, 3.9 and 3.10 say: null, to skip it, when it isn't
+    /// Reads one entry of a titles answer as MSFP Media listing 3.3 and MSFP
+    /// Media video 3.1, 3.8, 3.9 and 3.10 say: null, to skip it, when it isn't
     /// an object whose key and library are strings, when the key isn't a
     /// canonical video key of a known scheme, when it is a film, an episode or an extra whose copies isn't an
     /// array or keeps no copy (<see cref="Copies.Read(JsonNode?)"/>), an
@@ -500,9 +500,9 @@ public static partial class Video
         }
     }
 
-    // Reads place as a receiver keeps it (video section 3.1): null unless it
+    // Reads place as a receiver keeps it (MSFP Media video 3.1): null unless it
     // is an object whose season and episode are MSFP integers in range
-    // (core section 2.3: 1.0 and "1" aren't); other members are ignored.
+    // (MSFP Media base 2.2: 1.0 and "1" aren't); other members are ignored.
     private static Place? ReadPlace(JsonNode? node)
     {
         if (node is not JsonObject o || !Copies.Integer(o["season"], 0, MaxSeason, out var season) ||

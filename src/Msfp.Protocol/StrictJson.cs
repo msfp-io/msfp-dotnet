@@ -5,7 +5,7 @@ using System.Text.Json.Nodes;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// Federation bodies are I-JSON (RFC 7493), read as core section 2.3 says,
+/// Federation bodies are I-JSON (RFC 7493), read as MSFP Media base 2.2 says,
 /// both ways: the requests peers send here and the answers they give.
 /// </summary>
 /// <remarks>
@@ -14,7 +14,7 @@ namespace Msfp.Protocol;
 /// name twice, compared once their escapes are decoded; it nests at most
 /// 64 deep; it is an object. Member names match exactly: "State" is an
 /// unknown member, ignored, never "state".</para>
-/// <para>null is never a valid value (core section 2.3). A request that
+/// <para>null is never a valid value (MSFP Media base 2.2). A request that
 /// holds one in a member its reader knows is refused
 /// (<see cref="ReadRequest"/>); unknown members are ignored whatever they
 /// hold. In an answer, null at its top fails the whole answer, and inside
@@ -136,8 +136,8 @@ public static class StrictJson
     /// <exception cref="ProtocolException">It isn't I-JSON, or isn't an object.</exception>
     public static JsonObject ParseObject(ReadOnlySpan<byte> body, bool nulls)
     {
-        // Every MSFP body, request or answer, is an object (core section
-        // 8.1): "null", a list or a string isn't one.
+        // Every MSFP body, request or answer, is an object (MSFP
+        // core section 8.1): "null", a list or a string isn't one.
         if (Parse(body, nulls) is JsonObject obj)
         {
             return obj;
@@ -200,7 +200,7 @@ public static class StrictJson
     }
 
     /// <summary>
-    /// Whether a JSON number's text is an integer as core section 2.3
+    /// Whether a JSON number's text is an integer as MSFP Media base 2.2
     /// says: no fraction, no exponent, no leading zero, not -0, within
     /// ±(2^53 − 1).
     /// </summary>
@@ -391,7 +391,7 @@ public static class StrictJson
 /// Typed members of a body read by <see cref="StrictJson"/>: each returns
 /// null when the member is absent, and throws <see cref="ProtocolException"/>
 /// (<see cref="ProtocolError.Json"/>) when it holds a value of the wrong
-/// type (core section 2.3).
+/// type (MSFP Media base 2.2).
 /// </summary>
 public static class JsonMembers
 {
@@ -399,7 +399,7 @@ public static class JsonMembers
     public static string? GetString(this JsonObject obj, string name) =>
         obj.TryGetPropertyValue(name, out var v) && v is not null ? AsString(v) ?? throw StrictJson.Bad() : null;
 
-    /// <summary>An integer member (core section 2.3's form).</summary>
+    /// <summary>An integer member (MSFP Media base 2.2's form).</summary>
     public static long? GetInteger(this JsonObject obj, string name) =>
         obj.TryGetPropertyValue(name, out var v) && v is not null ? AsInteger(v) ?? throw StrictJson.Bad() : null;
 
@@ -446,7 +446,7 @@ public static class JsonMembers
     public static string? AsString(JsonNode? node) =>
         node is JsonValue v && v.GetValueKind() == JsonValueKind.String ? v.GetValue<string>() : null;
 
-    /// <summary>A node as an integer of core section 2.3's form, or null when it is anything else.</summary>
+    /// <summary>A node as an integer of MSFP Media base 2.2's form, or null when it is anything else.</summary>
     public static long? AsInteger(JsonNode? node)
     {
         if (node is not JsonValue v || v.GetValueKind() != JsonValueKind.Number)

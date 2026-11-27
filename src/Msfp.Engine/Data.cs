@@ -8,7 +8,7 @@ namespace Msfp;
 
 /// <summary>
 /// One of the host's libraries: its own ID and its name. A library carries
-/// no kind (MSFP catalog section 2): its titles' keys say what it holds.
+/// no kind (MSFP Media listing 2): its titles' keys say what it holds.
 /// </summary>
 public sealed record Library
 {
@@ -69,9 +69,9 @@ public abstract record Title
 }
 
 /// <summary>
-/// A film, a series, a season, an episode or an extra (MSFP video section
-/// 3): the host's own, as its Catalog gives them, or a peer's, as the
-/// engine kept it (video section 3.1). The engine cleans the host's before
+/// A film, a series, a season, an episode or an extra (MSFP
+/// Media video 3): the host's own, as its Catalog gives them, or a peer's, as the
+/// engine kept it (MSFP Media video 3.1). The engine cleans the host's before
 /// they leave as a receiver would keep them, so that nothing leaves that
 /// MSFP doesn't take.
 /// </summary>
@@ -79,7 +79,7 @@ public sealed record VideoTitle : Title
 {
     /// <summary>
     /// A film's, an episode's or an extra's copies, in the host's order of
-    /// preference (MSFP video sections 3.2 to 3.8): what a viewer's server needs to list each as a
+    /// preference (MSFP Media video 3.2 to 3.8): what a viewer's server needs to list each as a
     /// file of its own before anyone plays it (its length, size, etag, media
     /// type, streams and tracks, chapters, skip markers, the layout of its
     /// seek-bar previews…). Required for those kinds: one without a copy left
@@ -90,12 +90,12 @@ public sealed record VideoTitle : Title
     /// the one <see cref="IPlayback"/> and <see cref="IMedia"/> are given: it
     /// never leaves; the engine sends instead the version ID play gives for
     /// it, and plays a copy only as it is described here. The host's order of
-    /// its copies is its preference, best first (video section 3.7): the
+    /// its copies is its preference, best first (MSFP Media video 3.7): the
     /// first is the one a play naming none plays
     /// (<see cref="Protocol.Copies.Sorted"/> is a default order, for a host
     /// that has none). Language tags leave as <see cref="Languages.TrySentTag"/>
     /// gives them. Facts are in outside vocabularies or the MSFP registry
-    /// (video section 3.5): the file's media type (read from its first bytes
+    /// (MSFP Media video 3.5): the file's media type (read from its first bytes
     /// where it can), the registry's codec and subtitle tokens (ffprobe's
     /// codec_name), RFC 6381 codecs strings (required for h264, hevc, av1,
     /// vp9, aac and dts), H.273 colour code points; a host whose media server
@@ -114,7 +114,7 @@ public sealed record VideoTitle : Title
     /// <summary>
     /// For an episode keyed by its TMDB episode ID
     /// (series/tmdb/&lt;id&gt;/e&lt;episode id&gt;) only, and required for it:
-    /// its place in TMDB's numbering now (MSFP video sections 3 and 4.1).
+    /// its place in TMDB's numbering now (MSFP Media video 3 and 4.1).
     /// The host sets it for its own such episodes, which aren't sent without
     /// a valid one; a new place is a change of the title. A peer's is the one
     /// it sent, checked. Null for any other title (and ignored there).
@@ -132,7 +132,7 @@ public sealed record VideoTitle : Title
 
     /// <summary>
     /// An extra's (kind "extra", keyed under its film, series or season:
-    /// video section 3.9): open, a token (trailer, featurette,
+    /// MSFP Media video 3.9): open, a token (trailer, featurette,
     /// behindthescenes, deletedscene, interview, scene, short, clip,
     /// themesong, themevideo…); an extra without one isn't sent. An extra
     /// carries no name: a viewer's server shows it by its type and a number.
@@ -144,8 +144,8 @@ public sealed record VideoTitle : Title
     public string? ExtraType { get; set; }
 
     /// <summary>
-    /// A local film's or series' name (required, at most 128: catalog section
-    /// 4.3, video section 3.10). It is text, never markup; on other titles it
+    /// A local film's or series' name (required, at most 128: MSFP
+    /// Media listing 4.3, MSFP Media video 3.10). It is text, never markup; on other titles it
     /// isn't sent.
     /// </summary>
     [JsonPropertyName("name"), OmitEmpty]
@@ -164,8 +164,8 @@ public sealed record VideoTitle : Title
     public bool Image { get; set; }
 
     /// <summary>
-    /// The title's first copy, the owning server's preferred (MSFP video
-    /// section 3.7); null for a title without one (a series, a season). A
+    /// The title's first copy, the owning server's preferred (MSFP
+    /// Media video 3.7); null for a title without one (a series, a season). A
     /// viewer's server may show its picture as the title's; which copy it
     /// plays is its own choice, from every copy's facts.
     /// </summary>
@@ -174,7 +174,7 @@ public sealed record VideoTitle : Title
     /// <summary>
     /// The languages of the title's audio tracks, over all its copies, each
     /// once, in the order of its copies and their tracks: what a viewer's
-    /// server shows as the title's audio languages (MSFP video section 3.2: a
+    /// server shows as the title's audio languages (MSFP Media video 3.2: a
     /// title carries no summary of them).
     /// </summary>
     public IReadOnlyList<string> AudioLanguages() =>
@@ -191,7 +191,7 @@ public sealed record VideoTitle : Title
 }
 
 /// <summary>
-/// An episode's place in TMDB's numbering (MSFP video section 4.1): the
+/// An episode's place in TMDB's numbering (MSFP Media video 4.1): the
 /// season_number and episode_number TMDB gives it in the series' own season
 /// list, not in an episode group. A host whose files are numbered another
 /// way maps them to TMDB's numbers first.
@@ -208,8 +208,8 @@ public sealed record Place
 }
 
 /// <summary>
-/// An artist, an album or a track, with its description (MSFP music
-/// section 3): its name; for albums and tracks, the artist keys credited and
+/// An artist, an album or a track, with its description (MSFP
+/// Media music 3): its name; for albums and tracks, the artist keys credited and
 /// their names as written; for albums, MusicBrainz's primary and secondary
 /// types of its release group (lowercased, open), whether it is a
 /// compilation; for albums and tracks, the dates of this edition and of the
@@ -218,8 +218,8 @@ public sealed record Place
 /// image; other identifiers by scheme, on mb titles only (mbreleasegroup on
 /// albums, mbrecording on tracks). There are no sort names. A track's
 /// artists, artistNames, dates and genres leave only when they differ from
-/// its album's (MSFP music section 3): of a peer's, an absent one is its
-/// album's. A peer's are cleaned as music section 3.2 says; the host's own
+/// its album's (MSFP Media music 3): of a peer's, an absent one is its
+/// album's. A peer's are cleaned as MSFP Media music 3.2 says; the host's own
 /// are cleaned the same way before they leave.
 /// </summary>
 public sealed record MusicTitle : Title
@@ -273,7 +273,7 @@ public sealed record MusicTitle : Title
     public int Number { get; set; }
 
     /// <summary>
-    /// A track's copies, in the owner's order of preference, at least one (music section 3.3). Of the
+    /// A track's copies, in the owner's order of preference, at least one (MSFP Media music 3.3). Of the
     /// host's own, each ID is its handle, as for
     /// <see cref="VideoTitle.Copies"/>: the engine sends the version ID made
     /// of it.
@@ -363,7 +363,7 @@ public sealed record CopyInfo
 {
     /// <summary>
     /// How many fonts the copy's ASS tracks use (0 to 64), served as
-    /// <see cref="MediaKind.Font"/> 0 to Fonts-1 (MSFP video section 6.6):
+    /// <see cref="MediaKind.Font"/> 0 to Fonts-1 (MSFP Media video 6.6):
     /// each at most 10 MiB, 64 MiB in all; the host lists none past those
     /// bounds.
     /// </summary>
@@ -371,8 +371,8 @@ public sealed record CopyInfo
 
     /// <summary>
     /// The subtitle tracks the host can't serve apart (as WebVTT for text, as
-    /// PGS for pictures: MSFP video section 5.4): they get no entry in the
-    /// answer's subtitles. Every other track of a format video section 5.4's
+    /// PGS for pictures: MSFP Media video 5.4): they get no entry in the
+    /// answer's subtitles. Every other track of a format MSFP Media video 5.4's
     /// table lists is served apart, in the table's form: a host must serve
     /// them so (an external track it can't serve apart it doesn't list in the
     /// catalog). A track of a format the table doesn't list is served apart
@@ -381,8 +381,8 @@ public sealed record CopyInfo
     public List<string>? NotApart { get; set; }
 
     /// <summary>
-    /// How the host serves apart, by track ID, a track of a format video
-    /// section 5.4's table doesn't list: <see cref="Video.FormText"/> or
+    /// How the host serves apart, by track ID, a track of a format MSFP
+    /// Media video 5.4's table doesn't list: <see cref="Video.FormText"/> or
     /// <see cref="Video.FormPicture"/>; ignored for a listed format.
     /// </summary>
     public Dictionary<string, string>? Forms { get; set; }
@@ -415,12 +415,12 @@ public sealed record StartRequest
     /// <summary>The key played (an episode's, for a copy holding several).</summary>
     public string Title { get; init; } = "";
 
-    /// <summary>It is a track (MSFP music section 5): no video is served.</summary>
+    /// <summary>It is a track (MSFP Media music 5): no video is served.</summary>
     public bool AudioOnly { get; init; }
 
     /// <summary>
     /// <see cref="Playback.PurposePlay"/>, <see cref="Playback.PurposeDownload"/>
-    /// or <see cref="Playback.PurposeScan"/> (MSFP playback sections 7 and 8):
+    /// or <see cref="Playback.PurposeScan"/> (MSFP Media playing 6, MSFP playback section 8):
     /// a scan is always of delivery file, and converts nothing.
     /// </summary>
     public string Purpose { get; init; } = Playback.PurposePlay;
@@ -439,7 +439,7 @@ public sealed record StartRequest
     /// which), never the file. With a delivery, the host serves exactly that
     /// or refuses with <see cref="MsfpError.DeliveryRefused"/> (its bandwidth,
     /// its policy, a delivery it can't make of the copy); it never serves
-    /// another (MSFP playback section 2.2, step 7). The engine has already
+    /// another (MSFP Media playing 2.2, step 7). The engine has already
     /// refused a delivery not of the list, a remux to another media type, or
     /// to a segment format that can't carry the copy's streams
     /// (<see cref="Encoders.Segments"/>), a transcode codec or range not in
@@ -449,8 +449,8 @@ public sealed record StartRequest
     /// <see cref="MaxBitrateKbps"/>, and a BurnSubtitle the copy hasn't.
     /// </summary>
     /// <remarks>
-    /// The host's duties toward what it serves (MSFP playback section 2.7,
-    /// media section 3.1): in fragmented MP4 segments, HEVC written hvc1,
+    /// The host's duties toward what it serves (MSFP Media playing 2.7,
+    /// MSFP Media fetching 3.1): in fragmented MP4 segments, HEVC written hvc1,
     /// Dolby Vision dvh1 (dav1 on AV1), parameter sets out of band, in a remux
     /// and a transcode alike; each #EXT-X-STREAM-INF of its master playlist
     /// with BANDWIDTH, CODECS and, for video, RESOLUTION; VIDEO-RANGE (PQ or
@@ -479,7 +479,7 @@ public sealed record StartRequest
 
     /// <summary>
     /// For hls, every audio track of the copy is asked as an #EXT-X-MEDIA
-    /// rendition named by its ID (MSFP media section 3.1). It is never
+    /// rendition named by its ID (MSFP Media fetching 3.1). It is never
     /// refused: a host that makes none says so in
     /// <see cref="Started.AudioRenditions"/>.
     /// </summary>
@@ -514,7 +514,7 @@ public sealed record StartRequest
 
     /// <summary>
     /// The tracks a music play names after Title, that the host prepares under
-    /// the same playback (MSFP music section 5.2), each with the copy its entry
+    /// the same playback (MSFP Media music 5.2), each with the copy its entry
     /// named (else its first) and its own delivery, in the request's order;
     /// Place is its place in the request's queue (0 to 4), which a queued
     /// track the engine left out (not offered, no such copy, a delivery
@@ -523,12 +523,23 @@ public sealed record StartRequest
     public IReadOnlyList<QueuedCopy> Queue { get; init; } = [];
 
     /// <summary>
+    /// The handle (<see cref="Started.Handle"/>) of the host's playback this
+    /// one replaces, "" for none (MSFP Media playing 2.3): it ends,
+    /// <see cref="IPlayback.StopAsync"/> with <see cref="EndReason.Replaced"/>,
+    /// once this one is answered. Until then the host counts the two as one
+    /// against its own transcode budget; when this one is refused, the old
+    /// one goes on.
+    /// </summary>
+    public string Replaces { get; init; } = "";
+
+    /// <summary>
     /// Counts the pool's streams (and, for "transcode", its transcodes), or the
     /// download, or the scan, in one step: the host calls it once it knows the
     /// method ("direct", "remux", "transcode"), before starting any work (MSFP
     /// playback section 6.2). Throws <see cref="MsfpException"/> with
-    /// StreamLimitReached or ServerBusy. Optional for the host; null outside
-    /// the engine.
+    /// StreamLimitReached or ServerBusy. A play that replaces another counts
+    /// as it (<see cref="Replaces"/>). Optional for the host; null outside the
+    /// engine.
     /// </summary>
     public Func<string, ISlot>? Admit { get; init; }
 }
@@ -591,7 +602,7 @@ public sealed record Started
     /// <summary>
     /// The hls playlist carries every audio track as a rendition, as
     /// <see cref="StartRequest.AudioRenditions"/> asked; false when the host
-    /// made none (play's answer says so: MSFP playback section 2.3).
+    /// made none (play's answer says so: MSFP Media playing 2.3).
     /// </summary>
     public bool AudioRenditions { get; init; }
 
@@ -612,7 +623,7 @@ public sealed record StartedEntry(int Place, string Method, string Protocol);
 
 /// <summary>
 /// A peer's progress or stop of a playback here, passed on to the host (MSFP
-/// playback sections 3, 4 and 7).
+/// Media playing 3, 4 and 6).
 /// </summary>
 public sealed record Report
 {
@@ -639,9 +650,12 @@ public sealed record Report
     /// watched offline): the handle no longer plays.
     /// </summary>
     public bool Late { get; init; }
+
+    /// <summary>The peer's progress said its viewer has paused (MSFP Media playing 3).</summary>
+    public bool Paused { get; init; }
 }
 
-/// <summary>Why a playback ended (MSFP playback section 6.3).</summary>
+/// <summary>Why a playback ended (MSFP Media playing 5).</summary>
 [JsonConverter(typeof(JsonStringEnumConverter<EndReason>))]
 public enum EndReason
 {
@@ -668,6 +682,10 @@ public enum EndReason
     /// <summary>"operator".</summary>
     [JsonStringEnumMemberName("operator")]
     Operator,
+
+    /// <summary>"replaced": a play that replaces it was answered 200 (MSFP Media playing 2.3).</summary>
+    [JsonStringEnumMemberName("replaced")]
+    Replaced,
 }
 
 /// <summary>The kind of a <see cref="MediaPath"/>.</summary>
@@ -746,7 +764,7 @@ public sealed partial record MediaPath
 
     /// <summary>
     /// The handle <see cref="IMedia.ServeAsync"/> is given is a copy's, not a
-    /// playback's: a Sheet under a previews ticket (MSFP video section 5.6),
+    /// playback's: a Sheet under a previews ticket (MSFP Media video 5.6),
     /// which no playback has.
     /// </summary>
     public bool OfCopy { get; init; }
@@ -775,7 +793,7 @@ public sealed partial record ByteRange(long First, long Last, long Suffix);
 /// <see cref="Playback.ScanBytesRecommended"/>, 32 MiB, is the implementers'
 /// notes' suggestion), which no limits object carries: each scan's answer
 /// states it (MSFP playback section 8). With Audio, audio playbacks (tracks) are counted
-/// apart, within AudioStreams and AudioTranscodes (music section 5.1);
+/// apart, within AudioStreams and AudioTranscodes (MSFP Media music 5.1);
 /// without, they count in Streams and Transcodes.
 /// </summary>
 public sealed record Limits

@@ -6,19 +6,19 @@ using System.Text.Json.Nodes;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// The catalog part's own rules (MSFP catalog sections 3 and 4), shared by
+/// The catalog part's own rules (MSFP Media listing 3 and 4), shared by
 /// the content parts: pages bounded by size, the opaque parts of title
 /// keys, the description of a local title, and its image.
 /// </summary>
 public static class CatalogRules
 {
-    /// <summary>How many keys a page of titles holds at most: titles and gone together in a changes answer (catalog section 3.1).</summary>
+    /// <summary>How many keys a page of titles holds at most: titles and gone together in a changes answer (MSFP Media listing 3.1).</summary>
     public const int MaxPageTitles = 5000;
 
-    /// <summary>How many bytes of JSON a page's answer body holds at most, 3 MiB (catalog section 3.1).</summary>
+    /// <summary>How many bytes of JSON a page's answer body holds at most, 3 MiB (MSFP Media listing 3.1).</summary>
     public const int MaxPageBytes = 3 << 20;
 
-    /// <summary>How many bytes after, and so next, holds at most (catalog section 3.1).</summary>
+    /// <summary>How many bytes after, and so next, holds at most (MSFP Media listing 3.1).</summary>
     public const int MaxAfter = 512;
 
     /// <summary>
@@ -30,7 +30,7 @@ public static class CatalogRules
     public const int PageReserve = 1024;
 
     /// <summary>
-    /// The caller's stop rule (catalog section 3.1): it asks for the next
+    /// The caller's stop rule (MSFP Media listing 3.1): it asks for the next
     /// page, with <paramref name="next"/> as after, only when next is set (an
     /// absent one is null or "") and greater than its <paramref name="after"/>
     /// in byte order. A short page with a next is no end.
@@ -39,8 +39,8 @@ public static class CatalogRules
         !string.IsNullOrEmpty(next) && ByteOrder(next, after ?? "") > 0;
 
     /// <summary>
-    /// Whether an owning server may send <paramref name="p"/> (catalog
-    /// section 3.1): at most <see cref="MaxPageTitles"/> keys and
+    /// Whether an owning server may send <paramref name="p"/> (MSFP
+    /// Media listing 3.1): at most <see cref="MaxPageTitles"/> keys and
     /// <see cref="MaxPageBytes"/>; in a whole-list answer, no gone, keys after
     /// after, and next the page's last key exactly when titles remain. In a
     /// changes answer, next is the owning server's call. A caller accepts any
@@ -107,8 +107,8 @@ public static class CatalogRules
 
     /// <summary>
     /// Whether <paramref name="s"/> may be an opaque part of a title key: a
-    /// local title's identifier, an extra's part after x/ (catalog section
-    /// 4.2). It has a library ID's form, 1 to 64 characters of
+    /// local title's identifier, an extra's part after x/ (MSFP
+    /// Media listing 4.2). It has a library ID's form, 1 to 64 characters of
     /// A–Z a–z 0–9 _ -, compared byte for byte, and follows a library ID's
     /// rule: chosen by the owning server, never computable from a media
     /// server's ID, a file, a path or a name.
@@ -117,7 +117,7 @@ public static class CatalogRules
 
     /// <summary>
     /// Reads a local title's description from the title's JSON object, within
-    /// <paramref name="bounds"/> (catalog section 4.3): name cleaned as
+    /// <paramref name="bounds"/> (MSFP Media listing 4.3): name cleaned as
     /// <see cref="Music.CleanText"/> does, a name that isn't a string counting
     /// as absent; a year that isn't an integer in range, and an image that
     /// isn't a boolean, absent. An owning server cleans its names the same
@@ -160,7 +160,7 @@ public static class CatalogRules
     }
 
     /// <summary>
-    /// The owning server's answer to an image call (catalog section 4.4), in
+    /// The owning server's answer to an image call (MSFP Media listing 4.4), in
     /// the spec's order: 404 not-supported when no content part with local
     /// titles is on between the two servers (<paramref name="on"/> says, for
     /// <see cref="Versions.PartVideo"/> and <see cref="Versions.PartMusic"/>),
@@ -208,8 +208,8 @@ public static class CatalogRules
         return (title, 200, "");
     }
 
-    // The content part of a kind the image call gives an image of (catalog
-    // section 4.4); null for another kind.
+    // The content part of a kind the image call gives an image of (MSFP
+    // Media listing 4.4); null for another kind.
     private static string? ImagePart(string kind) => kind switch
     {
         "movie" or "series" => Versions.PartVideo,
@@ -220,7 +220,7 @@ public static class CatalogRules
     /// <summary>
     /// The URL of a local title's image a viewer's server builds from the
     /// ticket of image's answer: &lt;stream root&gt;&lt;ticket&gt;/image
-    /// (catalog section 4.4, media section 1). The ticket works for 10
+    /// (MSFP Media listing 4.4, MSFP Media fetching 1). The ticket works for 10
     /// minutes, for that URL only, and is no playback.
     /// </summary>
     public static string ImageUrl(string root, string ticket) => MediaUrls.Image(root, ticket);
@@ -229,7 +229,7 @@ public static class CatalogRules
     public static byte[] WriteImageAnswer(string ticket) => JsonOut.Object(o => o.String("ticket", ticket));
 
     /// <summary>
-    /// Reads an image call's answer (catalog section 4.4): {"ticket"}, the
+    /// Reads an image call's answer (MSFP Media listing 4.4): {"ticket"}, the
     /// ticket of an ID's form (<see cref="Playback.Id"/>); the viewer's server
     /// builds the URL itself (<see cref="ImageUrl"/>). Unknown members (the
     /// url of earlier drafts among them) are ignored. False refuses the
@@ -259,10 +259,10 @@ public static class CatalogRules
         return true;
     }
 
-    /// <summary>How many bytes a local title's image holds at most, 1 MiB; an image of exactly that size is accepted (catalog section 4.4).</summary>
+    /// <summary>How many bytes a local title's image holds at most, 1 MiB; an image of exactly that size is accepted (MSFP Media listing 4.4).</summary>
     public const int MaxImageBytes = 1 << 20;
 
-    /// <summary>How many pixels wide and tall a local title's image is at most (catalog section 4.4).</summary>
+    /// <summary>How many pixels wide and tall a local title's image is at most (MSFP Media listing 4.4).</summary>
     public const int MaxImageSide = 4096;
 
     /// <summary>A JPEG image, as <see cref="TryCheckImage(ReadOnlySpan{byte}, out string, out string)"/> gives its format.</summary>
@@ -273,7 +273,7 @@ public static class CatalogRules
 
     /// <summary>
     /// Checks a local title's image, read whole, before it is decoded
-    /// (catalog section 4.4): within <see cref="MaxImageBytes"/>, a JPEG or a
+    /// (MSFP Media listing 4.4): within <see cref="MaxImageBytes"/>, a JPEG or a
     /// PNG by its content, whatever its Content-Type, whose header (a PNG's
     /// IHDR, a JPEG's frame header) gives a width and a height of 1 to
     /// <see cref="MaxImageSide"/>; a JPEG of height 0, left to a DNL marker,
@@ -455,8 +455,8 @@ public sealed record CatalogPage
 
 /// <summary>
 /// Counts what an owning server puts in a page of titles, so that it ends
-/// the page early when the next entry would pass either bound (catalog
-/// section 3.1).
+/// the page early when the next entry would pass either bound (MSFP
+/// Media listing 3.1).
 /// </summary>
 /// <param name="reserve">What the answer takes, entries aside (<see cref="CatalogRules.PageReserve"/>, say).</param>
 public sealed class PageBudget(int reserve)
@@ -495,8 +495,8 @@ public sealed class PageBudget(int reserve)
 
 /// <summary>
 /// The bounds of a local title's description: the catalog's
-/// (<see cref="Local"/>), or a content part's own for its titles (catalog
-/// section 4.3).
+/// (<see cref="Local"/>), or a content part's own for its titles (MSFP
+/// Media listing 4.3).
 /// </summary>
 /// <param name="NameRequired">The kind carries a name; without one the title is skipped.</param>
 /// <param name="MaxName">The name's longest, in code points.</param>
@@ -512,11 +512,273 @@ public sealed record DescriptionBounds(bool NameRequired, int MaxName, int MinYe
 }
 
 /// <summary>
-/// What a caller keeps of a local title's description (catalog section
-/// 4.3). It is the owning server's, shown as such, never sent on to
+/// What a caller keeps of a local title's description (MSFP
+/// Media listing 4.3). It is the owning server's, shown as such, never sent on to
 /// another peer.
 /// </summary>
 /// <param name="Name">Cleaned text, never markup; "" when absent.</param>
 /// <param name="Year">0 when absent.</param>
 /// <param name="Image">The image call gives one.</param>
 public sealed record LocalDescription(string Name, int Year, bool Image);
+
+/// <summary>
+/// A titles request (MSFP Media listing 3), as a source reads it
+/// (<see cref="Read"/>) and a caller sends it (<see cref="ToJson"/>).
+/// <see cref="Libraries"/> null is every library the caller may see;
+/// <see cref="Filter"/> narrows the listing (listing 3.6).
+/// </summary>
+public sealed record TitlesRequest
+{
+    private static readonly string[] Members = ["libraries", "kind", "under", "after", "since"];
+
+    /// <summary>The libraries asked; null: every library the caller may see.</summary>
+    public IReadOnlyList<string>? Libraries { get; init; }
+
+    /// <summary>The filters.</summary>
+    public TitleFilter Filter { get; init; } = new();
+
+    /// <summary>The key after which the page starts; "" for the first.</summary>
+    public string After { get; init; } = "";
+
+    /// <summary>The seq of an earlier reading, for changes since; 0 for none.</summary>
+    public long Since { get; init; }
+
+    /// <summary>
+    /// Reads a titles request as a source does (MSFP Media listing 3 and
+    /// 3.6): an I-JSON object, null in none of its members; libraries, when
+    /// present, an array of strings; kind a token; under a string of at most
+    /// <see cref="CatalogRules.MaxAfter"/> bytes; after a string of at most
+    /// <see cref="CatalogRules.MaxAfter"/> bytes; since an integer, a
+    /// negative one read as 0. Anything else is null: a malformed body
+    /// (listing 3.3: 404 not-found). Library IDs the caller may not see, and
+    /// a kind no content part in use has, aren't refused: they list nothing.
+    /// </summary>
+    /// <returns>The request; null when malformed.</returns>
+    public static TitlesRequest? Read(ReadOnlySpan<byte> body)
+    {
+        JsonObject o;
+        try
+        {
+            o = StrictJson.ReadRequest(body, Members);
+        }
+        catch (ProtocolException)
+        {
+            return null;
+        }
+
+        List<string>? libraries = null;
+        if (o.TryGetPropertyValue("libraries", out var l))
+        {
+            if (l is not JsonArray list)
+            {
+                return null;
+            }
+
+            libraries = new List<string>(list.Count);
+            foreach (var e in list)
+            {
+                if (JsonMembers.AsString(e) is not { } s)
+                {
+                    return null;
+                }
+
+                libraries.Add(s);
+            }
+        }
+
+        static bool Text(JsonObject o, string name, out string? value)
+        {
+            value = null;
+            if (!o.TryGetPropertyValue(name, out var v))
+            {
+                return true;
+            }
+
+            value = JsonMembers.AsString(v);
+            return value is not null;
+        }
+
+        if (!Text(o, "kind", out var kind) || (kind is not null && !Names.IsToken(kind)) ||
+            !Text(o, "under", out var under) || (under is not null && Encoding.UTF8.GetByteCount(under) > CatalogRules.MaxAfter) ||
+            !Text(o, "after", out var after) || (after is not null && Encoding.UTF8.GetByteCount(after) > CatalogRules.MaxAfter))
+        {
+            return null;
+        }
+
+        long since = 0;
+        if (o.TryGetPropertyValue("since", out var sv))
+        {
+            try
+            {
+                if (JsonMembers.AsInteger(sv) is not { } n)
+                {
+                    return null;
+                }
+
+                since = Math.Max(n, 0);
+            }
+            catch (OverflowException)
+            {
+                return null;
+            }
+        }
+
+        return new TitlesRequest
+        {
+            Libraries = libraries,
+            Filter = new TitleFilter { Kind = kind ?? "", Under = under ?? "", HasUnder = under is not null },
+            After = after ?? "",
+            Since = since,
+        };
+    }
+
+    /// <summary>The request as a caller sends it: libraries when not null, kind and under when given, after always, since when above 0.</summary>
+    public byte[] ToJson() => JsonOut.Object(w => w
+        .Strings("libraries", Libraries)
+        .String("kind", TranscodeTargets.NonEmpty(Filter.Kind))
+        .String("under", Filter.HasUnder ? Filter.Under : null)
+        .String("after", After)
+        .Integer("since", Since > 0 ? Since : null));
+
+    /// <summary>
+    /// Whether a caller may ask with since the seq of an earlier reading
+    /// made with <paramref name="prev"/> (MSFP Media listing 3.2): only when
+    /// libraries is the same set (or absent in both), kind is the same, and
+    /// neither has under.
+    /// </summary>
+    public static bool SinceAllowed(TitlesRequest prev, TitlesRequest next)
+    {
+        ArgumentNullException.ThrowIfNull(prev);
+        ArgumentNullException.ThrowIfNull(next);
+        if (prev.Filter.Kind != next.Filter.Kind || prev.Filter.HasUnder || next.Filter.HasUnder ||
+            (prev.Libraries is null) != (next.Libraries is null))
+        {
+            return false;
+        }
+
+        return new HashSet<string>(prev.Libraries ?? [], StringComparer.Ordinal).SetEquals(next.Libraries ?? []);
+    }
+}
+
+/// <summary>
+/// A titles request's filters (MSFP Media listing 3.6): <see cref="Kind"/>
+/// ("" for none) and <see cref="Under"/> (when <see cref="HasUnder"/>: a
+/// title key, compared as an exact string). The default filter lists every
+/// title.
+/// </summary>
+public sealed record TitleFilter
+{
+    /// <summary>The kind of the titles listed; "" for any.</summary>
+    public string Kind { get; init; } = "";
+
+    /// <summary>The key of the title the titles listed are directly under, when <see cref="HasUnder"/>.</summary>
+    public string Under { get; init; } = "";
+
+    /// <summary>Whether the request gave under.</summary>
+    public bool HasUnder { get; init; }
+
+    /// <summary>Whether the filter lists every title.</summary>
+    public bool None => Kind.Length == 0 && !HasUnder;
+
+    /// <summary>
+    /// Whether a source may answer the request with changes only, as far as
+    /// its filters go (MSFP Media listing 3.2): never with under, whose
+    /// answer is always the whole list.
+    /// </summary>
+    public bool Changes => !HasUnder;
+
+    /// <summary>
+    /// Whether a title passes the filter (MSFP Media listing 3.6): its key
+    /// names <see cref="Kind"/>, when given; and, with under, it is directly
+    /// under that title: a film's extras; a series' seasons, extras and
+    /// episodes keyed by an absolute number; a season's episodes, those
+    /// keyed under it and those of the same series keyed by their TMDB
+    /// episode ID whose place.season is its number, and its extras; an
+    /// album's tracks (their album); an artist's albums (their artists).
+    /// Under any other string, nothing. A caller's whole reading made with a
+    /// filter drops, of the titles it kept, only those that pass and the
+    /// reading didn't send.
+    /// </summary>
+    public bool Passes(FilterFacts title)
+    {
+        ArgumentNullException.ThrowIfNull(title);
+        if (!TitleKey.TryParse(title.Key, out var k) || (Kind.Length > 0 && k.Kind != Kind))
+        {
+            return false;
+        }
+
+        if (!HasUnder)
+        {
+            return true;
+        }
+
+        if (MusicKey.TryParse(Under, out var mu))
+        {
+            return (mu.Kind, k.Kind) switch
+            {
+                ("album", "track") => title.Album == Under,
+                ("artist", "album") => title.Artists.Contains(Under, StringComparer.Ordinal),
+                _ => false,
+            };
+        }
+
+        if (!VideoKey.TryParse(Under, out var u) || !VideoKey.TryParse(title.Key, out var v))
+        {
+            return false;
+        }
+
+        if (v.Parent is { } parent)
+        {
+            return parent.ToString() == Under;
+        }
+
+        if (v.Series != u.Series)
+        {
+            return false;
+        }
+
+        return u.Kind switch
+        {
+            "series" => v.Kind == "season" || (v.Kind == "episode" && v.Absolute),
+            "season" => v.Kind == "episode" && !v.Absolute &&
+                (v.EpisodeId > 0 ? title.PlaceSeason is { } s && s == u.Season : v.Season == u.Season),
+            _ => false,
+        };
+    }
+
+    /// <summary>
+    /// The prefix every key under a video title starts with (its film's or
+    /// series' key and a slash), for a source that walks its titles in key
+    /// order: those under it are among the keys of that prefix, which come
+    /// together in byte order. "" when under isn't a video key: a source then
+    /// looks at every title.
+    /// </summary>
+    public string UnderPrefix => HasUnder && VideoKey.TryParse(Under, out var u) ? u.Series + "/" : "";
+
+    /// <summary>
+    /// Whether <paramref name="kind"/> is a kind of title of a content part
+    /// of version 0: movie, series, season, episode, extra; artist, album,
+    /// track.
+    /// </summary>
+    public static bool KnownKind(string kind) => kind is "movie" or "series" or "season" or "episode" or "extra" or "artist" or "album" or "track";
+}
+
+/// <summary>
+/// What a filter reads of a title (MSFP Media listing 3.6): its key; an
+/// episode's place.season (null when it has none); a track's album key; an
+/// album's artists' keys.
+/// </summary>
+public sealed record FilterFacts
+{
+    /// <summary>The title's key.</summary>
+    public string Key { get; init; } = "";
+
+    /// <summary>An episode's place.season; null for none.</summary>
+    public int? PlaceSeason { get; init; }
+
+    /// <summary>A track's album key.</summary>
+    public string Album { get; init; } = "";
+
+    /// <summary>An album's artists' keys.</summary>
+    public IReadOnlyList<string> Artists { get; init; } = [];
+}

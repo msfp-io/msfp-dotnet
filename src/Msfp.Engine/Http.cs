@@ -29,8 +29,8 @@ public sealed class MsfpRequest
     public required Stream Body { get; init; }
 
     /// <summary>
-    /// The client's network address, for the limits by address (core
-    /// section 8.3); behind a trusted proxy, the client's own. Null when
+    /// The client's network address, for the limits by address (MSFP
+    /// core section 8.3); behind a trusted proxy, the client's own. Null when
     /// unknown: then all such requests share one limit.
     /// </summary>
     public IPAddress? ClientAddress { get; init; }
@@ -43,7 +43,7 @@ public sealed class MsfpRequest
 /// </summary>
 public sealed class MsfpResponse
 {
-    /// <summary>The default unsigned 404 body: MSFP's problem document (core section 3).</summary>
+    /// <summary>The default unsigned 404 body: MSFP's problem document (MSFP core section 3).</summary>
     public static ReadOnlyMemory<byte> PlainNotFoundBody { get; } = "{\"type\":\"not-found\",\"title\":\"Not found\",\"status\":404}\n"u8.ToArray();
 
     /// <summary>The HTTP status.</summary>

@@ -3,7 +3,7 @@ using System.Net;
 namespace Msfp;
 
 /// <summary>
-/// The limits on calls here (core section 8.3): token buckets per network
+/// The limits on calls here (MSFP core section 8.3): token buckets per network
 /// address (before any signature), per peer and in all, play's own per
 /// peer, and requests at once per peer and in all, with queues.
 /// </summary>

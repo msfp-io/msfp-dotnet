@@ -4,8 +4,8 @@ using System.Net.Sockets;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// The addresses a server never connects to for a peer (core section
-/// 3.3): every address it dials comes from a peer, so those that point
+/// The addresses a server never connects to for a peer (MSFP
+/// core section 3.3): every address it dials comes from a peer, so those that point
 /// back into this machine or its cloud are refused.
 /// </summary>
 public static class Destinations

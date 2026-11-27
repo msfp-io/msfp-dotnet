@@ -3,7 +3,7 @@ using Msfp.Protocol;
 
 namespace Msfp;
 
-// Changes of address (core section 13), this server's and its peers'.
+// Changes of address (MSFP core section 13), this server's and its peers'.
 //
 // This server moves when the host gives it another address
 // (SetAddressAsync, or OpenAsync with another MsfpConfig.Address), and when
@@ -29,8 +29,8 @@ namespace Msfp;
 // calls it.
 public sealed partial class MsfpEngine
 {
-    // When a peer that hasn't moved to our new address is pointed out (core
-    // section 13.1: "after some days").
+    // When a peer that hasn't moved to our new address is pointed out (MSFP
+    // core section 13.1: "after some days").
     internal static readonly TimeSpan MoveLate = TimeSpan.FromDays(3);
 
     // The least time between two hellos announcing our address to a peer
@@ -48,12 +48,12 @@ public sealed partial class MsfpEngine
     private string _configured = "";
 
     // Whether this server says it can't be called: its address named is of
-    // the .invalid form (core section 7.5). After it turns the setting off,
+    // the .invalid form (MSFP core section 7.5). After it turns the setting off,
     // it still says so until its real address is reached.
     internal bool SaysUncallable() => Uncallables.Valid(Named());
 
-    // The host of this server's former address while it is accepted (core
-    // section 13.1, step 1): during a move, for 30 days once announced (and
+    // The host of this server's former address while it is accepted (MSFP
+    // core section 13.1, step 1): during a move, for 30 days once announced (and
     // until it is), never for one of the .invalid form; null otherwise.
     internal string? FormerHost()
     {
@@ -69,7 +69,7 @@ public sealed partial class MsfpEngine
 
     /// <summary>
     /// The host's address changing (its settings, a new name or port): this
-    /// server moves there (core section 13.1). It tries the new address at
+    /// server moves there (MSFP core section 13.1). It tries the new address at
     /// once; once it reaches itself there, every peer is told, and requests
     /// signed for the former address are still accepted for 30 days or until
     /// every peer moved. While this server can't be called, the address is
@@ -154,7 +154,7 @@ public sealed partial class MsfpEngine
 
         // From the .invalid form, the move lasts until the real address is
         // reached, whoever has moved: until then this server still says it
-        // can't be called (core section 7.5, "Turning it off").
+        // can't be called (MSFP core section 7.5, "Turning it off").
         var peers = await tx.PeersAsync().ConfigureAwait(false);
         if (NotMovedCount(peers, Address.Host(to)) > 0 || Uncallables.Valid(from))
         {
@@ -169,7 +169,7 @@ public sealed partial class MsfpEngine
 
     // Whether p counts among the peers that must move to our address of
     // host: it isn't gone, and its requests weren't last signed for host
-    // (core section 13.1, step 1).
+    // (MSFP core section 13.1, step 1).
     internal static bool NotMoved(PeerRecord p, string host) => p.State != PeerState.Gone && p.OurAddress != host;
 
     private static int NotMovedCount(IEnumerable<PeerRecord> peers, string host) => peers.Count(p => NotMoved(p, host));
@@ -195,8 +195,8 @@ public sealed partial class MsfpEngine
 
     // Tries this server's new address, if that is due, and once it reaches
     // itself there, announces it: the move is noted as reached, and every
-    // peer that can be called is sent a hello naming it, at once (core
-    // section 13.1, step 2). Failing, it tries again after 5 seconds, twice
+    // peer that can be called is sent a hello naming it, at once (MSFP
+    // core section 13.1, step 2). Failing, it tries again after 5 seconds, twice
     // as long each time, every 5 minutes at most.
     private async Task ReachAndAnnounceAsync(CancellationToken ct)
     {
@@ -262,8 +262,8 @@ public sealed partial class MsfpEngine
         {
             if (r.Address == a.Address && !string.IsNullOrEmpty(r.Former) && !r.Reached)
             {
-                // The 30 days of the former address run from now (core
-                // section 13.1, step 1).
+                // The 30 days of the former address run from now (MSFP
+                // core section 13.1, step 1).
                 r.Reached = true;
                 r.MovedAt = NowSecond();
                 reached = true;
@@ -328,7 +328,7 @@ public sealed partial class MsfpEngine
     }
 
     // AnnounceAsync in the background, for p: a peer that hasn't moved, at a
-    // contact (core section 13.1, step 2).
+    // contact (MSFP core section 13.1, step 2).
     private void AnnounceSoon(PeerRecord p)
     {
         if (p.Inbound != Inbound.Yes || p.Suspended is not null || !AnnounceDue(p.Id))
@@ -489,7 +489,7 @@ public sealed partial class MsfpEngine
     private static bool MoveDue(PeerMove m, DateTimeOffset now) => new AddressMove(m.Address, m.Tried, m.FailingSince).Due(now);
 
     // Keeps what a peer's signed hello, request or answer, says of where it
-    // is, after KeepInbound (core sections 7.5 and 13.2): another address
+    // is, after KeepInbound (MSFP core sections 7.5 and 13.2): another address
     // than the one stored is to be confirmed (confirm), or, for a peer that
     // can't be called, stored at once; the stored one again drops a move not
     // confirmed. A peer that says it can be called again is confirmed where
@@ -512,7 +512,7 @@ public sealed partial class MsfpEngine
         if (p.Inbound == Inbound.No)
         {
             // Nothing calls it: nothing to confirm, no former kept, and no
-            // pins of it to drop (core section 13.2).
+            // pins of it to drop (MSFP core section 13.2).
             if (next is null)
             {
                 return ([], false);
@@ -553,8 +553,8 @@ public sealed partial class MsfpEngine
         return ([], p.Suspended is null && MoveDue(p.Move, now));
     }
 
-    // Keeps whether p can be called, as its signed hello says (core section
-    // 7.5). Once it can't, it is never connected to, and a move of it
+    // Keeps whether p can be called, as its signed hello says (MSFP
+    // core section 7.5). Once it can't, it is never connected to, and a move of it
     // waiting is dropped. Once it says it can again, it is "confirming":
     // connected to only after a hello at its address answers under its key
     // (KeepAddress starts that check, ConfirmMoveAsync ends it).
@@ -588,8 +588,8 @@ public sealed partial class MsfpEngine
     // ConfirmMoveAsync in the background.
     private void ConfirmSoon(string id) => Background(ct => ConfirmMoveAsync(id, ct));
 
-    // Confirms peer id's new address, one at a time per peer (core section
-    // 13.2, step 2): its discovery document fetched there, then a hello
+    // Confirms peer id's new address, one at a time per peer (MSFP
+    // core section 13.2, step 2): its discovery document fetched there, then a hello
     // there, signed for its host, as any connection to a peer (refused
     // destinations refused, any certificate accepted). Answered under its
     // key, the new address and base are stored, with the pins that answer
@@ -708,7 +708,7 @@ public sealed partial class MsfpEngine
         }
 
         // A revocation in that answer: suspended, and nothing else of it
-        // kept (core section 12.6).
+        // kept (MSFP core section 12.6).
         if (ans.Pull(p.Key, now).Revocation is not null)
         {
             try
@@ -736,7 +736,7 @@ public sealed partial class MsfpEngine
 
                 // It says it can't be called after all: back to that, its move
                 // dropped, the address it names (of the .invalid form) stored
-                // at once, as any hello of such a peer (core section 7.5).
+                // at once, as any hello of such a peer (MSFP core section 7.5).
                 if (ans.Uncallable)
                 {
                     q.Move = null;
@@ -752,7 +752,7 @@ public sealed partial class MsfpEngine
 
                 // It named yet another address while this one was checked:
                 // this one answered under its key, so it is stored all the same
-                // (core section 13.2, step 4), and the newer one is checked next.
+                // (MSFP core section 13.2, step 4), and the newer one is checked next.
                 superseded = q.Move.Address != m.Address;
                 var from = q.Address;
                 q.Address = m.Address;

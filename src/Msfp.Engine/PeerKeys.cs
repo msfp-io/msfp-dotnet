@@ -4,10 +4,10 @@ using Msfp.Protocol;
 
 namespace Msfp;
 
-/// <summary>The receiving side of key rotation and revocation (core sections 9.3, 9.4, 12.3 and 12.6).</summary>
+/// <summary>The receiving side of key rotation and revocation (MSFP core sections 9.3, 9.4, 12.3 and 12.6).</summary>
 public sealed partial class MsfpEngine
 {
-    /// <summary>How long a peer's previous key is still heard after it rotated (core section 12.4).</summary>
+    /// <summary>How long a peer's previous key is still heard after it rotated (MSFP core section 12.4).</summary>
     internal static readonly TimeSpan PreviousHeard = TimeSpan.FromMinutes(10);
 
     private static byte[] StateBody(string state) => JsonOut.Object(o => o.String("state", state));
@@ -17,7 +17,7 @@ public sealed partial class MsfpEngine
         Old = r.Old, New = r.New, Next = r.Next, Date = r.Date, OldSignature = r.OldSignature, NewSignature = r.NewSignature,
     };
 
-    // rotate: a peer telling it changed its key (core section 9.3).
+    // rotate: a peer telling it changed its key (MSFP core section 9.3).
     private async Task<Answer> RotateAsync(CallRequest req, CancellationToken ct)
     {
         if (req.Peer is not { } p)
@@ -51,8 +51,8 @@ public sealed partial class MsfpEngine
         }
     }
 
-    // Applies a rotation of peer id, its statement checked, as core section
-    // 12.3 says: rotated, pending, or null for refused.
+    // Applies a rotation of peer id, its statement checked, as MSFP
+    // core section 12.3 says: rotated, pending, or null for refused.
     internal async Task<string?> ReceiveRotationAsync(string id, Rotation rot, CancellationToken ct)
     {
         string? state = null;
@@ -131,7 +131,7 @@ public sealed partial class MsfpEngine
         return state;
     }
 
-    // Makes rot.New p's current key (core section 12.3, step 5): its old key
+    // Makes rot.New p's current key (MSFP core section 12.3, step 5): its old key
     // the previous one, heard for 10 minutes unless it was revoked; the
     // statement's commitment its commitment; the statement kept. A
     // suspension lifts; a pending rotation and a refused one are dropped.
@@ -156,7 +156,7 @@ public sealed partial class MsfpEngine
         return events;
     }
 
-    // Whether p may not move to key (core section 12.3, step 1): another
+    // Whether p may not move to key (MSFP core section 12.3, step 1): another
     // peer's key, a forgotten one, or one of p's former keys.
     private static async ValueTask<bool> KeyTakenAsync(IStoreTx tx, PeerRecord p, byte[] key)
     {
@@ -179,7 +179,7 @@ public sealed partial class MsfpEngine
         return (p.Rotations ?? []).Any(r => (r.Old is not null && Keys.Same(r.Old, key)) || (r.New is not null && Keys.Same(r.New, key)));
     }
 
-    // revoke: a peer saying its key is stolen (core sections 9.4 and 12.6).
+    // revoke: a peer saying its key is stolen (MSFP core sections 9.4 and 12.6).
     private async Task<Answer> RevokeAsync(CallRequest req, CancellationToken ct)
     {
         if (req.Peer is not { } p)
@@ -226,8 +226,8 @@ public sealed partial class MsfpEngine
 
     /// <summary>
     /// This server's operator confirming a peer's pending new key, after
-    /// comparing its fingerprint with the other operator (core section
-    /// 12.3, case 4): it becomes the peer's key, and the peer is sent a
+    /// comparing its fingerprint with the other operator (MSFP
+    /// core section 12.3, case 4): it becomes the peer's key, and the peer is sent a
     /// hello at once.
     /// </summary>
     /// <exception cref="MsfpException"><see cref="MsfpError.NotFound"/>, <see cref="MsfpError.Suspended"/>,

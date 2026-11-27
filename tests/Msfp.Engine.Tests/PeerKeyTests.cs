@@ -3,7 +3,7 @@ using Msfp.Protocol;
 
 namespace Msfp.Tests;
 
-/// <summary>A peer's rotations as this server receives them (core section 12.3): committed, refused, pending and confirmed.</summary>
+/// <summary>A peer's rotations as this server receives them (MSFP core section 12.3): committed, refused, pending and confirmed.</summary>
 public sealed class PeerKeyTests
 {
     private static async Task<byte[]> Sealed(TestServer s, Func<ServerRecord, byte[]?> pick, string context)

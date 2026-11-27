@@ -50,8 +50,8 @@ public sealed record ServerRecord
     /// <summary>
     /// A key revoked with no next key, replaced by Current, sealed ("msfp
     /// revoked key"), since <see cref="RevokedAt"/>: kept 30 days for the
-    /// answers to the hellos of the peers whose pairing ended then (MSFP core
-    /// section 12.7, case 2).
+    /// answers to the hellos of the peers whose pairing ended then (MSFP
+    /// core section 12.7, case 2).
     /// </summary>
     [JsonPropertyName("revoked"), OmitEmpty]
     public byte[]? Revoked { get; set; }
@@ -726,7 +726,7 @@ public sealed record Leftover(
 
 /// <summary>
 /// A download kept for its late reports, 30 days after it started (MSFP
-/// playback section 7), so that a restart keeps them. Of a peer's download
+/// Media playing 6), so that a restart keeps them. Of a peer's download
 /// here (<see cref="Viewer"/> false): <see cref="Id"/> is the playback ID
 /// given to the peer, <see cref="Handle"/> the host's, <see cref="LastAt"/>
 /// the at of the latest report kept. Of this server's download on a peer

@@ -17,8 +17,8 @@ namespace Msfp;
 public sealed record MsfpConfig
 {
     /// <summary>
-    /// This server's address, https://host[:port], without a path (MSFP core
-    /// section 5.2). Another than at the last start is a move. While this
+    /// This server's address, https://host[:port], without a path (MSFP
+    /// core section 5.2). Another than at the last start is a move. While this
     /// server can't be called it is kept for when it can again; it may be
     /// empty for a server whose stored record says it can't be called.
     /// </summary>
@@ -53,14 +53,14 @@ public sealed record MsfpConfig
 
     /// <summary>
     /// Serves the discovery document at /.well-known/msfp. Off by default: a
-    /// server that serves it tells anyone it federates (MSFP core sections 11
-    /// and 14).
+    /// server that serves it tells anyone it federates (MSFP
+    /// core sections 11 and 14).
     /// </summary>
     public bool Discovery { get; init; }
 
     /// <summary>
-    /// This server's certificate pins, named in its hellos (MSFP core section
-    /// 3.2). Null, by default: the engine reads them, connecting to its own
+    /// This server's certificate pins, named in its hellos (MSFP
+    /// core section 3.2). Null, by default: the engine reads them, connecting to its own
     /// address as a peer would.
     /// </summary>
     public IReadOnlyList<string>? Pins { get; init; }
@@ -69,8 +69,8 @@ public sealed record MsfpConfig
     public bool AllowLoopback { get; init; }
 
     /// <summary>
-    /// Accepts and makes http pairings, for a host's own tests only (MSFP core
-    /// section 3.1); the engine logs a warning at each start with it on.
+    /// Accepts and makes http pairings, for a host's own tests only (MSFP
+    /// core section 3.1); the engine logs a warning at each start with it on.
     /// </summary>
     public bool PlainHttpForTests { get; init; }
 
@@ -104,7 +104,7 @@ public sealed record MsfpConfig
     /// <summary>
     /// The HTTP handler the engine's calls to peers go through, in place of
     /// its own (which connects through <see cref="Dialer"/>, refuses local
-    /// destinations, checks certificates as core section 3.2 says, never
+    /// destinations, checks certificates as MSFP core section 3.2 says, never
     /// follows redirects, asks no compression and uses no proxy). For tests
     /// and for hosts with a transport of their own, which must keep those
     /// rules. Never disposed by the engine.
@@ -135,7 +135,7 @@ public sealed record MsfpConfig
     public IMedia? Media { get; init; }
 
     /// <summary>
-    /// Re-encodes relayed preview sheets (MSFP video section 7). .NET has no
+    /// Re-encodes relayed preview sheets (MSFP Media video 7). .NET has no
     /// JPEG codec, so there is no default (Go's is JPEGSheets): without one,
     /// this server's copies leave without their previewLayout (it serves no
     /// sheet it can't re-encode), and peers' sheets aren't fetched
@@ -148,25 +148,34 @@ public sealed record MsfpConfig
     public int MaxBitrateKbps { get; init; }
 
     /// <summary>
-    /// What <see cref="Playback"/> makes (MSFP playback section 2.7): the
+    /// What <see cref="Playback"/> makes (MSFP Media playing 2.7): the
     /// codecs it encodes, registry tokens (h264, hevc, av1; aac, ac3, eac3,
     /// opus…), the ranges it makes (sdr, keep), and the codecs each HLS
     /// segment format carries (mp2t, mp4). A peer's transcode to another
     /// codec or range, and a remux or a copied stream a segment format can't
-    /// carry, are refused, 409 delivery-refused. Null, by default: the
+    /// carry, are refused, 409 target-refused. Null, by default: the
     /// baseline's only, h264 and aac, sdr, and <see cref="Encoders.DefaultSegments"/>.
     /// </summary>
     public Encoders? Encoders { get; init; }
 
     /// <summary>
     /// Ends a peer's playback here that lasts longer; 24 hours by default
-    /// (MSFP playback section 6.3).
+    /// (MSFP Media playing 5).
     /// </summary>
     public TimeSpan LongestPlayback { get; init; }
 
     /// <summary>
+    /// How often peers are asked to report progress of their playbacks here,
+    /// in seconds, 45 to 120, sent in play's answer (MSFP Media playing 2.3
+    /// and 3); 60 by default, and for a value out of range. A playback with
+    /// neither a progress nor a media request for twice that long ends (its
+    /// idle limit; never a download's).
+    /// </summary>
+    public int ProgressSeconds { get; init; }
+
+    /// <summary>
     /// How often peers' catalogs are read; 30 minutes by default, the most
-    /// often MSFP catalog section 3.2 suggests.
+    /// often MSFP Media listing 3.2 suggests.
     /// </summary>
     public TimeSpan SyncEvery { get; init; }
 
@@ -180,6 +189,9 @@ public sealed record MsfpConfig
         Sealer = Sealer ?? (Store as ISealerProvider)?.Sealer,
         Encoders = Encoders ?? new Encoders(),
         LongestPlayback = LongestPlayback > TimeSpan.Zero ? LongestPlayback : TimeSpan.FromHours(24),
+        ProgressSeconds = ProgressSeconds is >= Protocol.Playback.MinProgressSeconds and <= Protocol.Playback.MaxProgressSeconds
+            ? ProgressSeconds
+            : Protocol.Playback.DefaultProgressSeconds,
         SyncEvery = SyncEvery > TimeSpan.Zero ? SyncEvery : TimeSpan.FromMinutes(30),
         Limits = (Limits ?? new CallLimits()).WithDefaults(),
     };

@@ -2,12 +2,13 @@ using System.Text.Json.Nodes;
 
 namespace Msfp.Protocol;
 
-// The limits a libraries answer sends (MSFP playback section 5, music
-// section 5.1): what a caller keeps of them, and how an owning server
-// counts a play against them (playback sections 2.2, 6, 7 and 8).
+// The limits a libraries answer sends (MSFP playback section 5, MSFP
+// Media music 5.1): what a caller keeps of them, and how an owning server
+// counts a play against them (MSFP Media playing 2.2 and 6, MSFP playback
+// sections 6 and 8).
 public static partial class Playback
 {
-    /// <summary>The top of streams, transcodes, audioStreams and audioTranscodes (playback section 5).</summary>
+    /// <summary>The top of streams, transcodes, audioStreams and audioTranscodes (MSFP playback section 5).</summary>
     public const int MaxStreams = 1000;
 
     /// <summary>The top of bitrateKbps and downloadKbps.</summary>
@@ -22,26 +23,55 @@ public static partial class Playback
     /// <summary>The top of scansPerDay.</summary>
     public const int MaxScansPerDay = 1_000_000;
 
-    /// <summary>A play or a scan ends without a progress or a media request for that long; never a download (playback section 6.3).</summary>
-    public static readonly TimeSpan IdleEnd = TimeSpan.FromMinutes(2);
+    /// <summary>The least progressSeconds a play answer gives (MSFP Media playing 3).</summary>
+    public const int MinProgressSeconds = 45;
 
-    /// <summary>A download ends that long after its play was answered (playback section 7).</summary>
+    /// <summary>The most progressSeconds a play answer gives (MSFP Media playing 3).</summary>
+    public const int MaxProgressSeconds = 120;
+
+    /// <summary>The interval of progress when a play answer gives none, or one out of range (MSFP Media playing 3).</summary>
+    public const int DefaultProgressSeconds = 60;
+
+    /// <summary>
+    /// The idle limit at the default interval, 2 minutes
+    /// (<see cref="IdleLimit"/> of <see cref="DefaultProgressSeconds"/>).
+    /// </summary>
+    public static readonly TimeSpan IdleEnd = TimeSpan.FromSeconds(2 * DefaultProgressSeconds);
+
+    /// <summary>
+    /// The interval of a playback whose answer gave
+    /// <paramref name="progressSeconds"/> (MSFP Media playing 3): that many
+    /// seconds, <see cref="DefaultProgressSeconds"/> when it is out of 45 to
+    /// 120 (or 0, absent).
+    /// </summary>
+    public static TimeSpan ProgressInterval(int progressSeconds) =>
+        TimeSpan.FromSeconds(progressSeconds is < MinProgressSeconds or > MaxProgressSeconds ? DefaultProgressSeconds : progressSeconds);
+
+    /// <summary>
+    /// The idle limit of a playback whose answer gave
+    /// <paramref name="progressSeconds"/> (MSFP Media playing 3 and 5): twice
+    /// its interval. A play or a scan with neither a progress nor a media
+    /// request for that long ends; never a download.
+    /// </summary>
+    public static TimeSpan IdleLimit(int progressSeconds) => 2 * ProgressInterval(progressSeconds);
+
+    /// <summary>A download ends that long after its play was answered (MSFP Media playing 6).</summary>
     public static readonly TimeSpan DownloadLife = TimeSpan.FromHours(24);
 
-    /// <summary>A scan ends that long after its play was answered (playback section 8).</summary>
+    /// <summary>A scan ends that long after its play was answered (MSFP playback section 8).</summary>
     public static readonly TimeSpan ScanLife = TimeSpan.FromMinutes(10);
 
     /// <summary>A download's progress and stop with at are recorded for that long after its play, even once it has ended.</summary>
     public static readonly TimeSpan LateReports = TimeSpan.FromDays(30);
 
     /// <summary>
-    /// The floor of a scan answer's scanBytes, 4 MiB (playback section 8):
+    /// The floor of a scan answer's scanBytes, 4 MiB (MSFP playback section 8):
     /// what a scan's caller counts on when its answer states none, or one
     /// out of range (<see cref="ScanCapOf"/>).
     /// </summary>
     public const int ScanBytesFloor = 4 << 20;
 
-    /// <summary>The top of a scan answer's scanBytes, 1 GiB (playback section 8).</summary>
+    /// <summary>The top of a scan answer's scanBytes, 1 GiB (MSFP playback section 8).</summary>
     public const int ScanBytesTop = 1 << 30;
 
     /// <summary>The scan cap the implementers' notes suggest to owning servers, 32 MiB.</summary>
@@ -53,7 +83,7 @@ public static partial class Playback
     /// <summary>The span over which a download's speed is measured against downloadKbps.</summary>
     public static readonly TimeSpan DownloadPace = TimeSpan.FromSeconds(10);
 
-    /// <summary>Whether a playback of <paramref name="purpose"/> ends after <see cref="IdleEnd"/> unused: a play's and a scan's, never a download's.</summary>
+    /// <summary>Whether a playback of <paramref name="purpose"/> ends after its idle limit (<see cref="IdleLimit"/>) unused: a play's and a scan's, never a download's.</summary>
     public static bool Idles(string purpose) => purpose != PurposeDownload;
 
     /// <summary>
@@ -79,7 +109,7 @@ public static partial class Playback
 
     /// <summary>
     /// Reads the limits object of a libraries answer as a caller keeps it
-    /// (playback section 5): null, ignored whole, for one that isn't an
+    /// (MSFP playback section 5): null, ignored whole, for one that isn't an
     /// object or one of whose members isn't an integer (null included); a
     /// member out of its range is ignored alone; transcodes above streams is
     /// ignored only when streams is kept, audioTranscodes likewise; unknown
@@ -160,7 +190,7 @@ public static partial class Playback
 }
 
 /// <summary>
-/// The limits object (playback section 5, music section 5.1): playbacks of
+/// The limits object (MSFP playback section 5, MSFP Media music 5.1): playbacks of
 /// purpose play at once, of them transcoded, a bitrate cap (0: none);
 /// downloads at once, a day, their speed cap (0: none); scans a day; with
 /// music, audio playbacks apart. The bytes one scan reads aren't a limit:
@@ -227,7 +257,7 @@ public sealed record PlaybackLimits
     private static PlayRefusal StreamLimit(string why) => new(409, Playback.ProblemStreamLimit, why);
 
     /// <summary>
-    /// Step 2 of playback section 2.2: a 409 stream-limit-reached when the
+    /// Step 2 of MSFP Media playing 2.2: a 409 stream-limit-reached when the
     /// limit of the purpose is 0 (streams for play, downloads for download,
     /// scansPerDay for scan); null otherwise.
     /// </summary>
@@ -240,7 +270,7 @@ public sealed record PlaybackLimits
     };
 
     /// <summary>
-    /// Step 5 of playback section 2.2: a 409 stream-limit-reached when the
+    /// Step 5 of MSFP Media playing 2.2: a 409 stream-limit-reached when the
     /// limits of the purpose are used: for play, the streams all in use; for
     /// download, the downloads all in use or downloadsPerDay reached (0: no
     /// daily cap); for scan, scansPerDay reached. A download or a scan never
@@ -265,8 +295,8 @@ public sealed record PlaybackLimits
     }
 
     /// <summary>
-    /// The transcode a playback that converts needs (playback sections 2.6
-    /// and 7): for a play, one of the pairing's transcodes and one of the
+    /// The transcode a playback that converts needs (MSFP
+    /// Media playing 2.6 and 6): for a play, one of the pairing's transcodes and one of the
     /// server's budget; for a download, one of the server's budget only. A
     /// 503 server-busy without; null with.
     /// </summary>
@@ -282,7 +312,7 @@ public sealed record PlaybackLimits
 }
 
 /// <summary>
-/// What a caller keeps of a peer's limits (playback section 5).
+/// What a caller keeps of a peer's limits (MSFP playback section 5).
 /// Downloads, DownloadsPerDay, DownloadKbps and ScansPerDay are 0 when
 /// absent or out of range: no downloads, no scan access. The Has members
 /// say whether the peer sent Streams, Transcodes, BitrateKbps,
@@ -308,10 +338,10 @@ public sealed record KeptLimits
     /// <summary>Whether audioTranscodes was sent, in range.</summary>
     public bool HasAudioTranscodes { get; init; }
 
-    /// <summary>Whether the caller shows Download for the peer's titles: downloads above 0 (playback section 7).</summary>
+    /// <summary>Whether the caller shows Download for the peer's titles: downloads above 0 (MSFP Media playing 6).</summary>
     public bool OffersDownloads => Limits.Downloads > 0;
 
-    /// <summary>Whether the caller asks the peer for scans: scansPerDay above 0 (playback section 8).</summary>
+    /// <summary>Whether the caller asks the peer for scans: scansPerDay above 0 (MSFP playback section 8).</summary>
     public bool OffersScans => Limits.ScansPerDay > 0;
 }
 
@@ -340,4 +370,28 @@ public readonly record struct LimitUse
 
     /// <summary>Transcodes the server's budget has free.</summary>
     public int ServerTranscodesFree { get; init; }
+
+    /// <summary>
+    /// The use with a live playback of <paramref name="purpose"/> counted as
+    /// ended: the one a play replaces (MSFP Media playing 2.2, step 8; MSFP
+    /// playback section 6). A play frees its stream, and when it holds one
+    /// (<paramref name="transcode"/>) its transcode, the pairing's and the
+    /// server's; a download frees a download, never the day's count; a scan
+    /// frees nothing.
+    /// </summary>
+    public LimitUse Without(string purpose, bool transcode) => purpose switch
+    {
+        Playback.PurposePlay or "" => this with
+        {
+            Streams = Math.Max(Streams - 1, 0),
+            Transcodes = transcode ? Math.Max(Transcodes - 1, 0) : Transcodes,
+            ServerTranscodesFree = transcode ? ServerTranscodesFree + 1 : ServerTranscodesFree,
+        },
+        Playback.PurposeDownload => this with
+        {
+            Downloads = Math.Max(Downloads - 1, 0),
+            ServerTranscodesFree = transcode ? ServerTranscodesFree + 1 : ServerTranscodesFree,
+        },
+        _ => this,
+    };
 }

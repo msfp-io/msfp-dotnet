@@ -10,8 +10,8 @@ public partial class PlaybackVectorTests
 {
     private const string File = "playback.json";
 
-    // Title keys as the vectors write them (video section 4, music section
-    // 2), the kinds play takes, local schemes and extras included.
+    // Title keys as the vectors write them (MSFP Media video 4, MSFP
+    // Media music 2), the kinds play takes, local schemes and extras included.
     private const string PbId = "[1-9][0-9]{0,9}";
     private const string PbOpaque = "[A-Za-z0-9_-]{1,64}";
     private const string PbSeries = "series/(tmdb|tvdb)/" + PbId + "|series/local/" + PbOpaque;
@@ -125,7 +125,9 @@ public partial class PlaybackVectorTests
     private static JsonObject Play(JsonObject ctx, JsonObject c)
     {
         var lim = LimitsOf((c["limits"] ?? ctx["limits"])!.AsObject());
-        var use = UseOf((c["inUse"] ?? ctx["inUse"])!.AsObject());
+        var inUse = (c["inUse"] ?? ctx["inUse"])!.AsObject();
+        var use = UseOf(inUse);
+        var progress = Int(c["progressSeconds"] ?? ctx["progressSeconds"]);
         var entry = c["entry"] is not null;
 
         // 1.
@@ -139,7 +141,24 @@ public partial class PlaybackVectorTests
             throw open;
         }
 
+        // The playback it replaces, one of the caller's live ones: counted as
+        // ended. Any other replaces is ignored.
+        var replaced = "";
+        foreach (var l in inUse["live"]?.AsArray().Select(e => e!.AsObject()) ?? [])
+        {
+            if (r.Replaces.Length > 0 && l.Str("id") == r.Replaces)
+            {
+                use = use.Without(l.Str("purpose"), l["transcode"]?.GetValue<bool>() ?? false);
+                replaced = r.Replaces;
+            }
+        }
+
         // 3, 4.
+        if (Strings(ctx["gone"]).Contains(r.Title))
+        {
+            throw new PlayRefusal(404, Playback.ProblemGone, "no longer held");
+        }
+
         var copies = ctx["copies"]![r.Title]?.AsArray().Select(e => CopyOf(e!.AsObject())).ToList() ?? [];
         var i = Playback.ChooseCopy(copies, r.VersionId);
         if (i < 0)
@@ -182,6 +201,11 @@ public partial class PlaybackVectorTests
             transcodes = r.Purpose == Playback.PurposeDownload ? "server" : "pairing and server";
         }
 
+        if (Strings(ctx["unreachable"]).Contains(r.Title))
+        {
+            throw new PlayRefusal(503, Playback.ProblemUnreachable, "its media can't be reached");
+        }
+
         var o = new JsonObject
         {
             ["title"] = r.Title,
@@ -195,7 +219,9 @@ public partial class PlaybackVectorTests
             ["bitrateCapKbps"] = cap,
             ["transcodes"] = transcodes,
             ["ticketSeconds"] = (long)Playback.Life(r.Purpose).TotalSeconds,
-            ["idleSeconds"] = !entry && Playback.Idles(r.Purpose) ? (long)Playback.IdleEnd.TotalSeconds : 0,
+            ["idleSeconds"] = !entry && Playback.Idles(r.Purpose) ? (long)Playback.IdleLimit(progress).TotalSeconds : 0,
+            ["progressSeconds"] = !entry && r.Purpose != Playback.PurposeDownload ? (long)Playback.ProgressInterval(progress).TotalSeconds : 0,
+            ["replaces"] = replaced,
         };
         if (r.Delivery.Length == 0)
         {
@@ -248,6 +274,7 @@ public partial class PlaybackVectorTests
         {
             out_["title"] = o.Title;
             out_["at"] = o.At.ToUnixTimeSeconds();
+            out_["paused"] = o.Paused;
             if (o.HasPosition)
             {
                 out_["positionMs"] = o.PositionMs;
@@ -262,15 +289,18 @@ public partial class PlaybackVectorTests
     {
         var v = TestVectors.Load(File);
         int N(string s) => v[s]!.AsArray().Count;
-        Assert.Equal(95 + 107 + 21 + 21 + 36 + 19, N("requests") + N("deliveries") + N("baseline") + N("queueEntries") + N("downloads") + N("scans"));
-        Assert.Equal(57, N("reports"));
-        Assert.Equal(79, N("answers"));
-        Assert.Equal(17, N("restarts"));
+        Assert.Equal(108 + 20 + 107 + 21 + 21 + 36 + 19,
+            N("requests") + N("replaces") + N("deliveries") + N("baseline") + N("queueEntries") + N("downloads") + N("scans"));
+        Assert.Equal(61, N("reports"));
+        Assert.Equal(86, N("answers"));
+        Assert.Equal(19, N("restarts"));
         Assert.Equal(21, N("limits"));
+        Assert.Equal(35, N("refusals"));
     }
 
     [Theory]
     [InlineData("requests")]
+    [InlineData("replaces")]
     [InlineData("deliveries")]
     [InlineData("baseline")]
     [InlineData("queueEntries")]
@@ -348,7 +378,30 @@ public partial class PlaybackVectorTests
         .String("audioTrack", a.AudioTrack).Bool("audioRenditions", a.AudioRenditions)
         .Integer("maxBitrateKbps", a.MaxBitrateKbps).Integer("scanBytes", a.ScanBytes)
         .Objects("subtitles", a.Subtitles.Count > 0 ? a.Subtitles : null, (o, s) => o.String("id", s.Id).String("form", s.Form).Bool("ass", s.Ass))
-        .Integer("fontCount", a.FontCount).Strings("urls", a.Urls(root)).Bool("readTitleAgain", a.ReadTitleAgain));
+        .Integer("fontCount", a.FontCount).Strings("urls", a.Urls(root)).Bool("readTitleAgain", a.ReadTitleAgain)
+        .Integer("progressSeconds", a.ProgressSeconds));
+
+    // The caller's reading of a play refusal (MSFP Media playing 2.5, base 4).
+    [Fact]
+    public void Refusals()
+    {
+        var cases = TestVectors.Cases(File, "refusals");
+        var failures = new List<string>();
+        foreach (var c in cases)
+        {
+            var r = Problems.ReadPlayRefusal(c["status"]!.GetValue<int>(), c["signed"]!.GetValue<bool>(), Encoding.UTF8.GetBytes(c.Str("body")),
+                c.Str("purpose"));
+            var got = Canon(Node(w => w.String("tells", r.Tells).Bool("dropTitle", r.DropTitle).Integer("retryAfter", r.RetryAfter)
+                .Objects("instead", r.Instead.Count > 0 ? r.Instead : null, (o, i) => o.String("delivery", i.Delivery)
+                    .String("mediaType", i.MediaType.Length > 0 ? i.MediaType : null).Object("transcode", i.Transcode is { } t ? t.Write : null))));
+            if (got != Canon(c.Str("output")))
+            {
+                failures.Add($"{c.Str("name")}: got {got}");
+            }
+        }
+
+        TestVectors.NoFailures(failures, cases.Count, "refusals");
+    }
 
     [Fact]
     public void Restarts()
@@ -456,7 +509,7 @@ public partial class PlaybackVectorTests
         var dash = Playback.ReadPlay("""{"title":"movie/tmdb/949","delivery":"dash"}"""u8);
         Assert.Equal(409, Playback.RefuseDelivery(dash, copy, "", 0)?.Status);
         var mkv = Playback.ReadPlay("""{"title":"movie/tmdb/949","delivery":"remux","mediaType":"video/matroska"}"""u8);
-        Assert.Equal(Playback.ProblemDeliveryRefused, Playback.RefuseDelivery(mkv, copy, "", 0)?.Problem);
+        Assert.Equal(Playback.ProblemTargetRefused, Playback.RefuseDelivery(mkv, copy, "", 0)?.Problem);
         Assert.Equal(400, Assert.Throws<PlayRefusal>(() => Playback.ReadPlay("""{"title":"movie/tmdb/949","delivery":"File"}"""u8)).Status);
         Assert.Equal(400, Assert.Throws<PlayRefusal>(() =>
             Playback.ReadPlay("""{"title":"movie/tmdb/949","delivery":"remux","mediaType":"video/MP4"}"""u8)).Status);

@@ -1,7 +1,7 @@
 namespace Msfp.Protocol;
 
-// progress and stop (MSFP playback sections 3, 4, 6.1 and 7, music
-// section 5.2): how an owning server reads them, and what they do to the
+// progress and stop (MSFP Media playing 3, 4, 5 and 6, MSFP
+// Media music 5.2): how an owning server reads them, and what they do to the
 // playback they name.
 public static partial class Playback
 {
@@ -11,13 +11,16 @@ public static partial class Playback
     /// <summary>The call stop.</summary>
     public const string CallStop = "stop";
 
-    /// <summary>How long before the owning server's clock a report's at may be (playback section 3).</summary>
+    /// <summary>How long before the owning server's clock a report's at may be (MSFP Media playing 3).</summary>
     public static readonly TimeSpan AtBefore = TimeSpan.FromDays(30);
 
     /// <summary>How long after the owning server's clock a report's at may be.</summary>
     public static readonly TimeSpan AtAfter = TimeSpan.FromMinutes(5);
 
     private static readonly string[] ReportMembers = ["id", "positionMs", "at", "title"];
+
+    // progress knows paused too (MSFP Media playing 3); stop doesn't.
+    private static readonly string[] ProgressMembers = ["id", "positionMs", "at", "title", "paused"];
 
     /// <summary>
     /// Reads a progress or a stop (<paramref name="call"/>) at
@@ -26,14 +29,15 @@ public static partial class Playback
     /// that isn't a playback ID, positionMs out of 0 to
     /// <see cref="MaxPositionMs"/>, at not an integer
     /// from now − <see cref="AtBefore"/> to now + <see cref="AtAfter"/> (Unix
-    /// seconds), a title that isn't a string. Whether title is the
+    /// seconds), a title that isn't a string, and for progress a paused
+    /// that isn't a boolean (MSFP Media playing 3). Whether title is the
     /// playback's is <see cref="PlaybackState.Apply"/>'s. Unknown members
-    /// (paused, which proposal 17 dropped, among them) are ignored.
+    /// (paused in a stop among them) are ignored.
     /// </summary>
     /// <exception cref="PlayRefusal">The report is refused (400 invalid-request).</exception>
     public static PlayReport ReadReport(string call, ReadOnlySpan<byte> body, DateTimeOffset now)
     {
-        var o = RequestObject(body, ReportMembers);
+        var o = RequestObject(body, call == CallProgress ? ProgressMembers : ReportMembers);
         string? id;
         try
         {
@@ -74,10 +78,11 @@ public static partial class Playback
             AtSaid = atSaid,
             Title = Text(o, "title") ?? "",
             TitleSaid = o.ContainsKey("title"),
+            Paused = call == CallProgress && (Boolean(o, "paused") ?? false),
         };
     }
 
-    /// <summary>A playback given and not yet used (playback section 6.1).</summary>
+    /// <summary>A playback given and not yet used (MSFP Media playing 5).</summary>
     public const string StateStarted = "started";
 
     /// <summary>A playback in use.</summary>
@@ -125,11 +130,14 @@ public sealed record PlayReport
 
     /// <summary>Whether the request said title: an empty one is a title neither the playback's nor of its queue (400).</summary>
     public bool TitleSaid { get; init; }
+
+    /// <summary>A progress's: the viewer has paused (MSFP Media playing 3); false while playing, and for a stop.</summary>
+    public bool Paused { get; init; }
 }
 
 /// <summary>
-/// The playback a report names, as the owning server holds it (playback
-/// section 6.1): its state (<see cref="Playback.StateStarted"/>,
+/// The playback a report names, as the owning server holds it (MSFP
+/// Media playing 5): its state (<see cref="Playback.StateStarted"/>,
 /// <see cref="Playback.StateActive"/>, <see cref="Playback.StateEnded"/>;
 /// any other is a playback of another pairing, or one never given), its
 /// purpose, title and music queue, when its play was answered, and the at
@@ -161,7 +169,7 @@ public sealed record PlaybackState
     /// <summary>
     /// What report <paramref name="r"/> (of <paramref name="call"/>, read by
     /// <see cref="Playback.ReadReport"/>) does to the playback at
-    /// <paramref name="now"/> (playback sections 3, 4, 6.1 and 7). A playback
+    /// <paramref name="now"/> (MSFP Media playing 3, 4, 5 and 6). A playback
     /// of another pairing, or unknown: 410 playback-stopped to progress,
     /// unchanged to stop. A title neither the playback's nor of its queue:
     /// 400. An ended playback: 410 to progress, unchanged to stop, except a
@@ -191,7 +199,7 @@ public sealed record PlaybackState
             throw Playback.BadPlay("title is neither the playback's nor of its queue");
         }
 
-        var kept = new ReportOutcome { Title = title, PositionMs = r.PositionMs, HasPosition = r.HasPosition, At = r.At };
+        var kept = new ReportOutcome { Title = title, PositionMs = r.PositionMs, HasPosition = r.HasPosition, At = r.At, Paused = r.Paused };
         var older = LastAt is { } last && r.At < last;
         if (!Live)
         {
@@ -247,4 +255,7 @@ public sealed record ReportOutcome
 
     /// <summary>The time kept.</summary>
     public DateTimeOffset At { get; init; }
+
+    /// <summary>Whether the viewer had paused, as kept.</summary>
+    public bool Paused { get; init; }
 }

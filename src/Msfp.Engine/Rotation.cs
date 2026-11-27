@@ -3,10 +3,10 @@ using Msfp.Protocol;
 
 namespace Msfp;
 
-/// <summary>The rotating side, toward each peer (core sections 12.4 and 12.7).</summary>
+/// <summary>The rotating side, toward each peer (MSFP core sections 12.4 and 12.7).</summary>
 public sealed partial class MsfpEngine
 {
-    /// <summary>How long a change of key lasts at most: the old key is kept 30 days (core section 18, point 5).</summary>
+    /// <summary>How long a change of key lasts at most: the old key is kept 30 days (MSFP core section 18, point 5).</summary>
     internal static readonly TimeSpan KeyOverlap = TimeSpan.FromDays(30);
 
     // How often, at most, a peer on our old key is sent a rotate at contact;
@@ -22,7 +22,7 @@ public sealed partial class MsfpEngine
     /// given back. Every peer that can be called is sent a rotate at once;
     /// the call returns when each has answered or failed. A change still
     /// under way is finished first: peers that hadn't moved from the key
-    /// before must pair again (core section 12.4).
+    /// before must pair again (MSFP core section 12.4).
     /// </summary>
     /// <exception cref="MsfpException"><see cref="MsfpError.NoNextKey"/>, <see cref="MsfpError.NotNextKey"/>,
     /// <see cref="MsfpError.RotationUnderWay"/> (another key action is running now).</exception>
@@ -47,7 +47,7 @@ public sealed partial class MsfpEngine
     }
 
     /// <summary>
-    /// This server's operator saying its key was stolen (core section 12.7):
+    /// This server's operator saying its key was stolen (MSFP core section 12.7):
     /// the key is revoked, every peer that can be called is sent a revoke
     /// and suspends it; then the server rotates to its next key in the same
     /// action (the seed on the server, or the exported text given back), and
@@ -211,7 +211,7 @@ public sealed partial class MsfpEngine
     }
 
     // Gives this server a new key and a new next key, with no rotation,
-    // after stolen was revoked with no next key (core section 12.7, case
+    // after stolen was revoked with no next key (MSFP core section 12.7, case
     // 2), in one Update: every peer deleted, each key of its history
     // forgotten as ended by this replacement (ForgottenKey.Revoked, at
     // RevokedAt), the revoked key kept for its 30 days of answers.
@@ -252,7 +252,7 @@ public sealed partial class MsfpEngine
     }
 
     // The answer, for the 30 days after this server's key was revoked with
-    // no next key (core section 12.7, case 2), to a hello from a peer whose
+    // no next key (MSFP core section 12.7, case 2), to a hello from a peer whose
     // pairing ended in that replacement: a 200 signed with the key
     // revoked, carrying only the revocation, newly dated; null for any
     // other call or caller. Replaced says the caller's pairing ended in a
@@ -496,7 +496,7 @@ public sealed partial class MsfpEngine
     }
 
     // Deletes the old key in r, and marks lost, in tx, the peers still on
-    // it: they must pair again (core section 12.4).
+    // it: they must pair again (MSFP core section 12.4).
     private static async Task<List<MsfpEvent>> EndRotationAsync(IStoreTx tx, ServerRecord r)
     {
         r.Old = null;
@@ -551,7 +551,7 @@ public sealed partial class MsfpEngine
     }
 
     // A contact with p, a peer on our old key: a rotate sent first, unless
-    // one went within the spacing (core section 12.4).
+    // one went within the spacing (MSFP core section 12.4).
     private async Task<PeerRecord> RotateAtContactAsync(PeerRecord p, CancellationToken ct, bool background = false)
     {
         var spacing = p.RotationAnswer == Rotations.StatePending ? RotatePendingSpacing : RotateSpacing;

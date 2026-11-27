@@ -756,7 +756,7 @@ public sealed class GroupState
         }
     }
 
-    // rotated (section 3.3): the statement verifies as core section 12.2
+    // rotated (section 3.3): the statement verifies as MSFP core section 12.2
     // says, from the member's current key to the signer; when its profile
     // holds a commitment, the new key matches it.
     private string? ApplyRotated(GroupEvent ev)
@@ -803,7 +803,7 @@ public sealed class GroupState
         return null;
     }
 
-    // A rotation statement that verifies as core section 12.2 says: its new
+    // A rotation statement that verifies as MSFP core section 12.2 says: its new
     // key and next commitment; null when it doesn't.
     private static (byte[] NewKey, byte[]? Commitment)? VerifiedRotation(JsonObject st)
     {
@@ -822,7 +822,7 @@ public sealed class GroupState
         return Ed25519Strict.Verify(old, msg, os) && Ed25519Strict.Verify(nu, msg, ns) ? (nu, commitment) : null;
     }
 
-    // revoked (section 3.3): the statement verifies as core section 12.6
+    // revoked (section 3.3): the statement verifies as MSFP core section 12.6
     // says, and its key is one of the member's; the member's events signed
     // with the revoked key after lastSeq don't count. With two, the lower
     // lastSeq holds.

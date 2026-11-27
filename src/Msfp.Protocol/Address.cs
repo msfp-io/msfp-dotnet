@@ -4,13 +4,13 @@ using System.Text.RegularExpressions;
 
 namespace Msfp.Protocol;
 
-/// <summary>Servers' addresses (core section 5.2) and their changes (core section 13).</summary>
+/// <summary>Servers' addresses (MSFP core section 5.2) and their changes (MSFP core section 13).</summary>
 public static partial class Address
 {
     /// <summary>The longest address, in bytes.</summary>
     public const int MaxLength = 512;
 
-    /// <summary>How long a server that moved still accepts requests signed for its former host (core section 13.1): 30 days.</summary>
+    /// <summary>How long a server that moved still accepts requests signed for its former host (MSFP core section 13.1): 30 days.</summary>
     public static readonly TimeSpan Overlap = TimeSpan.FromDays(30);
 
     /// <summary>How often, at most, a peer calls an announced address again after a confirming hello failed (section 13.2).</summary>
@@ -23,7 +23,7 @@ public static partial class Address
 
     /// <summary>
     /// Lets addresses be plain http, as MSFP allows an implementation's
-    /// tests to (core section 3.1): outside the protocol, never for
+    /// tests to (MSFP core section 3.1): outside the protocol, never for
     /// servers in use. Off by default; process-wide.
     /// </summary>
     public static void AllowPlainHttpForTests(bool on) => s_plainHttp = on;
@@ -38,7 +38,7 @@ public static partial class Address
     private static partial Regex PortRe();
 
     /// <summary>
-    /// Accepts a server's address in MSFP's one form (core section 5.2):
+    /// Accepts a server's address in MSFP's one form (MSFP core section 5.2):
     /// "https" in lower case, "://", a host, an optional port, and nothing
     /// after (no path, not even "/", no "?", "#" or "@"); at most 512 bytes.
     /// The host is a name (labels of a-z 0-9 -, 1 to 63 characters, not
@@ -239,7 +239,7 @@ public static partial class Address
 
     /// <summary>
     /// An address's host, with its port if it has one: what requests for
-    /// that server are signed for (core section 6.2). "" for an address that
+    /// that server are signed for (MSFP core section 6.2). "" for an address that
     /// doesn't read as one.
     /// </summary>
     public static string Host(string address)
@@ -258,7 +258,7 @@ public static partial class Address
 
     /// <summary>
     /// Reads the address a signed hello, request or answer names for its
-    /// sender, against the one stored for it (core section 13.2, step 1):
+    /// sender, against the one stored for it (MSFP core section 13.2, step 1):
     /// null when it names none, or the one stored; otherwise the address
     /// to confirm.
     /// </summary>
@@ -276,7 +276,7 @@ public static partial class Address
 }
 
 /// <summary>
-/// A peer's announced address, not confirmed yet (core section 13.2):
+/// A peer's announced address, not confirmed yet (MSFP core section 13.2):
 /// until a hello there is answered under its key, the stored address stays.
 /// </summary>
 /// <param name="Address">The address announced.</param>

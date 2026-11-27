@@ -10,7 +10,7 @@ namespace Msfp.Protocol.Tests;
 /// </summary>
 public class CatalogTests
 {
-    private const int CoreAnswer = 4 << 20; // the core's bound of an answer (core section 3)
+    private const int CoreAnswer = 4 << 20; // the core's bound of an answer (MSFP core section 3)
 
     [Fact]
     public void PageVectors()
@@ -218,7 +218,7 @@ public class CatalogTests
         TestVectors.NoFailures(failures, cases.Count, "strict.json languageCodes as valid tags");
     }
 
-    // The token of core section 8.5, and the open values a fact keeps.
+    // The token of MSFP Media base 3, and the open values a fact keeps.
     [Fact]
     public void Tokens()
     {

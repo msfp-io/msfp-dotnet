@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// Signed requests and answers (core section 6). Every request between
+/// Signed requests and answers (MSFP core section 6). Every request between
 /// paired servers carries four headers: <see cref="HeaderKey"/> (the
 /// sender's public key), <see cref="HeaderDate"/> (Unix seconds),
 /// <see cref="HeaderNonce"/> (16 random bytes, never used twice) and
@@ -34,11 +34,11 @@ public static partial class Signing
     public static readonly TimeSpan MaxSkew = TimeSpan.FromMinutes(5);
 
     // The signature headers of MSFP's first test version: a request that
-    // carries one of them is refused (core section 6.1).
+    // carries one of them is refused (MSFP core section 6.1).
     private static readonly string[] OldHeaders = ["Overfin-Key", "Overfin-Date", "Overfin-Nonce", "Overfin-Signature"];
 
     // What's signed starts with what it is, so a signature made for one use
-    // never passes for another (core sections 6.2, 6.3 and 9.1).
+    // never passes for another (MSFP core sections 6.2, 6.3 and 9.1).
     private const string RequestLabel = "msfp-0 request\n";
     private const string ResponseLabel = "msfp-0 response\n";
     internal const string PairingLabel = "msfp-0 pairing\n";
@@ -46,7 +46,7 @@ public static partial class Signing
     [GeneratedRegex("^[1-9][0-9]{0,15}\\z")]
     private static partial Regex DateRe();
 
-    /// <summary>Reads an MSFP-Date (core section 2.2): a positive integer in its one form.</summary>
+    /// <summary>Reads an MSFP-Date (MSFP core section 2.2): a positive integer in its one form.</summary>
     public static bool TryParseDate(string text, out long date)
     {
         date = 0;
@@ -56,7 +56,7 @@ public static partial class Signing
 
     /// <summary>
     /// A signature header sent exactly once, its value without a comma
-    /// (core section 2.4); null otherwise.
+    /// (MSFP core section 2.4); null otherwise.
     /// </summary>
     public static string? OneHeader(IHeaderReader headers, string name)
     {
@@ -65,14 +65,14 @@ public static partial class Signing
         return v.Count != 1 || v[0].Contains(',', StringComparison.Ordinal) ? null : v[0];
     }
 
-    /// <summary>The seven lines a request's signature covers (core section 6.2).</summary>
+    /// <summary>The seven lines a request's signature covers (MSFP core section 6.2).</summary>
     public static byte[] RequestMessage(string method, string host, string target, string date, string nonce,
         ReadOnlySpan<byte> body) =>
         Encoding.UTF8.GetBytes(RequestLabel + method + "\n" + host.ToLowerInvariant() + "\n" + target + "\n" + date +
                                "\n" + nonce + "\n" + Convert.ToHexStringLower(SHA256.HashData(body)));
 
     /// <summary>
-    /// The five lines an answer's signature covers (core section 6.3): the
+    /// The five lines an answer's signature covers (MSFP core section 6.3): the
     /// request's nonce, the status, the answer's media type
     /// (<see cref="MediaType"/>) and the body's SHA-256.
     /// </summary>
@@ -81,8 +81,8 @@ public static partial class Signing
                                MediaType(contentType) + "\n" + Convert.ToHexStringLower(SHA256.HashData(body)));
 
     /// <summary>
-    /// A Content-Type header as an answer's signature names it (core
-    /// section 6.3): its type and subtype in lower case, without parameters
+    /// A Content-Type header as an answer's signature names it (MSFP
+    /// core section 6.3): its type and subtype in lower case, without parameters
     /// or white space; "-" when there is none.
     /// </summary>
     public static string MediaType(string? contentType)
@@ -92,8 +92,8 @@ public static partial class Signing
     }
 
     /// <summary>
-    /// Reads an answer's Content-Type as its signature names it (core
-    /// section 6.3): one header or none. None, or an empty one, is "-".
+    /// Reads an answer's Content-Type as its signature names it (MSFP
+    /// core section 6.3): one header or none. None, or an empty one, is "-".
     /// One sent more than once, or whose value doesn't read as
     /// type/subtype (each an RFC 9110 token), fails like a badly signed
     /// answer, so two implementations never read different media types.
@@ -210,7 +210,7 @@ public static partial class Signing
 
     /// <summary>
     /// Proves, without sending it, that the server redeeming a pairing code
-    /// knows the code's secret (core section 9.1): HMAC-SHA-256 bound to
+    /// knows the code's secret (MSFP core section 9.1): HMAC-SHA-256 bound to
     /// the redeeming server's own key and address.
     /// </summary>
     public static string PairingProof(ReadOnlySpan<byte> secret, ReadOnlySpan<byte> redeemer, string address)
@@ -238,7 +238,7 @@ public static partial class Signing
     /// <summary>A pairing code's secret as the redeeming server names it (pair's secretHash): SHA-256 of the secret.</summary>
     public static byte[] SecretHash(ReadOnlySpan<byte> secret) => SHA256.HashData(secret);
 
-    /// <summary>Whether the headers name no content coding other than identity (core section 3).</summary>
+    /// <summary>Whether the headers name no content coding other than identity (MSFP core section 3).</summary>
     public static bool Uncoded(IHeaderReader headers)
     {
         ArgumentNullException.ThrowIfNull(headers);
@@ -296,7 +296,7 @@ public sealed record Verified(byte[] Key, string Nonce, bool Known, bool Former)
 /// <param name="Known">A known server's.</param>
 public readonly record struct Admission(bool Heard, bool Known);
 
-/// <summary>Checks the requests a server receives (core section 6.4).</summary>
+/// <summary>Checks the requests a server receives (MSFP core section 6.4).</summary>
 public sealed class Verifier
 {
     /// <summary>
@@ -307,7 +307,7 @@ public sealed class Verifier
 
     /// <summary>
     /// The host of this server's address before it moved, accepted too while
-    /// the move lasts (core section 13.1), or null/"" once it no longer is.
+    /// the move lasts (MSFP core section 13.1), or null/"" once it no longer is.
     /// </summary>
     public Func<string?>? Former { get; init; }
 
@@ -377,7 +377,7 @@ public sealed class Verifier
         return Remember(key, nonce, former, now, a, () => forgotten);
     }
 
-    // The checks of core section 6.4 up to the signature: the key, the
+    // The checks of MSFP core section 6.4 up to the signature: the key, the
     // nonce and whether it was signed for our former host.
     private (byte[] Key, string Nonce, bool Former) CheckSignature(string method, string target, IHeaderReader headers,
         ReadOnlySpan<byte> body, DateTimeOffset now)
@@ -385,7 +385,7 @@ public sealed class Verifier
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(headers);
         var bad = new ProtocolException(ProtocolError.Signature);
-        // No query (core section 6.4, step 1).
+        // No query (MSFP core section 6.4, step 1).
         if (target.Contains('?', StringComparison.Ordinal))
         {
             throw bad;

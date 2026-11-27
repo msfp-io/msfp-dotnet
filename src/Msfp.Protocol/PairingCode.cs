@@ -5,7 +5,7 @@ using System.Text;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// A pairing code (core section 5.1): what an operator sends another,
+/// A pairing code (MSFP core section 5.1): what an operator sends another,
 /// however they like, to pair their two servers. It carries the address of
 /// this server, its public key, a secret used once, when the code stops
 /// working, and for a group's code the group it invites to (groups section
@@ -33,11 +33,11 @@ public sealed record PairingCode(string Address, byte[] Key, byte[] Secret, Date
     /// <summary>How long a pairing code works by default.</summary>
     public static readonly TimeSpan Lifetime = TimeSpan.FromHours(24);
 
-    /// <summary>How long a pairing code works at most (core section 5.1).</summary>
+    /// <summary>How long a pairing code works at most (MSFP core section 5.1).</summary>
     public static readonly TimeSpan MaxLifetime = TimeSpan.FromDays(30);
 
     // A code's text after its prefix: 73 bytes, a group's 288 at most and
-    // the longest address, in base64url (core section 5.1).
+    // the longest address, in base64url (MSFP core section 5.1).
     private const int MaxText = (((32 + SecretSize + 8 + 1 + GroupIdSize + 1 + 255 + Protocol.Address.MaxLength) * 8) + 5) / 6; // 1,164
 
     /// <summary>The group's ID (32 bytes) for a group's code, null for none.</summary>

@@ -10,9 +10,13 @@ namespace Msfp;
 /// limits; the host plugs in through the interfaces of <see cref="MsfpConfig"/>.
 /// Make one with <see cref="OpenAsync"/>, give peers' requests to
 /// <see cref="HandleFederationAsync"/>, and call its actions from the
-/// operator's panel. It speaks MSFP version 0 as revised by proposals 16 and 17:
-/// still a draft, and one that doesn't pair with the draft before it
-/// (0.7.1-preview and before).
+/// operator's panel. It speaks MSFP version 0 as revised by proposals 16, 17
+/// and 19: still a draft, and one that doesn't pair with the draft before it
+/// (0.7.1-preview and before). MSFP carries MSFP Media version 0
+/// (https://github.com/msfp-io/msfp-media), the language of titles, copies
+/// and playbacks, between servers: the language's rules are cited as MSFP
+/// Media's (base, listing, playing, fetching, video, music), the
+/// federation's as MSFP's.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -21,8 +25,8 @@ namespace Msfp;
 /// order of preference: the file's media type, the MSFP registry's codec
 /// and subtitle tokens, RFC 6381 codecs strings, H.273 colour, exact values,
 /// the layout of its previews), a playback and a media. The engine maps no
-/// names: a value it doesn't know is sent and kept as it is (MSFP core
-/// section 8.5). The owning side chooses nothing: a peer's play plays the
+/// names: a value it doesn't know is sent and kept as it is (MSFP
+/// Media base 3). The owning side chooses nothing: a peer's play plays the
 /// copy and the audio it names, else the first copy and the file's default
 /// audio, and the engine decides what is served for the delivery asked
 /// (<see cref="Served"/>; without one, the defined baseline, each stream
@@ -126,13 +130,13 @@ public sealed partial class MsfpEngine : IDisposable
         }
     }
 
-    /// <summary>A call's time in all (core section 3).</summary>
+    /// <summary>A call's time in all (MSFP core section 3).</summary>
     internal static readonly TimeSpan CallTimeout = TimeSpan.FromSeconds(15);
 
     /// <summary>
     /// Opens the engine on its store: on the very first start it makes this
-    /// server's keys (the current one and the next one it commits to, core
-    /// sections 4 and 12.5) and keeps them sealed. Only
+    /// server's keys (the current one and the next one it commits to, MSFP
+    /// core sections 4 and 12.5) and keeps them sealed. Only
     /// <see cref="MsfpConfig.Address"/> and <see cref="MsfpConfig.Store"/>
     /// are required.
     /// </summary>
@@ -348,11 +352,11 @@ public sealed partial class MsfpEngine : IDisposable
         return CleanName(_cfg.Name?.Invoke() ?? Address.Host(named), named);
     }
 
-    // The longest name, in code points (core section 9.1).
+    // The longest name, in code points (MSFP core section 9.1).
     private const int MaxName = 80;
 
     /// <summary>
-    /// A peer's name, or a code's note, cleaned as core section 9.1 says;
+    /// A peer's name, or a code's note, cleaned as MSFP core section 9.1 says;
     /// an empty one becomes the host of address, with its port.
     /// </summary>
     internal static string CleanName(string? name, string? address)
@@ -406,8 +410,8 @@ public sealed partial class MsfpEngine : IDisposable
 
     // What the engine itself does on an event, before the host is told: a
     // peer no longer paired, or suspended, ends its playbacks both ways
-    // (MSFP playback section 6.3); one that can't be called is fetched from
-    // no more, and what was kept of its titles goes (core section 7.5); a
+    // (MSFP Media playing 5); one that can't be called is fetched from
+    // no more, and what was kept of its titles goes (MSFP core section 7.5); a
     // change of the parts on makes the next reading of our titles a whole one.
     private void React(MsfpEvent e)
     {

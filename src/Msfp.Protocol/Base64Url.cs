@@ -3,7 +3,7 @@ using System.Buffers.Text;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// base64url in MSFP's one form (core section 2.2): RFC 4648 section 5,
+/// base64url in MSFP's one form (MSFP core section 2.2): RFC 4648 section 5,
 /// no padding, no white space, the unused bits of the last character zero,
 /// so that each value has exactly one text.
 /// </summary>

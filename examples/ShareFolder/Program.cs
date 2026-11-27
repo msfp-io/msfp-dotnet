@@ -293,7 +293,7 @@ for (Console.Write("> "); await NextLineAsync() is { } line; Console.Write("> ")
             case "play":
                 var peerAndKey = arg.Split(' ', 2);
                 // No delivery: the baseline, H.264 and AAC in HLS, which a
-                // browser plays (MSFP playback section 2.7). A viewer's server
+                // browser plays (MSFP Media playing 2.7). A viewer's server
                 // that knows its device would choose from the copy's facts.
                 var pb = await engine.PlayAsync(peerAndKey[0], new Msfp.PlayRequest { Title = peerAndKey.Length > 1 ? peerAndKey[1] : "" });
                 watches.Start(pb.Id);
@@ -429,7 +429,7 @@ async Task ShutDownAsync()
 }
 
 // Fetches the seek-bar previews of a peer's title's first copy, sheet by
-// sheet: someone opened it (MSFP video section 5.5).
+// sheet: someone opened it (MSFP Media video 5.5).
 async Task<int> PreviewsOfAsync(string peer, string key)
 {
     Msfp.Title? t = null;
@@ -568,7 +568,7 @@ internal sealed class ConsoleNotifier : INotifier
 
 /// <summary>
 /// The playbacks of peers' titles open here, each reported to its peer until
-/// stopped (MSFP playback section 3): at once, on a pause or a resume, and
+/// stopped (MSFP Media playing 3): at once, on a pause or a resume, and
 /// every minute (the engine sends one report per 45 seconds at most). A real
 /// host reports what its player says; this example has none, so the time
 /// played stands for the position.

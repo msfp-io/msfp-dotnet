@@ -50,7 +50,7 @@ public sealed class DeliveryTests
         Assert.Equal(("file", "direct", "e0", 20L, false), (pb.Protocol, pb.Method, pb.Etag, pb.Size, pb.CopyChanged));
         Assert.Equal((Playback.DeliveryFile, Playback.PurposePlay), (h.Starts()[^1].Delivery, h.Starts()[^1].Purpose));
         // Audio renditions asked: the answer says whether the host made them,
-        // false when it made none (playback section 2.3).
+        // false when it made none (MSFP Media playing 2.3).
         Assert.True((await Play(new PlayRequest { Title = Film, AudioRenditions = true })).AudioRenditions);
         lock (h.Lock)
         {
@@ -73,7 +73,7 @@ public sealed class DeliveryTests
         Assert.Equal(MsfpError.InvalidRequest, await ErrorOf(() => Play(new PlayRequest { Title = Film, Delivery = Playback.DeliveryRemux })));
         pb = await Play(new PlayRequest { Title = Film, Delivery = Playback.DeliveryRemux, MediaType = "video/mp4" });
         Assert.Equal(("remux", "video/mp4", "mp4"), (pb.Method, h.Starts()[^1].MediaType, h.Starts()[^1].Served.Segments));
-        Assert.Equal(MsfpError.DeliveryRefused, await ErrorOf(() => Play(new PlayRequest
+        Assert.Equal(MsfpError.TargetRefused, await ErrorOf(() => Play(new PlayRequest
         {
             Title = Film, Delivery = Playback.DeliveryRemux, MediaType = "video/matroska",
         })));
@@ -87,7 +87,7 @@ public sealed class DeliveryTests
         });
         Assert.Equal(("s0", 720), (h.Starts()[^1].Transcode!.BurnSubtitle, h.Starts()[^1].Transcode!.MaxHeight));
         var before = h.Starts().Count;
-        Assert.Equal(MsfpError.DeliveryRefused, await ErrorOf(() => Play(new PlayRequest
+        Assert.Equal(MsfpError.TargetRefused, await ErrorOf(() => Play(new PlayRequest
         {
             Title = Film, Delivery = Playback.DeliveryTranscode, Transcode = new TranscodeTargets { BurnSubtitle = "s9" },
         })));
@@ -121,8 +121,8 @@ public sealed class DeliveryTests
             Assert.True(await CallAsync(s, "play", body) == 400, body);
         }
 
-        // What it doesn't make, named by a token: 409 delivery-refused (core
-        // section 8.5), before the host is asked.
+        // What it doesn't make, named by a token: 409 delivery-refused or
+        // target-refused (MSFP Media base 3), before the host is asked.
         before = h.Starts().Count;
         foreach (var body in new[]
         {
@@ -137,7 +137,7 @@ public sealed class DeliveryTests
         Assert.Equal(before, h.Starts().Count);
     }
 
-    // The file by byte ranges (media sections 2.1, 2.2 and 3.2), on the
+    // The file by byte ranges (MSFP Media fetching 2.1, 2.2 and 3.2), on the
     // owning side and through the relay.
     [Fact]
     public async Task FileRanges()
@@ -191,7 +191,7 @@ public sealed class DeliveryTests
             ("another etag", (hl, b) => { hl.Set("ETag", "\"e9\""); return b; }),
             ("a weak etag", (hl, b) => { hl.Set("ETag", "W/\"e0\""); return b; }),
             ("another size", (hl, b) => { hl.Set("Content-Range", "bytes 2-5/21"); return b; }),
-            // A 206 that isn't the range asked (media section 2.1, checking a 206).
+            // A 206 that isn't the range asked (MSFP Media fetching 2.1, checking a 206).
             ("another start", (hl, b) => { hl.Set("Content-Range", "bytes 3-6/20"); return b; }),
             ("an end past last", (hl, b) => { hl.Set("Content-Range", "bytes 2-9/20"); return HostKit.Bytes("23456789"); }),
             ("an unknown total", (hl, b) => { hl.Set("Content-Range", "bytes 2-5/*"); return b; }),
@@ -206,7 +206,8 @@ public sealed class DeliveryTests
     }
 
     // A file being read whose playback ended starts again on the same etag,
-    // and only on it (playback section 2.7).
+    // and only on it (MSFP Media playing 2.7); the restart of a live one
+    // replaces it.
     [Fact]
     public async Task Restart()
     {
@@ -225,14 +226,16 @@ public sealed class DeliveryTests
         var stops = s.Exchanges("stop").Count;
         Assert.Equal(MsfpError.CopyChanged, await ErrorOf(() => s.B.Engine.RestartAsync(again)));
         await s.WaitAsync();
-        Assert.Equal(2, s.Exchanges("stop").Count - stops);
+        // The new one's stop only: the live one is replaced.
+        Assert.Equal(1, s.Exchanges("stop").Count - stops);
+        Assert.Contains("\"replaces\":\"play_", s.Exchanges("play")[^1].RequestBody, StringComparison.Ordinal);
         Assert.Empty(s.A.Engine.Playbacks());
         Assert.Equal(MsfpError.InvalidRequest, await ErrorOf(() => s.B.Engine.RestartAsync(new RemotePlayback { Peer = s.OnB, Title = Film, Etag = "e0" })));
     }
 
     // Downloads: only from a peer that allows them, within its limits at
     // once and a day, their ticket without the idle rule, their late
-    // reports after their end (playback section 7).
+    // reports after their end (MSFP Media playing 6).
     [Fact]
     public async Task Downloads()
     {
@@ -343,7 +346,7 @@ public sealed class DeliveryTests
     }
 
     // A download's late reports count after a restart of either side: both
-    // keep it in their stores, 30 days after its play (playback section 7).
+    // keep it in their stores, 30 days after its play (MSFP Media playing 6).
     [Fact]
     public async Task DownloadsAfterRestart()
     {
@@ -399,7 +402,7 @@ public sealed class DeliveryTests
     }
 
     // A scan's cap counts the bytes sent: a read cut short counts only what
-    // went (media section 4.2). Without scanBytes, the cap is the floor,
+    // went (MSFP media section 4.2). Without scanBytes, the cap is the floor,
     // 4 MiB.
     [Fact]
     public async Task ScanCapCountsSent()
@@ -429,8 +432,8 @@ public sealed class DeliveryTests
     }
 
     // Scans: a range of the file only, within the pairing's scanBytes (32 MiB
-    // here) per ticket, announced in limits, cut at the cap, then 416; a day's count; the idle rule (playback section 8, media
-    // section 4.2).
+    // here) per ticket, announced in limits, cut at the cap, then 416; a day's count; the idle rule (MSFP playback section 8, MSFP
+    // media section 4.2).
     [Fact]
     public async Task Scans()
     {
@@ -482,7 +485,7 @@ public sealed class DeliveryTests
 
     // A music play's queue: its entries prepared under one playback, each at
     // its own URL by its place, a place left empty for a track not offered;
-    // the track playing in progress (music section 5.2).
+    // the track playing in progress (MSFP Media music 5.2).
     [Fact]
     public async Task MusicQueue()
     {
@@ -533,8 +536,8 @@ public sealed class DeliveryTests
     }
 
     // previews on demand, under a ticket of their own that is no playback, or
-    // under a playback's; lyrics with none (video sections 5.5 and 5.6, music
-    // section 6).
+    // under a playback's; lyrics with none (MSFP Media video 5.5 and 5.6, MSFP
+    // Media music 6).
     [Fact]
     public async Task PreviewsAndLyrics()
     {
@@ -613,7 +616,7 @@ public sealed class DeliveryTests
     }
 
     // ASS tracks and their fonts, whole text tracks: served from the host,
-    // rebuilt or checked on both sides (video sections 6.3 to 6.6).
+    // rebuilt or checked on both sides (MSFP Media video 6.3 to 6.6).
     [Fact]
     public async Task AssAndFonts()
     {

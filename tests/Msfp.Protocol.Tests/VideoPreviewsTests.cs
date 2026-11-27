@@ -2,7 +2,7 @@ using System.Text;
 
 namespace Msfp.Protocol.Tests;
 
-/// <summary>The previews call (video section 5.6), beyond video.json's cases.</summary>
+/// <summary>The previews call (MSFP Media video 5.6), beyond video.json's cases.</summary>
 public class VideoPreviewsTests
 {
     private const string Root = "https://a.example.org/api/v1/stream/";

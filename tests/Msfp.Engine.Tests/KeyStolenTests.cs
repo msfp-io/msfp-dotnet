@@ -2,7 +2,7 @@ using Msfp.Protocol;
 
 namespace Msfp.Tests;
 
-/// <summary>A key stolen without its next key (core section 12.7, case 2; msfp-go's TestKeyStolenWithoutNext and TestRevokedKeySealedApart).</summary>
+/// <summary>A key stolen without its next key (MSFP core section 12.7, case 2; msfp-go's TestKeyStolenWithoutNext and TestRevokedKeySealedApart).</summary>
 public sealed class KeyStolenTests
 {
     [Fact]

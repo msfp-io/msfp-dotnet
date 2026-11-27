@@ -136,7 +136,7 @@ public sealed class GroupTests
         Assert.NotEmpty(ban.Fingerprint);
 
         // B leaves, asking A to stay linked: the link waits for A's answer
-        // (core section 7.7), and A accepts it.
+        // (MSFP core section 7.7), and A accepts it.
         var aOnB = (await PeerNamedAsync(b, "A"))!.Id;
         await b.Engine.LeaveGroupAsync(g.Id, [aOnB]);
         await SettleAsync(a, b, n);
@@ -191,7 +191,7 @@ public sealed class GroupTests
         var g = await a.Engine.CreateGroupAsync("Family");
         await JoinGroupAsync(a, b, g.Id);
         // A's pushes reach B after its revoke, and before its rotate: B,
-        // holding A suspended, refuses them itself (core section 12.6), as
+        // holding A suspended, refuses them itself (MSFP core section 12.6), as
         // when they race the revoke and rotate calls.
         var revoked = new TaskCompletionSource();
         var refused = 0;

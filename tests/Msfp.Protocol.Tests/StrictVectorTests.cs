@@ -6,8 +6,8 @@ namespace Msfp.Protocol.Tests;
 /// <summary>
 /// wire/vectors_test.go's cases of strict.json in this part: media names
 /// (TestStrictVectors), language codes (TestLanguageCodeVectors),
-/// destinations (core section 3.3), open tokens (core section 8.5) and
-/// libraries' kinds (catalog section 2.2).
+/// destinations (MSFP core section 3.3), open tokens (MSFP Media base 3) and
+/// libraries' kinds (MSFP Media listing 2.2).
 /// </summary>
 public class StrictVectorTests
 {

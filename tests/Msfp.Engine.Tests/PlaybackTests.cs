@@ -93,7 +93,7 @@ public sealed class PlaybackTests
         await s.B.WaitAsync();
         var progress = Assert.Single(s.Exchanges("progress"));
         Assert.Equal(200, progress.Status);
-        Assert.DoesNotContain("paused", progress.RequestBody, StringComparison.Ordinal);
+        Assert.Contains("\"paused\":true", progress.RequestBody, StringComparison.Ordinal);
         var view = Assert.Single(s.A.Engine.Playbacks());
         Assert.Equal(("active", Film), (view.State, view.Title));
         Assert.NotEmpty(view.PeerName);
@@ -126,15 +126,17 @@ public sealed class PlaybackTests
         }
 
         Assert.Equal(404, await CallAsync(s, "play", "{\"title\":\"movie/tmdb/9999999999\"}"));
+        // A capability list: MSFP refuses it (MSFP playback section 2).
+        Assert.Equal(400, await CallAsync(s, "play", "{\"title\":\"movie/tmdb/949\",\"capabilities\":{}}"));
         // Unknown values and members ignored; a track the copy hasn't, as absent.
-        Assert.Equal(200, await CallAsync(s, "play", "{\"title\":\"movie/tmdb/949\",\"capabilities\":{\"containers\":[\"MP4\",\"x\"]},\"audioTrack\":\"a7\",\"other\":1," +
+        Assert.Equal(200, await CallAsync(s, "play", "{\"title\":\"movie/tmdb/949\",\"audioTrack\":\"a7\",\"other\":1," +
             "\"audioLanguage\":\"fr_CA\",\"subtitleTrack\":\"s007\",\"container\":\"x\"}"));
         Assert.Equal("a0", h.Starts()[0].AudioTrack);
         var target = HostKit.StreamPath(s.Exchanges("play")[^1].ResponseBody);
         Assert.DoesNotContain("url", s.Exchanges("play")[^1].ResponseBody, StringComparison.Ordinal);
         var streamBase = target[..^"master.m3u8".Length];
         Assert.Equal(200, await HostKit.GetAsync(s.A, target));
-        // A name no playlist gave yet: not served (media section 1).
+        // A name no playlist gave yet: not served (MSFP Media fetching 1).
         Assert.Equal(404, await HostKit.GetAsync(s.A, streamBase + "seg0.m4s"));
         Assert.Equal(200, await HostKit.GetAsync(s.A, streamBase + "v0.m3u8"));
         var cases = new (string Target, string Method, string[] Headers, int Want)[]
@@ -219,7 +221,7 @@ public sealed class PlaybackTests
         Assert.NotEmpty(h.Stops());
     }
 
-    // Every ending of playback section 6.3, each telling both sides.
+    // Every ending of MSFP Media playing 5, each telling both sides.
     [Fact]
     public async Task PlaybackEndings()
     {
@@ -280,7 +282,7 @@ public sealed class PlaybackTests
     }
 
     // Every fetch of a playlist under one ticket gives the same playlist
-    // (media section 3.1): the first served is kept, whatever the host makes
+    // (MSFP Media fetching 3.1): the first served is kept, whatever the host makes
     // after; an ended ticket's HEAD is 405 still.
     [Fact]
     public async Task PlaylistSameEachFetch()
@@ -302,7 +304,7 @@ public sealed class PlaybackTests
 
     // The owning side re-encodes the host's preview sheets under a
     // playback's ticket: only their pixels leave; one outside the layout,
-    // or not a JPEG, isn't sent (video section 6.2). Without a
+    // or not a JPEG, isn't sent (MSFP Media video 6.2). Without a
     // SheetEncoder, none are offered.
     [Fact]
     public async Task SheetsReencoded()
@@ -492,16 +494,19 @@ public sealed class PlaybackTests
     }
 
     // The viewer's side tells the owning server where its viewer is at the
-    // first report, at once on a pause or a resume, and every 45 seconds
-    // while the host reports, never more often (playback section 3);
-    // nothing once the host stops reporting.
+    // first report, at once on a pause or a resume, and every
+    // progressSeconds the owning server gave (here 45) while the host
+    // reports, never more often (MSFP Media playing 3); nothing once the host
+    // stops reporting. The owning server ends a playback at twice its
+    // interval unused.
     [Fact]
     public async Task ProgressPace()
     {
         var clock = new FakeTime(1800000000);
         var h = HostKit.FilmHost();
-        using var s = await Sharing.StartAsync(h, clock: clock);
+        using var s = await Sharing.StartAsync(h, cfgA: c => c with { ProgressSeconds = 45 }, clock: clock);
         var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film });
+        Assert.Contains("\"progressSeconds\":45", s.Exchanges("play")[^1].ResponseBody, StringComparison.Ordinal);
         async Task<List<long>> Sent()
         {
             await s.WaitAsync();
@@ -535,9 +540,15 @@ public sealed class PlaybackTests
         Assert.Equal([10_000L, 50_000, 51_000, 51_000], await Sent());
         // The host reports no more (the viewer's browser gone): nothing is
         // sent for it.
-        clock.Advance(TimeSpan.FromMinutes(2));
+        clock.Advance(TimeSpan.FromSeconds(80));
         await s.B.Engine.RunOnceAsync();
         Assert.Equal(4, (await Sent()).Count);
+        Assert.Single(s.A.Engine.Playbacks());
+        // 90 seconds unused, twice the interval: the owning server ends it.
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await s.A.Engine.RunOnceAsync();
+        await s.A.WaitAsync();
+        Assert.Empty(s.A.Engine.Playbacks());
     }
 
     // A host ending a peer's playback by its own rules says why: the peer's
@@ -559,7 +570,7 @@ public sealed class PlaybackTests
 
     // Play's errors: what lasts says itself (here, B's key lost toward A,
     // which never moved to it); only no answer, or none signed, is busy now
-    // (playback section 2.5).
+    // (MSFP Media playing 2.5).
     [Fact]
     public async Task PlayErrorsToldApart()
     {
@@ -580,7 +591,7 @@ public sealed class PlaybackTests
     }
 
     // The pairing ending while a playback starts ends it as the pairing's
-    // end, not as a copy no longer shared (playback section 6.3).
+    // end, not as a copy no longer shared (MSFP Media playing 5).
     [Fact]
     public async Task PairingEndsWhilePlayStarts()
     {
@@ -606,8 +617,8 @@ public sealed class PlaybackTests
     // A host's start of another method than the engine decided is the host's
     // failure: without delivery, a copy outside the baseline (here no colour
     // stated, so not known BT.709) must be transcoded; a host that says remux
-    // is stopped, and the peer gets a 500, never the method (playback
-    // sections 2.3, 2.7).
+    // is stopped, and the peer gets a 500, never the method (MSFP
+    // Media playing 2.3 and 2.7).
     [Fact]
     public async Task StartedMethodAsDecided()
     {

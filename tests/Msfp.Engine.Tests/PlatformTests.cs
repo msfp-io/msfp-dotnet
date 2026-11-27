@@ -9,7 +9,7 @@ public sealed class PlatformTests
 {
     private const string Film = "movie/tmdb/949";
 
-    // A copy of several files is never served as file (media section 1):
+    // A copy of several files is never served as file (MSFP Media fetching 1):
     // the host is told its parts, and a file start for it is refused.
     [Fact]
     public async Task SeveralPartsNeverFile()
@@ -34,8 +34,8 @@ public sealed class PlatformTests
         Assert.Equal(1, h.Starts()[^1].Parts);
     }
 
-    // A media server's ISO 639-2 codes go out as ISO 639-1 tags (catalog
-    // section 3), in titles and tracks.
+    // A media server's ISO 639-2 codes go out as ISO 639-1 tags (MSFP
+    // Media listing 3), in titles and tracks.
     [Fact]
     public async Task MediaServerLanguageCodes()
     {
@@ -57,7 +57,7 @@ public sealed class PlatformTests
         Assert.Equal(["en", "fr"], kept.AudioLanguages());
         Assert.Equal(["de", "fr-CA"], kept.SubtitleLanguages());
         var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film, AudioTrack = "a1" });
-        // The first copy, the track named (playback section 2.6).
+        // The first copy, the track named (MSFP Media playing 2.6).
         Assert.Equal(Film + "#0", h.Starts()[0].Copy);
         Assert.Equal(("a1", "fr"), (pb.AudioTrack, kept.Copies![0].AudioTracks[1].Language));
         Assert.Equal(("de", "fr-CA"), (kept.Copies[0].SubtitleTracks[0].Language, kept.Copies[0].SubtitleTracks[1].Language));

@@ -62,7 +62,7 @@ public sealed class RelayTests
         {
             var pb = await S.B.Engine.PlayAsync(S.OnB, new PlayRequest { Title = Film });
             // The playlists first: the owning server serves only the names
-            // they give (media section 1).
+            // they give (MSFP Media fetching 1).
             foreach (var p in new[] { new MediaPath { Kind = MediaKind.Master }, new MediaPath { Kind = MediaKind.Playlist, Name = "v0.m3u8" } })
             {
                 await S.B.Engine.FetchAsync(pb.Id, p, "", new MemorySink());
@@ -157,7 +157,7 @@ public sealed class RelayTests
         });
         Assert.Equal(MsfpError.NotFound, (await FetchAsync(s, pb.Id, seg, "bytes=2-5")).Error);
         // For a segment, unlike the file, an unknown total is fine; and a 200
-        // to a range is the whole segment, accepted (media section 2.1).
+        // to a range is the whole segment, accepted (MSFP Media fetching 2.1).
         x.Set("seg0.m4s", (hl, b) =>
         {
             hl.Set("Content-Range", "bytes 2-5/*");

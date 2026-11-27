@@ -4,7 +4,7 @@ using Org.BouncyCastle.Math.EC.Rfc8032;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// Ed25519 as MSFP's core section 2.1 wants it, stricter than RFC 8032
+/// Ed25519 as MSFP's MSFP core section 2.1 wants it, stricter than RFC 8032
 /// alone: a public key, and a signature's R, must be the one encoding of a
 /// point of the prime-order subgroup, never of small order (the identity
 /// among them), and S must be below L. Under the identity as a key, the
@@ -63,7 +63,7 @@ public static class Ed25519Strict
     }
 
     /// <summary>
-    /// Whether a public key is one MSFP accepts (core section 2.1): 32
+    /// Whether a public key is one MSFP accepts (MSFP core section 2.1): 32
     /// bytes, the canonical encoding of a point of the prime-order
     /// subgroup, not of small order.
     /// </summary>
@@ -91,7 +91,7 @@ public static class Ed25519Strict
     }
 
     /// <summary>
-    /// Checks a signature as core section 2.1 says: a valid key, R a point
+    /// Checks a signature as MSFP core section 2.1 says: a valid key, R a point
     /// of the prime-order subgroup, S below L, then RFC 8032's equation
     /// (with A and R in that subgroup, the cofactored and cofactorless
     /// checks accept the same signatures).

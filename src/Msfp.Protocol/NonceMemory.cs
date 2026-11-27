@@ -3,7 +3,7 @@ namespace Msfp.Protocol;
 /// <summary>
 /// The nonces of the requests accepted within the last 2 × MaxSkew, each
 /// with the key that signed it: any older request is refused by its date
-/// anyway (core section 6.4). Known servers' nonces are kept per key, so
+/// anyway (MSFP core section 6.4). Known servers' nonces are kept per key, so
 /// one server, however fast it asks, never crowds out another; strangers'
 /// (servers pairing, heard while a code is live) in a small memory of
 /// their own.

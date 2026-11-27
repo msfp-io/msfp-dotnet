@@ -4,10 +4,10 @@ namespace Msfp;
 
 /// <summary>
 /// What a server's <see cref="IPlayback"/> makes (<see cref="MsfpConfig.Encoders"/>,
-/// MSFP playback section 2.7): the codecs it encodes, registry tokens, the
+/// MSFP Media playing 2.7): the codecs it encodes, registry tokens, the
 /// ranges it makes, and the codecs each HLS segment format carries. A peer's
 /// transcode to another codec or range, and a remux or a copied stream a
-/// segment format can't carry, are refused, 409 delivery-refused. The
+/// segment format can't carry, are refused, 409 target-refused. The
 /// baseline's, h264 and aac, and the range sdr, are always among them.
 /// </summary>
 public sealed record Encoders
@@ -50,18 +50,18 @@ public sealed record Encoders
     // The refusal of a transcode's codecs not encoded here (the video codec
     // only for a copy with video), as step 7 refuses them; null when they
     // are, or are copy. For a queue entry's own transcode, a codec not made
-    // refuses the request (music section 5.2).
+    // refuses the request (MSFP Media music 5.2).
     internal PlayRefusal? RefuseCodecs(TranscodeTargets t, bool video)
     {
         var m = Makes;
         if (video && t.VideoCodec.Length > 0 && t.VideoCodec != Names.Copy && !m.VideoEncoders!.Contains(t.VideoCodec, StringComparer.Ordinal))
         {
-            return new PlayRefusal(409, Playback.ProblemDeliveryRefused, "a video codec the owning server doesn't encode");
+            return new PlayRefusal(409, Playback.ProblemTargetRefused, "a video codec the source doesn't encode");
         }
 
         if (t.AudioCodec.Length > 0 && t.AudioCodec != Names.Copy && !m.AudioEncoders!.Contains(t.AudioCodec, StringComparer.Ordinal))
         {
-            return new PlayRefusal(409, Playback.ProblemDeliveryRefused, "an audio codec the owning server doesn't encode");
+            return new PlayRefusal(409, Playback.ProblemTargetRefused, "an audio codec the source doesn't encode");
         }
 
         return null;
@@ -69,8 +69,8 @@ public sealed record Encoders
 }
 
 /// <summary>
-/// What the engine has decided a play serves of the copy (MSFP playback
-/// section 2.7): the method; what it serves of the video ("" for a copy with
+/// What the engine has decided a play serves of the copy (MSFP
+/// Media playing 2.7): the method; what it serves of the video ("" for a copy with
 /// no video) and of the audio, <see cref="Names.Copy"/> for a stream left
 /// unchanged, else the codec it becomes; for a transcode, its targets, the
 /// baseline's values for those left out (MaxHeight 0: the copy's own height)
@@ -102,7 +102,7 @@ public sealed record Served
 
 public sealed partial class MsfpEngine
 {
-    // Step 7 of playback section 2.2 for copy c and its audio track audio:
+    // Step 7 of MSFP Media playing 2.2 for copy c and its audio track audio:
     // what is served, or the refusals MSFP names (Playback.RefuseDelivery,
     // against what is made here). Without delivery, the baseline: each stream
     // already within it left unchanged, the others converted to its codecs.

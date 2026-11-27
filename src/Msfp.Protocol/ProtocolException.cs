@@ -3,37 +3,37 @@ namespace Msfp.Protocol;
 /// <summary>What the protocol layer refuses, by kind: the Go toolkit's error values.</summary>
 public enum ProtocolError
 {
-    /// <summary>A body that isn't I-JSON, or doesn't fit (core section 2.3).</summary>
+    /// <summary>A body that isn't I-JSON, or doesn't fit (MSFP Media base 2.2).</summary>
     Json,
 
-    /// <summary>A request or answer whose signature, date, nonce or key is missing or wrong (core section 6).</summary>
+    /// <summary>A request or answer whose signature, date, nonce or key is missing or wrong (MSFP core section 6).</summary>
     Signature,
 
-    /// <summary>A valid request from a server whose pairing with this one ended (core section 7.4).</summary>
+    /// <summary>A valid request from a server whose pairing with this one ended (MSFP core section 7.4).</summary>
     Forgotten,
 
-    /// <summary>Text that isn't a valid pairing code (core section 5.1).</summary>
+    /// <summary>Text that isn't a valid pairing code (MSFP core section 5.1).</summary>
     Code,
 
-    /// <summary>A plain http address: MSFP is HTTPS only (core section 3).</summary>
+    /// <summary>A plain http address: MSFP is HTTPS only (MSFP core section 3).</summary>
     PlainHttp,
 
-    /// <summary>An address not in MSFP's one form (core section 5.2).</summary>
+    /// <summary>An address not in MSFP's one form (MSFP core section 5.2).</summary>
     Address,
 
-    /// <summary>A rotate or revoke body that isn't valid (core sections 9.3 and 9.4).</summary>
+    /// <summary>A rotate or revoke body that isn't valid (MSFP core sections 9.3 and 9.4).</summary>
     Statement,
 
-    /// <summary>An address that isn't one of a server that can't be called, where one must be (core section 5.2).</summary>
+    /// <summary>An address that isn't one of a server that can't be called, where one must be (MSFP core section 5.2).</summary>
     UncallableAddress,
 
-    /// <summary>A peer's certificate neither publicly trusted nor one it named (core section 3.2).</summary>
+    /// <summary>A peer's certificate neither publicly trusted nor one it named (MSFP core section 3.2).</summary>
     UntrustedCertificate,
 
-    /// <summary>A base path not in MSFP's form (core section 15).</summary>
+    /// <summary>A base path not in MSFP's form (MSFP core section 15).</summary>
     Base,
 
-    /// <summary>A playlist outside what MSFP allows (media section 3.1).</summary>
+    /// <summary>A playlist outside what MSFP allows (MSFP Media fetching 3.1).</summary>
     Playlist,
 
     /// <summary>A PGS track that isn't well-formed (video section on PGS).</summary>

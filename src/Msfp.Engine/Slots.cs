@@ -4,7 +4,7 @@ namespace Msfp;
 /// Bounds how many of something run at once, by key (one playback, or one
 /// peer), with a bounded queue: a request waits for a slot only while fewer
 /// than queue others wait, and only for wait; otherwise it is refused at
-/// once (MSFP core section 8.3, items 3 and 5; media section 2.4).
+/// once (MSFP core section 8.3, items 3 and 5; MSFP Media fetching 2.4).
 /// </summary>
 internal sealed class Slots(int size, int queue, TimeSpan wait)
 {

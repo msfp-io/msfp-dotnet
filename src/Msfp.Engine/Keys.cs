@@ -51,8 +51,8 @@ public sealed partial class MsfpEngine
     }
 
     // The address this server names, in its hellos, codes and pair
-    // requests: its former one while its new one isn't reached yet (core
-    // section 13.1, step 2).
+    // requests: its former one while its new one isn't reached yet (MSFP
+    // core section 13.1, step 2).
     internal string Named() => Named(OurAddress());
 
     private static string Named(AddressState a) => !string.IsNullOrEmpty(a.Former) && !a.Reached ? a.Former : a.Address;
@@ -61,7 +61,7 @@ public sealed partial class MsfpEngine
 
     // Reads this server's keys, making them on the very first start, and
     // notes the configured address: a different one than noted last starts
-    // a move (core section 13.1), announced once this server reaches itself
+    // a move (MSFP core section 13.1), announced once this server reaches itself
     // there (RunAsync checks it at once). While this server can't be
     // called, it stays at its address of the .invalid form.
     private async Task LoadKeysAsync(CancellationToken ct)
@@ -179,8 +179,8 @@ public sealed partial class MsfpEngine
     }
 
     /// <summary>
-    /// The committed next key's fingerprint (made from its commitment, core
-    /// section 4.2), and whether its seed is still on this server.
+    /// The committed next key's fingerprint (made from its commitment, MSFP
+    /// core section 4.2), and whether its seed is still on this server.
     /// </summary>
     public async Task<(string Fingerprint, bool OnServer)> NextKeyAsync(CancellationToken ct = default)
     {

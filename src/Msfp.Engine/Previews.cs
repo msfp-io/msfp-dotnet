@@ -6,7 +6,7 @@ namespace Msfp;
 
 /// <summary>
 /// The sheets fetched of peers' copies, re-encoded, keyed by peer, title,
-/// copy, etag, layout and sheet (MSFP video section 5.5: caching recommended,
+/// copy, etag, layout and sheet (MSFP Media video 5.5: caching recommended,
 /// keyed by the copy's etag and its previewLayout), within 64 MiB, the first
 /// kept dropped first; and the previews tickets of copies, each used until
 /// it expires. Locked on itself.
@@ -51,8 +51,8 @@ internal sealed class SheetCache
     }
 }
 
-// The previews call (MSFP video section 5.6) and the lyrics call (music
-// section 6), both ways: a ticket for a copy's seek-bar previews outside a
+// The previews call (MSFP Media video 5.6) and the lyrics call (MSFP
+// Media music 6), both ways: a ticket for a copy's seek-bar previews outside a
 // playback, which is no playback; a track's lyrics, with no ticket at all.
 public sealed partial class MsfpEngine
 {
@@ -61,7 +61,7 @@ public sealed partial class MsfpEngine
 
     private readonly SheetCache _sheets = new();
 
-    // Answers a paired peer's previews call (video section 5.6): a ticket that
+    // Answers a paired peer's previews call (MSFP Media video 5.6): a ticket that
     // opens the copy's sheets only, for 10 minutes, and the copy's etag as
     // the host holds it now; 404 for a copy without a previewLayout in the
     // catalog. The layout is the catalog's: the answer carries no URL.
@@ -125,7 +125,7 @@ public sealed partial class MsfpEngine
 
     // Serves a sheet under a previews ticket: only its copy's sheets, below
     // the sheet count of its layout, while the title is still sent to the
-    // peer with that layout (media section 4).
+    // peer with that layout (MSFP Media fetching 4.2).
     private async Task<StreamOutcome> ServePreviewSheetAsync(MsfpRequest request, ImageTicket it, string name, IResponseSink output,
         CancellationToken ct)
     {
@@ -173,7 +173,7 @@ public sealed partial class MsfpEngine
         }
     }
 
-    // Answers a paired peer's lyrics call (music section 6): the host's
+    // Answers a paired peer's lyrics call (MSFP Media music 6): the host's
     // lyrics of a copy whose catalog description says it has some, cleaned
     // as a viewer's server keeps them.
     private async Task<Answer> LyricsAsync(CallRequest req, CancellationToken ct)
@@ -260,7 +260,7 @@ public sealed partial class MsfpEngine
 
     /// <summary>
     /// Fetches sheet <paramref name="n"/> of the seek-bar previews of a peer's
-    /// copy kept here with a previewLayout (MSFP video section 5.5), checked
+    /// copy kept here with a previewLayout (MSFP Media video 5.5), checked
     /// against that layout and re-encoded as a JPEG. Previews are fetched on
     /// demand, for a copy someone opened (its page, its chapters, a playback,
     /// a scrub), never for a whole library nor in bulk for copies nobody
@@ -352,7 +352,7 @@ public sealed partial class MsfpEngine
     }
 
     // A previews ticket of a peer's copy: the one kept while it works, else a
-    // new previews call's, one call per copy at a time (video section 5.6).
+    // new previews call's, one call per copy at a time (MSFP Media video 5.6).
     private async Task<string> PreviewsTicketAsync(PeerRecord p, string key, string versionId, string etag, CancellationToken ct)
     {
         var id = p.Id + "\n" + key + "\n" + versionId;
@@ -456,8 +456,8 @@ public sealed partial class MsfpEngine
 
     /// <summary>
     /// Asks a peer for the lyrics of one of its tracks' copies kept here whose
-    /// description says it has some (MSFP music section 6), cleaned as music
-    /// section 6 says (<see cref="Music.ReadLyrics"/>). The host keeps them
+    /// description says it has some (MSFP Media music 6), cleaned as MSFP
+    /// Media music 6 says (<see cref="Music.ReadLyrics"/>). The host keeps them
     /// while the copy's etag holds.
     /// </summary>
     /// <param name="peer">The peer's ID.</param>

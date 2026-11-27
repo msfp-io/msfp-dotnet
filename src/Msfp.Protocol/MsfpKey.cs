@@ -4,7 +4,7 @@ using Org.BouncyCastle.Math.EC.Rfc8032;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// A server's own key pair (core section 4): pure Ed25519 of RFC 8032,
+/// A server's own key pair (MSFP core section 4): pure Ed25519 of RFC 8032,
 /// made from a 32-byte seed. Ed25519 keys are small, and signing is fast.
 /// </summary>
 public sealed class MsfpKey
@@ -52,7 +52,7 @@ public sealed class MsfpKey
     /// <summary>The public key without a copy.</summary>
     public ReadOnlySpan<byte> PublicSpan => _public;
 
-    /// <summary>The key's fingerprint (core section 4.2).</summary>
+    /// <summary>The key's fingerprint (MSFP core section 4.2).</summary>
     public string Fingerprint => Keys.Fingerprint(_public);
 
     /// <summary>The 64-byte signature of a message.</summary>
@@ -75,13 +75,13 @@ public static class Keys
 
     /// <summary>
     /// A key in a form people can compare, read aloud or over the phone
-    /// (core section 4.2): 24 letters and digits in groups of four,
+    /// (MSFP core section 4.2): 24 letters and digits in groups of four,
     /// "ABCD-EFGH-…".
     /// </summary>
     public static string Fingerprint(ReadOnlySpan<byte> publicKey) => CommitmentFingerprint(Commitment(publicKey));
 
     /// <summary>
-    /// The next key commitment to a key (core section 12.5): the SHA-256
+    /// The next key commitment to a key (MSFP core section 12.5): the SHA-256
     /// of its 32 bytes, sent base64url.
     /// </summary>
     public static byte[] Commitment(ReadOnlySpan<byte> publicKey) => SHA256.HashData(publicKey);

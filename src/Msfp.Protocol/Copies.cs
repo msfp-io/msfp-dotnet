@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// One version of a film, an episode or an extra (video section 3.2): what
+/// One version of a film, an episode or an extra (MSFP Media video 3.2): what
 /// an owning server sends (<see cref="Copies.Write(Copy)"/>), and what a
 /// viewer's server keeps (<see cref="Copies.Read(JsonNode?)"/>), in bounds,
 /// written again unchanged. A null member, an empty string or list and a
@@ -47,7 +47,7 @@ public sealed record Copy(string Id, long DurationMs, string MediaType, long Siz
     /// <summary>Its skip markers.</summary>
     public IReadOnlyList<CopySegment> Segments { get; init; } = [];
 
-    /// <summary>The layout of its seek-bar previews (video section 5.5), when the owning server has them.</summary>
+    /// <summary>The layout of its seek-bar previews (MSFP Media video 5.5), when the owning server has them.</summary>
     public PreviewLayout? PreviewLayout { get; init; }
 
     /// <summary>How a 3D picture is laid out, a token (sbs, tab, sbs-rl, tab-rl, mvc…), known or not; null for 2D.</summary>
@@ -57,7 +57,7 @@ public sealed record Copy(string Id, long DurationMs, string MediaType, long Siz
     public bool Several => Parts is > 1;
 }
 
-/// <summary>A copy's picture (video section 3.3).</summary>
+/// <summary>A copy's picture (MSFP Media video 3.3).</summary>
 /// <param name="Codec">Its codec, a registry token (h264, hevc, av1, vp9, vvc, prores…), known or not.</param>
 /// <param name="Width">Its width, 1 to <see cref="Copies.MaxVideoSide"/>.</param>
 /// <param name="Height">Its height, 1 to <see cref="Copies.MaxVideoSide"/>.</param>
@@ -80,7 +80,7 @@ public sealed record VideoStream(string Codec, int Width, int Height)
     /// <summary>Its bit depth, 1 to 16: the authoritative one, where codecs holds one too.</summary>
     public int? BitDepth { get; init; }
 
-    /// <summary>Its colour, as ITU-T H.273 code points (video section 3.6): the base fact of its dynamic range.</summary>
+    /// <summary>Its colour, as ITU-T H.273 code points (MSFP Media video 3.6): the base fact of its dynamic range.</summary>
     public VideoColour? Colour { get; init; }
 
     /// <summary>
@@ -105,7 +105,7 @@ public sealed record VideoStream(string Codec, int Width, int Height)
 }
 
 /// <summary>
-/// A Dolby Vision configuration record (video section 3.6): its profile (0
+/// A Dolby Vision configuration record (MSFP Media video 3.6): its profile (0
 /// to 127), level (0 to 63) and base-layer compatibility ID (0 to 15), and
 /// whether an enhancement layer is present (null when not said).
 /// </summary>
@@ -116,7 +116,7 @@ public sealed record VideoDv(int Profile, int Level, int Compatibility)
 }
 
 /// <summary>
-/// A picture's colour (video section 3.6): ITU-T H.273 code points, 0 to
+/// A picture's colour (MSFP Media video 3.6): ITU-T H.273 code points, 0 to
 /// 255, each null when unknown (2, unspecified, is never kept), and H.273's
 /// full-range flag. At least one member is set.
 /// </summary>
@@ -136,7 +136,7 @@ public sealed record VideoColour(int? Primaries, int? Transfer, int? Matrix, boo
     public bool HighRange => Transfer is TransferPq or TransferHlg;
 }
 
-/// <summary>A copy's audio track (video section 3.3), with the a&lt;n&gt; ID play takes.</summary>
+/// <summary>A copy's audio track (MSFP Media video 3.3), with the a&lt;n&gt; ID play takes.</summary>
 /// <param name="Id">Its ID (<see cref="Playback.TryTrackId"/>, a): for a copy of one file, the stream's index in the file.</param>
 /// <param name="Codec">Its codec, a registry token (aac, ac3, eac3, truehd, dts, opus, flac, pcm_s24le…), known or not.</param>
 public sealed record CopyAudio(string Id, string Codec)
@@ -172,7 +172,7 @@ public sealed record CopyAudio(string Id, string Codec)
     public bool Original { get; init; }
 }
 
-/// <summary>A copy's subtitle track (video section 3.3), with its s&lt;n&gt; ID.</summary>
+/// <summary>A copy's subtitle track (MSFP Media video 3.3), with its s&lt;n&gt; ID.</summary>
 /// <param name="Id">Its ID (<see cref="Playback.TryTrackId"/>, s): for a copy of one file, the stream's index in the file, a track beside it (external) above the file's streams.</param>
 /// <param name="Format">Its source format, a registry token (subrip, ass, webvtt, hdmv_pgs_subtitle, dvd_subtitle…), known or not; "" when the owning server doesn't know it.</param>
 public sealed record CopySubtitle(string Id, string Format)
@@ -196,14 +196,14 @@ public sealed record CopySubtitle(string Id, string Format)
     public bool External { get; init; }
 }
 
-/// <summary>A chapter of a copy (video section 3.4), its name plain text of at most <see cref="Copies.MaxChapterName"/> code points.</summary>
+/// <summary>A chapter of a copy (MSFP Media video 3.4), its name plain text of at most <see cref="Copies.MaxChapterName"/> code points.</summary>
 public sealed record CopyChapter(long StartMs, string? Name = null);
 
-/// <summary>A skip marker of a copy (video section 3.4): <paramref name="Kind"/> is a token (intro, outro, recap, preview, commercial…), known or not, <paramref name="StartMs"/> before <paramref name="EndMs"/>. The last outro is the final credits.</summary>
+/// <summary>A skip marker of a copy (MSFP Media video 3.4): <paramref name="Kind"/> is a token (intro, outro, recap, preview, commercial…), known or not, <paramref name="StartMs"/> before <paramref name="EndMs"/>. The last outro is the final credits.</summary>
 public sealed record CopySegment(string Kind, long StartMs, long EndMs);
 
 /// <summary>
-/// A copy's seek-bar previews (video section 5.5), in the catalog: tiles of
+/// A copy's seek-bar previews (MSFP Media video 5.5), in the catalog: tiles of
 /// <paramref name="TileWidth"/> × <paramref name="TileHeight"/> pixels, every
 /// <paramref name="IntervalMs"/>, laid out <paramref name="Columns"/> ×
 /// <paramref name="Rows"/> on each sheet, <paramref name="TileCount"/> in
@@ -214,7 +214,7 @@ public sealed record PreviewLayout(int TileWidth, int TileHeight, int Columns, i
     /// <summary>The most sheets a copy's previews may have.</summary>
     public const int MaxSheets = 1000;
 
-    /// <summary>The most a sheet may be, as read (media section 2.4): 8 MiB.</summary>
+    /// <summary>The most a sheet may be, as read (MSFP Media fetching 2.4): 8 MiB.</summary>
     public const int MaxSheetBytes = 8 << 20;
 
     /// <summary>How many sheets the tiles fill: ⌈tileCount / (columns × rows)⌉, at most <see cref="MaxSheets"/>.</summary>
@@ -222,13 +222,13 @@ public sealed record PreviewLayout(int TileWidth, int TileHeight, int Columns, i
 }
 
 /// <summary>
-/// The copies of a film, an episode or an extra (MSFP video sections 3.2 to
-/// 3.8): their bounds, what a viewer's server keeps of them, how an owning
+/// The copies of a film, an episode or an extra (MSFP
+/// Media video 3.2 to 3.8): their bounds, what a viewer's server keeps of them, how an owning
 /// server writes them, and the order the implementers' notes advise.
 /// </summary>
 public static partial class Copies
 {
-    /// <summary>How many copies a title keeps at most, the first good ones (video section 3.8).</summary>
+    /// <summary>How many copies a title keeps at most, the first good ones (MSFP Media video 3.8).</summary>
     public const int MaxCopies = 16;
 
     /// <summary>The longest a copy may last: 100 days.</summary>
@@ -252,7 +252,7 @@ public static partial class Copies
     /// <summary>How many skip markers a copy keeps at most.</summary>
     public const int MaxSegments = 32;
 
-    /// <summary>How many entries a video stream's hdr keeps at most (video section 3.8).</summary>
+    /// <summary>How many entries a video stream's hdr keeps at most (MSFP Media video 3.8).</summary>
     public const int MaxHdr = 8;
 
     /// <summary>The length of a chapter's name, in code points.</summary>
@@ -270,14 +270,18 @@ public static partial class Copies
     [GeneratedRegex(@"^([1-9][0-9]{0,4}):([1-9][0-9]{0,4})\z")]
     private static partial Regex AspectRe();
 
-    /// <summary>Whether <paramref name="s"/> has the form of a codecs string (video section 3.5): 1 to 64 characters of A-Z a-z 0-9 . + -.</summary>
+    // An fps fraction of the copy's form, each number at most 1,000,000;
+    // reduced: in lowest terms. Null otherwise.
+    internal static string? FpsOf(JsonNode? node, bool reduced) => Ratio(node, FpsRe(), 1_000_000, reduced);
+
+    /// <summary>Whether <paramref name="s"/> has the form of a codecs string (MSFP Media video 3.5): 1 to 64 characters of A-Z a-z 0-9 . + -.</summary>
     public static bool CodecsForm(string? s) => s is not null && CodecsRe().IsMatch(s);
 
     /// <summary>
-    /// Reads one entry of a title's copies as video section 3.8 says: null,
+    /// Reads one entry of a title's copies as MSFP Media video 3.8 says: null,
     /// to skip it, when it isn't an object, when its id or etag isn't of an
     /// ID's form, when durationMs or size isn't an integer in range, when
-    /// mediaType isn't a media type (core section 8.5), or when audioTracks
+    /// mediaType isn't a media type (MSFP Media base 3), or when audioTracks
     /// isn't an array. Its open values are kept as they are when they are
     /// well formed, known or not; its other members, out of range, of the
     /// wrong type or out of their form, count as absent alone; a bad entry of
@@ -329,7 +333,7 @@ public static partial class Copies
         }
     }
 
-    /// <summary>Keeps of a title's copies the first <see cref="MaxCopies"/> good ones (<see cref="Read(JsonNode?)"/>), each id once (video section 3.8); none when the list is null.</summary>
+    /// <summary>Keeps of a title's copies the first <see cref="MaxCopies"/> good ones (<see cref="Read(JsonNode?)"/>), each id once (MSFP Media video 3.8); none when the list is null.</summary>
     public static IReadOnlyList<Copy> ReadList(JsonArray? list)
     {
         var out_ = new List<Copy>();
@@ -350,7 +354,7 @@ public static partial class Copies
     }
 
     /// <summary>
-    /// Reads a copy's previewLayout as video section 5.5 says: null, dropped
+    /// Reads a copy's previewLayout as MSFP Media video 5.5 says: null, dropped
     /// alone, unless it is an object whose six members are integers within
     /// their bounds (tiles 1 to 2,048 pixels each way, 1 to 100 columns and
     /// rows, a full sheet at most 4,096 pixels each way, intervalMs 100 to
@@ -378,7 +382,7 @@ public static partial class Copies
         return JsonOut.Object(o => Write(o, copy));
     }
 
-    /// <summary>Writes a copy's members into an object being written (for <see cref="JsonOut.Objects{T}"/>), in the order of the table of video section 3.2.</summary>
+    /// <summary>Writes a copy's members into an object being written (for <see cref="JsonOut.Objects{T}"/>), in the order of the table of MSFP Media video 3.2.</summary>
     public static void Write(JsonOut o, Copy c)
     {
         ArgumentNullException.ThrowIfNull(o);
@@ -702,7 +706,7 @@ public static partial class Copies
 
     private static bool? Flag(bool b) => b ? true : null;
 
-    // An MSFP integer (core section 2.3) from lo to hi; false for any other
+    // An MSFP integer (MSFP Media base 2.2) from lo to hi; false for any other
     // value.
     internal static bool Integer(JsonNode? node, long lo, long hi, out long n)
     {

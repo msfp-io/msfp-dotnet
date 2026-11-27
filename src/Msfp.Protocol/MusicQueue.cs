@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// An entry of a play request's queue (music section 5.2), as the owning
+/// An entry of a play request's queue (MSFP Media music 5.2), as the owning
 /// server accepted it: the track, the copy it names ("" for its first),
 /// and the delivery it takes: its own, with its own mediaType or
 /// transcode, else the request's ("" for the baseline).
@@ -35,7 +35,7 @@ public sealed record QueueAsk(string Title, string VersionId, string Delivery, b
 }
 
 /// <summary>
-/// An entry of a play answer's queue as kept (music section 5.2): a queued
+/// An entry of a play answer's queue as kept (MSFP Media music 5.2): a queued
 /// track prepared, the copy playing, how, and its protocol. It carries no
 /// URL: the viewer's server builds it from the playback's ticket and
 /// <see cref="Place"/> (<see cref="MediaUrls.Queue"/>).
@@ -56,7 +56,7 @@ public sealed record QueueEntry(string Title, string VersionId, string Method, s
 }
 
 /// <summary>
-/// The queue of a play (MSFP music section 5.2): the tracks a play names
+/// The queue of a play (MSFP Media music 5.2): the tracks a play names
 /// after its title, each with its own copy and delivery if it wants, which
 /// the owning server prepares under the same playback, and what the
 /// viewer's server keeps of the answer's entries.
@@ -66,7 +66,7 @@ public static partial class Music
     /// <summary>How many tracks a play's queue names at most, and how many entries of an answer's queue are kept.</summary>
     public const int MaxQueue = 5;
 
-    /// <summary>A track's remux media types: MPEG-TS or fragmented MP4 segments, audio only (music section 5).</summary>
+    /// <summary>A track's remux media types: MPEG-TS or fragmented MP4 segments, audio only (MSFP Media music 5).</summary>
     public static readonly IReadOnlyList<string> RemuxTypes = ["audio/mp2t", "audio/mp4"];
 
     private static readonly string[] Methods = [Playback.MethodDirect, Playback.MethodRemux, Playback.MethodTranscode];
@@ -84,8 +84,9 @@ public static partial class Music
     /// mediaType with the entry's own delivery remux only, and then
     /// required; a transcode object with its own delivery transcode only).
     /// Then, no entry malformed, refused with 409 delivery-refused for the
-    /// first entry whose delivery isn't file, remux or transcode, or whose
-    /// remux names another media type than audio/mp2t or audio/mp4. The
+    /// first entry whose delivery isn't file, remux or transcode, or 409
+    /// target-refused for one whose remux names another media type than
+    /// audio/mp2t or audio/mp4 (MSFP Media playing 2.2, step 7). The
     /// request's own delivery members, and an entry's transcode targets, are
     /// playback's (<see cref="Playback.ReadQueueEntry"/>). A queued track the
     /// owning server doesn't offer the caller, or can't play, isn't refused:
@@ -179,7 +180,7 @@ public static partial class Music
 
                 if (!RemuxTypes.Contains(m, StringComparer.Ordinal))
                 {
-                    refused ??= Refuse("a queue entry's remux into " + m + ", not audio/mp2t or audio/mp4");
+                    refused ??= new PlayRefusal(409, Playback.ProblemTargetRefused, "a queue entry's remux into " + m + ", not audio/mp2t or audio/mp4");
                 }
             }
             else if (entryDelivery == Playback.DeliveryRemux)

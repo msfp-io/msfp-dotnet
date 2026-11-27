@@ -2,7 +2,7 @@ using System.Text;
 
 namespace Msfp.Tests;
 
-/// <summary>The discovery document (core section 11): served when on, read when pairing, its base used.</summary>
+/// <summary>The discovery document (MSFP core section 11): served when on, read when pairing, its base used.</summary>
 public sealed class DiscoveryTests
 {
     [Fact]

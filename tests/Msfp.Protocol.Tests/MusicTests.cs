@@ -84,7 +84,7 @@ public class MusicTests
             if (!answer)
             {
                 var wantWhy = c.Str("reason");
-                if (ok != c.Valid() || (!ok && !wantWhy.StartsWith(why.StartsWith("400", StringComparison.Ordinal) ? "400" : "409 delivery-refused",
+                if (ok != c.Valid() || (!ok && !wantWhy.StartsWith(why.StartsWith("400", StringComparison.Ordinal) ? "400" : why,
                         StringComparison.Ordinal)))
                 {
                     failures.Add($"{c.Str("name")}: accepted {ok} ({why}), want {c.Valid()} ({wantWhy})");

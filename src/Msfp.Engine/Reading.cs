@@ -4,17 +4,17 @@ using Msfp.Protocol;
 
 namespace Msfp;
 
-// The catalog, on the reading side (MSFP catalog sections 2.2, 3.2 and
-// 3.3): the libraries a peer offers this server, those wanted, and the
+// The catalog, on the reading side (MSFP
+// Media listing 2.2, 3.2 and 3.3): the libraries a peer offers this server, those wanted, and the
 // readings of their titles, kept in storage for the host's pages.
 public sealed partial class MsfpEngine
 {
-    // The bounds of what is kept of a peer (catalog sections 2.2 and 6).
+    // The bounds of what is kept of a peer (MSFP Media listing 2.2, MSFP catalog section 6).
     private const int MaxLibraries = 200;
     private const int MaxPeerTitles = 1_000_000;
     private const int MaxGoneKey = 128;
 
-    // How long a reading may take (catalog section 3.2: 5 minutes); the
+    // How long a reading may take (MSFP Media listing 3.2: 5 minutes); the
     // longest a page is waited for when the peer asks to wait.
     private static readonly TimeSpan ReadingTime = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan PageWait = TimeSpan.FromMinutes(1);
@@ -195,7 +195,7 @@ public sealed partial class MsfpEngine
     }
 
     // Calls libraries on p and keeps its answer: the libraries, its name,
-    // its limits (catalog section 2.2). Kinds says each library of the
+    // its limits (MSFP Media listing 2.2). Kinds says each library of the
     // answer carried a kind, as the previous draft's libraries did
     // (OlderDraftPage).
     private async Task<(List<WantedLibrary> Libraries, bool Kinds)> TheirLibrariesAsync(PeerRecord p, bool background, CancellationToken ct)
@@ -305,7 +305,7 @@ public sealed partial class MsfpEngine
         return (kept, kinds);
     }
 
-    // Reads a peer's limits (playback section 5, music section 5.1): null
+    // Reads a peer's limits (MSFP playback section 5, MSFP Media music 5.1): null
     // when they aren't an object of integers in range. ScanBytes is never a
     // peer's limit: each scan's answer states its own
     // (RemotePlayback.ScanBytes).
@@ -432,7 +432,7 @@ public sealed partial class MsfpEngine
 
     // A titles answer as read: each title and each gone key on its own, so
     // that a bad one is skipped alone; the other members of the wrong type
-    // fail the answer (catalog section 3.3).
+    // fail the answer (MSFP Media listing 3.3).
     private sealed record TitlesReading(JsonArray Titles, string? Next, bool Changes, JsonArray? Gone, long? Seq);
 
     private static TitlesReading ReadTitlesAnswer(byte[] body)
@@ -450,7 +450,7 @@ public sealed partial class MsfpEngine
     }
 
     // Reads a peer's titles in the libraries wanted of it, and keeps them
-    // (catalog section 3.2): only what changed since the last reading, when
+    // (MSFP Media listing 3.2): only what changed since the last reading, when
     // the peer gives changes and the libraries are the same; the whole list
     // otherwise, after which titles not seen are dropped. A reading that
     // fails keeps what was kept before it: a whole list is held in memory
@@ -612,7 +612,7 @@ public sealed partial class MsfpEngine
             if (!changes)
             {
                 // A whole list is kept only once read to its end: until then
-                // the previous one stays (catalog section 3.2).
+                // the previous one stays (MSFP Media listing 3.2).
                 whole.AddRange(page);
             }
             else
@@ -674,7 +674,7 @@ public sealed partial class MsfpEngine
         }
     }
 
-    // Reads a title of a peer's answer as catalog section 3.3 and its
+    // Reads a title of a peer's answer as MSFP Media listing 3.3 and its
     // content part say; null to skip it.
     private Title? ReadTitle(PeerRecord p, JsonNode? raw, List<string> libs)
     {

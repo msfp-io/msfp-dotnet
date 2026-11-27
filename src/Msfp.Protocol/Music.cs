@@ -8,7 +8,7 @@ using System.Text.RegularExpressions;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// A music title key, parsed (music section 2): its kind (artist, album or
+/// A music title key, parsed (MSFP Media music 2): its kind (artist, album or
 /// track), its scheme (mb or local), and the scheme's part. Under mb,
 /// <see cref="Id"/> is an MBID: an artist's, a release's for an album, a
 /// release track's for a track. Under local, it is the owning server's
@@ -19,10 +19,10 @@ namespace Msfp.Protocol;
 /// <param name="Id">The MBID, or the opaque part.</param>
 public readonly record struct MusicKey(string Kind, string Scheme, string Id)
 {
-    /// <summary>Whether play takes the title: a track (music section 5).</summary>
+    /// <summary>Whether play takes the title: a track (MSFP Media music 5).</summary>
     public bool Playable => Kind == "track";
 
-    /// <summary>Whether the key is under the local scheme: a title that never matches another server's (music section 2.2).</summary>
+    /// <summary>Whether the key is under the local scheme: a title that never matches another server's (MSFP Media music 2.2).</summary>
     public bool Local => Scheme == "local";
 
     /// <summary>
@@ -69,7 +69,7 @@ public readonly record struct MusicKey(string Kind, string Scheme, string Id)
 }
 
 /// <summary>
-/// A title key of any content part (catalog section 4): its part (video
+/// A title key of any content part (MSFP Media listing 4): its part (video
 /// or music), its kind, and whether play takes it.
 /// </summary>
 /// <param name="Part">The content part: "video" or "music".</param>
@@ -100,8 +100,8 @@ public readonly record struct TitleKey(string Part, string Kind, bool Playable)
 }
 
 /// <summary>
-/// A music title as sent in titles, and as a peer's is kept (music section
-/// 3): its key, the kind its key names, its library, and its description,
+/// A music title as sent in titles, and as a peer's is kept (MSFP
+/// Media music 3): its key, the kind its key names, its library, and its description,
 /// cleaned. Text is "" and numbers 0 when absent, lists empty;
 /// <see cref="Compilation"/> and <see cref="Image"/> are null when absent.
 /// A track's artists, artist names, dates and genres are sent only when
@@ -173,7 +173,7 @@ public sealed record MusicTitle
     /// <summary>Whether the image call gives an image of it (local artists and albums); null when absent.</summary>
     public bool? Image { get; init; }
 
-    /// <summary>Its other identifiers, by scheme (music section 3.1): mb albums' mbreleasegroup, mb tracks' mbrecording.</summary>
+    /// <summary>Its other identifiers, by scheme (MSFP Media music 3.1): mb albums' mbreleasegroup, mb tracks' mbrecording.</summary>
     public IReadOnlyDictionary<string, string> Ids { get; init; } = new Dictionary<string, string>();
 
     /// <summary>The title as titles carries it, its members in the spec's order, absent ones left out.</summary>
@@ -202,7 +202,7 @@ public sealed record MusicTitle
 }
 
 /// <summary>
-/// A track's copy (music section 3.3). The optional numbers are 0 when
+/// A track's copy (MSFP Media music 3.3). The optional numbers are 0 when
 /// absent (none of their ranges holds 0), optional text "". It carries no
 /// name, no day it was added and no bitrate: size × 8 / durationMs is its
 /// overall rate.
@@ -261,8 +261,8 @@ public sealed record MusicCopy
 }
 
 /// <summary>
-/// A copy's loudness values, to the ReplayGain 2.0 reference (music section
-/// 3.3): gains in dB, peaks linear; each null when absent. The owning server
+/// A copy's loudness values, to the ReplayGain 2.0 reference (MSFP
+/// Media music 3.3): gains in dB, peaks linear; each null when absent. The owning server
 /// never applies them; the viewer's player does, lowering the gain to keep
 /// the peak under full scale.
 /// </summary>
@@ -286,45 +286,45 @@ public sealed record ReplayGain(double? TrackGain, double? TrackPeak, double? Al
 /// <summary>
 /// Music titles (MSFP music, sections 2 and 3): their keys, and what a
 /// server keeps of a music title a peer lists in titles, its copies
-/// included (catalog section 3.3, music sections 3.2 and 3.3). The queue
+/// included (MSFP Media listing 3.3, MSFP Media music 3.2 and 3.3). The queue
 /// of a play is in MusicQueue.cs, the lyrics call in MusicLyrics.cs.
 /// </summary>
 public static partial class Music
 {
-    /// <summary>The most code points of a music title's name and sortName (music section 3).</summary>
+    /// <summary>The most code points of a music title's name and sortName (MSFP Media music 3).</summary>
     public const int MaxMusicName = 256;
 
-    /// <summary>The most code points of a music title's artistNames (music section 3).</summary>
+    /// <summary>The most code points of a music title's artistNames (MSFP Media music 3).</summary>
     public const int MaxArtistNames = 512;
 
-    /// <summary>The most artists a music title keeps (music section 3).</summary>
+    /// <summary>The most artists a music title keeps (MSFP Media music 3).</summary>
     public const int MaxMusicArtists = 16;
 
-    /// <summary>The most genres an album or a track keeps (music section 3.2).</summary>
+    /// <summary>The most genres an album or a track keeps (MSFP Media music 3.2).</summary>
     public const int MaxGenres = 8;
 
-    /// <summary>The most code points of a genre (music section 3.2); a longer one is skipped, not cut.</summary>
+    /// <summary>The most code points of a genre (MSFP Media music 3.2); a longer one is skipped, not cut.</summary>
     public const int MaxGenre = 64;
 
-    /// <summary>A track's highest disc and number, both from 1 (music section 3).</summary>
+    /// <summary>A track's highest disc and number, both from 1 (MSFP Media music 3).</summary>
     public const int MaxDiscNumber = 999;
 
-    /// <summary>The most copies a track keeps (music section 3.3).</summary>
+    /// <summary>The most copies a track keeps (MSFP Media music 3.3).</summary>
     public const int MaxMusicCopies = 16;
 
-    /// <summary>A track copy's longest duration in milliseconds, a day (music section 3.3).</summary>
+    /// <summary>A track copy's longest duration in milliseconds, a day (MSFP Media music 3.3).</summary>
     public const long MaxDurationMs = 86_400_000;
 
-    /// <summary>A track copy's largest size in bytes (music section 3.3, as a video copy's).</summary>
+    /// <summary>A track copy's largest size in bytes (MSFP Media music 3.3, as a video copy's).</summary>
     public const long MaxCopySize = 999_999_999_999_999;
 
-    /// <summary>The most secondary types an album keeps (music section 3.2).</summary>
+    /// <summary>The most secondary types an album keeps (MSFP Media music 3.2).</summary>
     public const int MaxSecondaryTypes = 8;
 
-    /// <summary>A ReplayGain gain's bound in dB, either way (music section 3.3).</summary>
+    /// <summary>A ReplayGain gain's bound in dB, either way (MSFP Media music 3.3).</summary>
     public const double MaxGain = 64;
 
-    /// <summary>A ReplayGain peak's bound (music section 3.3).</summary>
+    /// <summary>A ReplayGain peak's bound (MSFP Media music 3.3).</summary>
     public const double MaxPeak = 10;
 
     /// <summary>
@@ -345,15 +345,15 @@ public static partial class Music
     private static partial Regex DateRe();
 
     /// <summary>
-    /// Whether <paramref name="s"/> is a release-group type as music section
-    /// 3 sends it: MusicBrainz's name lowercased, 1 to 32 characters of
+    /// Whether <paramref name="s"/> is a release-group type as MSFP
+    /// Media music 3 sends it: MusicBrainz's name lowercased, 1 to 32 characters of
     /// a–z 0–9 space . _ - /, with no space at either end. Open: a type the
     /// viewer's server doesn't know is kept as it is; the caller doesn't
     /// lowercase (Album isn't one).
     /// </summary>
     public static bool MusicType(string? s) => s is not null && TypeRe().IsMatch(s);
 
-    /// <summary>Whether <paramref name="s"/> is a MusicBrainz ID in the form music section 2.1 gives: 36 characters, lowercase 8-4-4-4-12 hex. An AcoustID has the same form.</summary>
+    /// <summary>Whether <paramref name="s"/> is a MusicBrainz ID in the form MSFP Media music 2.1 gives: 36 characters, lowercase 8-4-4-4-12 hex. An AcoustID has the same form.</summary>
     public static bool Mbid(string s)
     {
         ArgumentNullException.ThrowIfNull(s);
@@ -393,7 +393,7 @@ public static partial class Music
     }
 
     /// <summary>
-    /// Keeps an album's genres as music section 3.2 says: each cleaned, kept
+    /// Keeps an album's genres as MSFP Media music 3.2 says: each cleaned, kept
     /// when 1 to <see cref="MaxGenre"/> characters once cleaned (a longer one
     /// skipped, not cut) and not a repeat of a kept one compared without
     /// case; the first <see cref="MaxGenres"/> kept.
@@ -421,7 +421,7 @@ public static partial class Music
     }
 
     /// <summary>
-    /// Reads an album's date or originalDate (music section 3.2): YYYY,
+    /// Reads an album's date or originalDate (MSFP Media music 3.2): YYYY,
     /// YYYY-MM or YYYY-MM-DD, a year from 1000 to 9999, a month from 01 to
     /// 12, a day that exists in that month. False for anything else, which
     /// counts as absent.
@@ -468,8 +468,8 @@ public static partial class Music
 
     /// <summary>
     /// Whether <paramref name="value"/> is an identifier of a known scheme
-    /// for a title of <paramref name="kind"/>, in its form (music section
-    /// 3.1): mbreleasegroup (albums), mbrecording (tracks), on mb titles
+    /// for a title of <paramref name="kind"/>, in its form (MSFP
+    /// Media music 3.1): mbreleasegroup (albums), mbrecording (tracks), on mb titles
     /// only; a local title carries no ids, and isrc and acoustid, which a
     /// viewer's server finds from mbrecording, are retired.
     /// </summary>
@@ -487,14 +487,14 @@ public static partial class Music
     /// <summary>
     /// Converts an EBU R128 gain (Opus's R128_TRACK_GAIN: 1/256 dB, relative
     /// to −23 LUFS) to ReplayGain 2.0's reference, as an owning server may
-    /// send it (music section 3.3 asks for the reference, not the way): the
+    /// send it (MSFP Media music 3.3 asks for the reference, not the way): the
     /// value over 256, plus 5 dB.
     /// </summary>
     public static double R128Gain(int q78) => (q78 / 256.0) + 5;
 
     /// <summary>
-    /// Reads one entry of a titles answer as catalog section 3.3 and music
-    /// section 3.2 say: null, to skip it, when it isn't an object whose key
+    /// Reads one entry of a titles answer as MSFP Media listing 3.3 and MSFP
+    /// Media music 3.2 say: null, to skip it, when it isn't an object whose key
     /// and library are strings, when the key isn't a canonical music key of
     /// either scheme, when it has no name once cleaned, and for a track, when it is a track/mb whose album
     /// isn't an album/mb key, or has no copy left (a copies that isn't an
@@ -642,13 +642,13 @@ public static partial class Music
     }
 
     /// <summary>
-    /// Reads a track's copies as music section 3.3 says: null when copies
+    /// Reads a track's copies as MSFP Media music 3.3 says: null when copies
     /// isn't an array; else the copies kept, best first, at most
     /// <see cref="MaxMusicCopies"/>, the first. A copy is skipped alone when
     /// it isn't an object, misses a required member or breaks its form (id
     /// and etag of an ID's form, size from 1 to <see cref="MaxCopySize"/>,
     /// durationMs from 1 to <see cref="MaxDurationMs"/>, mediaType a media
-    /// type and codec a token, core section 8.5, kept as they are, known or
+    /// type and codec a token, MSFP Media base 3, kept as they are, known or
     /// not), or repeats a kept copy's id. Its optional members out of range,
     /// out of their form or of the wrong type count as absent (codecs on an
     /// aac or dts copy among them: the copy stays); durationMs is kept
@@ -737,7 +737,7 @@ public static partial class Music
         ? v.GetValueKind() switch { JsonValueKind.True => true, JsonValueKind.False => false, _ => null }
         : null;
 
-    // An MSFP integer (core section 2.3) from lo to hi; null for any other
+    // An MSFP integer (MSFP Media base 2.2) from lo to hi; null for any other
     // value.
     internal static long? IntOf(JsonNode? node, long lo, long hi) =>
         JsonMembers.AsInteger(node) is { } n && n >= lo && n <= hi ? n : null;
@@ -802,7 +802,7 @@ public static partial class Music
         return bits < 0 ? -r : r;
     }
 
-    // An MSFP integer (core section 2.3: no fraction, no exponent, no minus
+    // An MSFP integer (MSFP Media base 2.2: no fraction, no exponent, no minus
     // zero) within lo to hi; 0 otherwise, or -1 when lo is 0 and it isn't
     // one.
     internal static long IntegerIn(JsonNode? node, long lo, long hi)

@@ -21,7 +21,7 @@ public sealed partial class MsfpEngine
     private static bool Asks(PeerRecord p) => p.NotByHand && TheirIndividual(p) && !p.IndividualRefused;
 
     // Keeps a hello's individual: a peer that stops wanting the relation
-    // while it held ends it for both (core section 7.7).
+    // while it held ends it for both (MSFP core section 7.7).
     private static List<MsfpEvent> KeepIndividual(PeerRecord p, bool? theirs)
     {
         if (theirs is not { } t)
@@ -55,8 +55,8 @@ public sealed partial class MsfpEngine
         p.Groups is { Count: > 0 } || joiningVia || !string.IsNullOrEmpty(p.JoiningGroup) || !p.NotByHand ||
         (TheirIndividual(p) && !p.IndividualRefused) || p.KeepChoice;
 
-    // Whether the link with this peer, paired, has no relation left (core
-    // section 7.7, "When the last relation goes").
+    // Whether the link with this peer, paired, has no relation left (MSFP
+    // core section 7.7, "When the last relation goes").
     private static async ValueTask<bool> UnheldAsync(IStoreTx tx, PeerRecord p)
     {
         if (p.State != PeerState.Paired)
@@ -211,8 +211,8 @@ public sealed partial class MsfpEngine
 
     /// <summary>
     /// Ends the link with a peer whatever its relations, and keeps it away
-    /// from every group: its keys are recorded blocked (MSFP core section
-    /// 7.4). <see cref="BlockAsync"/> does it for a group's member.
+    /// from every group: its keys are recorded blocked (MSFP
+    /// core section 7.4). <see cref="BlockAsync"/> does it for a group's member.
     /// </summary>
     /// <exception cref="MsfpException"><see cref="MsfpError.NotFound"/>.</exception>
     public Task BlockPeerAsync(string id, CancellationToken ct = default) => EndLinkAsync(id, blocked: true, ct);

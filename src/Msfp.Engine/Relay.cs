@@ -5,8 +5,8 @@ using Msfp.Protocol;
 
 namespace Msfp;
 
-// Media, on the viewer's side (MSFP media sections 2 and 3, video section
-// 6): the relay. The host's viewer route maps its own URL to a MediaPath
+// Media, on the viewer's side (MSFP Media fetching 2 and 3, MSFP
+// Media video 6): the relay. The host's viewer route maps its own URL to a MediaPath
 // and calls FetchAsync; the engine fetches from the peer's stream root with
 // the playback's ticket, which never leaves the engine, and checks
 // everything before a byte reaches the viewer.
@@ -14,7 +14,7 @@ public sealed partial class MsfpEngine
 {
     // The reading whole of a playlist, a subtitle part, a PGS part, a font
     // or a sheet gets 2 minutes; 4 of them (and 4 sheets) are held in memory at
-    // once across the server (media section 2.4). A media fetch waits a
+    // once across the server (MSFP Media fetching 2.4). A media fetch waits a
     // minute at most for the peer's headers.
     private static readonly TimeSpan SmallReadTime = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan MediaHeaderTime = TimeSpan.FromSeconds(60);
@@ -87,8 +87,8 @@ public sealed partial class MsfpEngine
 
         if (!Usable(p, Versions.PartMedia))
         {
-            // Never to a peer that can't be called, or is suspended (core
-            // sections 7.5 and 12.6), whatever ended its playbacks.
+            // Never to a peer that can't be called, or is suspended (MSFP
+            // core sections 7.5 and 12.6), whatever ended its playbacks.
             EndRemote(rm, EndReason.PairingEnded, true);
             throw new MsfpException(MsfpError.NotFound);
         }
@@ -196,7 +196,7 @@ public sealed partial class MsfpEngine
     }
 
     // The folder of a stream of a playback on a peer, under its base: its
-    // own, or a queue entry's (media section 1).
+    // own, or a queue entry's (MSFP Media fetching 1).
     private static string EntryBase(int entry) => entry == 0 ? "" : "queue/" + (entry - 1).ToString(CultureInfo.InvariantCulture) + "/";
 
     // The name fetched under the peer's stream base for path; null for what
@@ -267,7 +267,7 @@ public sealed partial class MsfpEngine
     }
 
     // The client for media fetches from a peer: a trusted or named
-    // certificate only (media section 1), no time bound on the body.
+    // certificate only (MSFP media section 1), no time bound on the body.
     private HttpClient MediaClientFor(IReadOnlyCollection<string>? pins)
     {
         var key = "media " + string.Join(" ", pins ?? []);
@@ -289,7 +289,7 @@ public sealed partial class MsfpEngine
 
     // Fetches a URL of a peer's stream: a plain GET, nothing but Range, over
     // a connection that needs a trusted or named certificate; refused for its
-    // certificate, a hello, then once more (media section 2). The URL holds
+    // certificate, a hello, then once more (MSFP Media fetching 2). The URL holds
     // the ticket: it is never logged.
     private async Task<HttpResponseMessage> RelayGetAsync(PeerRecord p, string url, string range, CancellationToken ct)
     {
@@ -321,7 +321,7 @@ public sealed partial class MsfpEngine
         }
     }
 
-    // Whether a 206 answers the range asked (media section 2.1), and its
+    // Whether a 206 answers the range asked (MSFP Media fetching 2.1), and its
     // length and its Content-Range.
     private static (long Length, string ContentRange)? PartialLength(ResponseHeaders h, ByteRange want)
     {
@@ -366,8 +366,8 @@ public sealed partial class MsfpEngine
     private static string StrongETag(string? h) =>
         h is { Length: >= 2 } && h[0] == '"' && h[^1] == '"' && Playback.Id(h[1..^1]) ? h[1..^1] : "";
 
-    // Relays the file of a playback, or of a queue entry (media section
-    // 3.2): its answer checked against the copy's etag and exact size (learnt
+    // Relays the file of a playback, or of a queue entry (MSFP
+    // Media fetching 3.2): its answer checked against the copy's etag and exact size (learnt
     // from the first answer when the catalog didn't give them), a 206 only
     // for the range asked, never more than its length.
     private async Task RelayFileAsync(RemotePlay rm, int entry, HttpResponseMessage res, ResponseHeaders headers, string range, ByteRange want,
@@ -442,7 +442,7 @@ public sealed partial class MsfpEngine
         }
 
         (output as IETagSink)?.SetETag(ent.Etag);
-        // The copy's own mediaType, from the catalog (media section 3).
+        // The copy's own mediaType, from the catalog (MSFP Media fetching 3).
         output.Start(status, Media.RelayFileType(ent.MediaType), length, contentRange);
         await using var body = await res.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         try
@@ -554,7 +554,7 @@ public sealed partial class MsfpEngine
     // Relays what is read whole: playlists checked and kept to the subset,
     // complete, their renditions the playback's audio tracks; WebVTT and ASS
     // rebuilt; PGS checked; fonts checked; sheets checked and re-encoded
-    // (media section 3.1, video sections 6.2 to 6.6).
+    // (MSFP Media fetching 3.1, MSFP Media video 6.2 to 6.6).
     private async Task RelaySmallAsync(RemotePlay rm, MediaPath path, HttpResponseMessage res, IResponseSink output, CancellationToken ct)
     {
         var limit = Media.MaxPlaylist;
@@ -668,7 +668,7 @@ internal static class Jpeg
 {
     /// <summary>
     /// Whether a sheet is a JPEG (by its content, whatever its Content-Type)
-    /// no larger than the layout's full sheet (MSFP video section 6.2): its
+    /// no larger than the layout's full sheet (MSFP Media video 6.2): its
     /// first frame header read, nothing decoded.
     /// </summary>
     public static bool Fits(ReadOnlySpan<byte> b, int maxWidth, int maxHeight) =>

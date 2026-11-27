@@ -3,11 +3,11 @@ using System.Security.Cryptography;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// Servers that can't be called (core section 7.5): one that can connect
+/// Servers that can't be called (MSFP core section 7.5): one that can connect
 /// out but can't be connected to says so with inbound false in its pair
 /// and hello messages. Its peers then never connect to it, and it asks
 /// them, on a schedule, for what it would otherwise be told. Its address
-/// never resolves (core section 5.2): https://msfp-&lt;26 characters&gt;.invalid,
+/// never resolves (MSFP core section 5.2): https://msfp-&lt;26 characters&gt;.invalid,
 /// made once and kept.
 /// </summary>
 public static class Uncallables
@@ -43,7 +43,7 @@ public static class Uncallables
 
     /// <summary>
     /// Accepts the address of a server that can't be called in its one
-    /// form (core section 5.2): https://msfp-, 26 characters of a-z 2-7
+    /// form (MSFP core section 5.2): https://msfp-, 26 characters of a-z 2-7
     /// that read back as exactly 16 bytes (the 2 unused bits of the last
     /// zero), .invalid, nothing else.
     /// </summary>
@@ -91,7 +91,7 @@ public static class Uncallables
 
     /// <summary>
     /// Checks a message's inbound against the address it is read with
-    /// (core sections 5.2 and 9.2): a sender saying it can't be called must
+    /// (MSFP core sections 5.2 and 9.2): a sender saying it can't be called must
     /// have an address of that form. address is the message's own, or, in a
     /// hello without one, the one stored for its sender. A request that
     /// fails this is a bad body; an answer, a badly signed one.
@@ -129,7 +129,7 @@ public static class Uncallables
         Vary(HelloWait(waiting, gone, sincePair), Random.Shared.NextDouble());
 }
 
-/// <summary>A signed refusal's retryAfter (core section 8.3).</summary>
+/// <summary>A signed refusal's retryAfter (MSFP core section 8.3).</summary>
 public static class RetryAfter
 {
     /// <summary>The longest a signed refusal may ask a caller to wait, in seconds: an hour.</summary>

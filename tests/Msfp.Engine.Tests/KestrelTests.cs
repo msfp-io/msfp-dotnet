@@ -204,7 +204,7 @@ public sealed class KestrelTests
         await b.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.Master }, "", master);
         Assert.Equal(HostKit.FilledMaster, master.Text);
         // The media playlist first: the owning server serves only the names
-        // its playlists gave (media section 1).
+        // its playlists gave (MSFP Media fetching 1).
         await b.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.Playlist, Name = "v0.m3u8" }, "", new MemorySink());
         var part = new MemorySink();
         await b.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.Segment, Name = "seg0.m4s" }, "bytes=2-5", part);
@@ -263,7 +263,7 @@ public sealed class KestrelTests
         await b.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.Master }, "", master);
         Assert.Equal(HostKit.FilledMaster, master.Text);
         // The media playlist first: the owning server serves only the names
-        // its playlists gave (media section 1).
+        // its playlists gave (MSFP Media fetching 1).
         await b.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.Playlist, Name = "v0.m3u8" }, "", new MemorySink());
         var part = new MemorySink();
         await b.Engine.FetchAsync(pb.Id, new MediaPath { Kind = MediaKind.Segment, Name = "seg0.m4s" }, "bytes=2-5", part);

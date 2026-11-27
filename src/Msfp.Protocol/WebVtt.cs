@@ -14,13 +14,13 @@ namespace Msfp.Protocol;
 /// </summary>
 public static partial class WebVtt
 {
-    /// <summary>The most a WebVTT part may be, in bytes, as read: 5 MiB (video section 6.3, media section 2.4).</summary>
+    /// <summary>The most a WebVTT part may be, in bytes, as read: 5 MiB (MSFP Media video 6.3, MSFP Media fetching 2.4).</summary>
     public const int MaxWebVtt = 5 << 20;
 
     /// <summary>The most a whole text track may be, in bytes, as read, WebVTT or ASS: 16 MiB.</summary>
     public const int MaxWholeText = 16 << 20;
 
-    /// <summary>How long a part of subtitles covers, in seconds (media section 3.4): part n covers n × 120 to (n + 1) × 120 seconds, from 10 seconds early.</summary>
+    /// <summary>How long a part of subtitles covers, in seconds (MSFP Media fetching 3.4): part n covers n × 120 to (n + 1) × 120 seconds, from 10 seconds early.</summary>
     public const int StretchSeconds = 120;
 
     private const int MaxCues = 50_000;       // a part's cues, once rebuilt
@@ -36,7 +36,7 @@ public static partial class WebVtt
     // background colour.
     private static readonly string[] CueColours = ["white", "lime", "cyan", "red", "yellow", "magenta", "blue", "black"];
 
-    // Cue settings (video section 6.3): each kept in this order, when it is
+    // Cue settings (MSFP Media video 6.3): each kept in this order, when it is
     // the first of its name and valid.
     private static readonly string[] CueSettingNames = ["line", "position", "size", "align"];
 
@@ -56,7 +56,7 @@ public static partial class WebVtt
     private static partial Regex CueSize();
 
     /// <summary>
-    /// Rebuilds a WebVTT part (a stretch) as video section 6.3 says: false
+    /// Rebuilds a WebVTT part (a stretch) as MSFP Media video 6.3 says: false
     /// when it is over <see cref="MaxWebVtt"/>, doesn't start with WEBVTT, or
     /// holds more than 50,000 cues once rebuilt.
     /// </summary>
@@ -77,7 +77,7 @@ public static partial class WebVtt
     /// Part <paramref name="n"/> of a whole WebVTT track, for an owning
     /// server that holds its subtitles as one file: the track rebuilt as
     /// <see cref="TryRebuildWhole"/> does, keeping the cues that show during
-    /// the part's stretch (media section 3.4). A part with no cue is
+    /// the part's stretch (MSFP Media fetching 3.4). A part with no cue is
     /// "WEBVTT" and a line feed. False when the track isn't WebVTT within a
     /// whole track's bounds, or its part holds more cues than a part may.
     /// </summary>
@@ -279,7 +279,7 @@ public static partial class WebVtt
     // the line is cleaned).
     private readonly record struct CuePiece(bool Tag, string Text);
 
-    // Whether a tag is kept (video section 6.3, step 3): <i>, <b>, their
+    // Whether a tag is kept (MSFP Media video 6.3, step 3): <i>, <b>, their
     // end tags, </c>, or <c.> with one colour class, or one text colour and
     // one background colour.
     private static bool KeptCueTag(string t)
@@ -357,7 +357,7 @@ public static partial class WebVtt
         return b.ToString();
     }
 
-    // Cleans a cue text line, in video section 6.3's steps: its kept tags
+    // Cleans a cue text line, in MSFP Media video 6.3's steps: its kept tags
     // and its text, escaped, or null when no text is left.
     private static List<CuePiece>? CleanCueLine(string s)
     {

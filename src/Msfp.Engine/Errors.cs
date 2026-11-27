@@ -11,7 +11,7 @@ public enum MsfpError
     Internal = 0,
 
     // A peer's refusals, as the engine reports them for calls it makes
-    // (MSFP core section 8.2).
+    // (MSFP Media base 4, MSFP core section 8.2).
 
     /// <summary>No such thing here, or a peer's signed 404 not-found (no such title, or not paired yet).</summary>
     NotFound,
@@ -41,10 +41,27 @@ public enum MsfpError
     PlaybackStopped,
 
     /// <summary>
-    /// The owning server won't serve the delivery asked of that copy (MSFP
-    /// playback section 2.5): ask again with another delivery, or without one.
+    /// The owning server won't serve the delivery asked of that copy, as such
+    /// (MSFP Media playing 2.5): ask again with another delivery
+    /// (<see cref="MsfpException.Instead"/> names those it would serve, when
+    /// it says), or without one.
     /// </summary>
     DeliveryRefused,
+
+    /// <summary>
+    /// The owning server doesn't make a target the play names: a remux's
+    /// media type, a transcode codec, a range, a copy the segment format can't
+    /// carry, a subtitle to burn (MSFP Media playing 2.5): ask again with
+    /// other targets (<see cref="MsfpException.Instead"/>), another delivery,
+    /// or without one.
+    /// </summary>
+    TargetRefused,
+
+    /// <summary>
+    /// The peer held the title for this server and no longer does (MSFP Media
+    /// base 4): drop it; its titles are read again.
+    /// </summary>
+    Gone,
 
     /// <summary>
     /// A restart's copy isn't the one being read any more (another etag): its
@@ -209,10 +226,20 @@ public sealed class MsfpException : Exception
     /// </summary>
     internal string? Failure { get; init; }
 
+    /// <summary>
+    /// For <see cref="MsfpError.DeliveryRefused"/> and
+    /// <see cref="MsfpError.TargetRefused"/> of a play: what the peer names
+    /// that it would serve instead, of the same copy and track for the same
+    /// purpose (MSFP Media base 4): at most 4, each the delivery with its
+    /// media type or targets. A hint: a play asking for one may still be
+    /// refused. Empty for any other error.
+    /// </summary>
+    public IReadOnlyList<Protocol.Instead> Instead { get; init; } = [];
+
     /// <summary>The error is a peer's signed refusal (a reading's <see cref="ReadFailure.Refused"/>).</summary>
     internal bool SignedRefusal { get; init; }
 
-    /// <summary>For a signed refusal: its problem type when it is one of core section 8.2's; null otherwise.</summary>
+    /// <summary>For a signed refusal: its problem type when it is one of MSFP Media base 4's or MSFP core section 8.2's; null otherwise.</summary>
     internal string? Refusal { get; init; }
 
     /// <summary>An error of code Internal (the forms .NET expects of an exception).</summary>
@@ -253,9 +280,12 @@ public sealed class MsfpException : Exception
     }
 }
 
-/// <summary>A problem document's type, as MSFP core section 8.2 lists them.</summary>
+/// <summary>A problem document's type, as MSFP Media base 4 and MSFP core section 8.2 list them.</summary>
 internal static class ProblemType
 {
+    internal const string Target = "target-refused";
+    internal const string Gone = "gone";
+    internal const string Unreachable = "unreachable";
     internal const string NotFound = "not-found";
     internal const string NotSupported = "not-supported";
     internal const string Invalid = "invalid-request";
@@ -273,24 +303,10 @@ internal static class ProblemType
 internal static class Problems
 {
     /// <summary>
-    /// Each type's status and title (the titles are examples, as section 8.2
-    /// says; these are its own).
+    /// Each type's status and title (the titles are examples, as MSFP Media
+    /// base 4 and MSFP core section 8.2 say; these are its own).
     /// </summary>
-    internal static readonly IReadOnlyDictionary<string, (int Status, string Title)> ByType =
-        new Dictionary<string, (int Status, string Title)>(StringComparer.Ordinal)
-        {
-            [ProblemType.NotFound] = (404, "Not found"),
-            [ProblemType.NotSupported] = (404, "Not supported"),
-            [ProblemType.Invalid] = (400, "Invalid request"),
-            [ProblemType.Rotation] = (409, "Rotation refused"),
-            [ProblemType.StreamLimit] = (409, "Too many streams on this account"),
-            [ProblemType.NotPlayable] = (409, "This item can't be played"),
-            [ProblemType.Delivery] = (409, "This delivery isn't served"),
-            [ProblemType.Stopped] = (410, "Playback was stopped"),
-            [ProblemType.RateLimited] = (429, "Too many requests"),
-            [ProblemType.Internal] = (500, "Internal error"),
-            [ProblemType.ServerBusy] = (503, "The server is busy; try again shortly"),
-        };
+    internal static readonly IReadOnlyDictionary<string, (int Status, string Title)> ByType = Protocol.Problems.All;
 
     /// <summary>
     /// What a peer's signed refusal means, as an engine error (engine.md
@@ -301,11 +317,13 @@ internal static class Problems
     internal static MsfpException RefusalError(int status, string type) => status switch
     {
         404 when type == ProblemType.NotSupported => new MsfpException(MsfpError.NotSupported),
+        404 when type == ProblemType.Gone => new MsfpException(MsfpError.Gone),
         404 => new MsfpException(MsfpError.NotFound),
         400 => new MsfpException(MsfpError.InvalidRequest),
         409 when type == ProblemType.Rotation => new MsfpException(MsfpError.RotationRefused),
         409 when type == ProblemType.NotPlayable => new MsfpException(MsfpError.NotPlayable),
         409 when type == ProblemType.Delivery => new MsfpException(MsfpError.DeliveryRefused),
+        409 when type == ProblemType.Target => new MsfpException(MsfpError.TargetRefused),
         409 => new MsfpException(MsfpError.StreamLimitReached),
         410 => new MsfpException(MsfpError.PlaybackStopped),
         429 => new MsfpException(MsfpError.RateLimited),

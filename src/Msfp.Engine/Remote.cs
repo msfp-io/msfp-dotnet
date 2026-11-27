@@ -9,8 +9,8 @@ namespace Msfp;
 
 /// <summary>
 /// What the host asks of a peer's title for one viewer session: one
-/// playback serves one viewer session, never two (MSFP playback section
-/// 2.7). The host chooses the copy and its tracks: it has every copy's facts
+/// playback serves one viewer session, never two (MSFP
+/// Media playing 2.7). The host chooses the copy and its tracks: it has every copy's facts
 /// in the catalog and knows its device.
 /// </summary>
 public sealed record PlayRequest
@@ -22,7 +22,7 @@ public sealed record PlayRequest
     /// <see cref="Playback.PurposePlay"/> ("" too), <see cref="Playback.PurposeDownload"/>
     /// or <see cref="Playback.PurposeScan"/>: a download only of a peer whose
     /// limits allow downloads, of delivery file or a sized transcode (MSFP
-    /// playback section 7); a scan only of a peer whose limits allow scans,
+    /// Media playing 6); a scan only of a peer whose limits allow scans,
     /// always of delivery file (section 8), for the host's media server's
     /// reads to list a file, never to watch it.
     /// </summary>
@@ -37,12 +37,16 @@ public sealed record PlayRequest
     /// or keep; those left out take the baseline's) or "": the peer then
     /// serves the baseline, H.264 High 4.1 8-bit SDR and AAC-LC stereo in
     /// complete HLS (AAC alone for a copy with no video), which every viewer's
-    /// server must play (MSFP playback section 2.7). The host chooses it from
+    /// server must play (MSFP Media playing 2.7). The host chooses it from
     /// the copy's facts and what its device plays: a copy whose mediaType,
     /// codec or threeD it doesn't know, or whose codecs it can't read
-    /// (<see cref="Rfc6381.Read"/>), is one it can't play as it is (core
-    /// section 8.5). A delivery refused is <see cref="MsfpError.DeliveryRefused"/>:
-    /// ask again with another one, or none.
+    /// (<see cref="Rfc6381.Read"/>), is one it can't play as it is (MSFP
+    /// Media base 3). A delivery refused is <see cref="MsfpError.DeliveryRefused"/>,
+    /// a target refused <see cref="MsfpError.TargetRefused"/>: ask again with
+    /// another one (<see cref="MsfpException.Instead"/> names those the peer
+    /// would serve, when it says), or none. The engine never sends a
+    /// capability list: between servers the ask is explicit (MSFP Media
+    /// playing 2).
     /// </summary>
     public string Delivery { get; init; } = "";
 
@@ -77,23 +81,25 @@ public sealed record PlayRequest
     public string VersionId { get; init; } = "";
 
     /// <summary>
-    /// For a track, the tracks to play after it, at most 5 (MSFP music
-    /// section 5.2), each with its copy and its own delivery when it names
+    /// For a track, the tracks to play after it, at most 5 (MSFP
+    /// Media music 5.2), each with its copy and its own delivery when it names
     /// them: prepared under the same playback.
     /// </summary>
     public IReadOnlyList<QueuedTrack> Queue { get; init; } = [];
 
     /// <summary>
-    /// A RemotePlayback of the same viewer to stop first: to change the
-    /// audio, the version or the quality, the old playback stops and a new
-    /// one starts; its stop is waited for up to 5 seconds, so that it doesn't
-    /// count against the pairing's streams.
+    /// A RemotePlayback of the same viewer that this one replaces: to change
+    /// the audio, the version, the delivery or the quality (MSFP Media
+    /// playing 2.3). The play names it to the peer, which counts both as one
+    /// stream; once the new one is answered, the old one is over, and
+    /// forgotten here. When the play is refused, the old one stays as it
+    /// was. One on another peer is stopped first.
     /// </summary>
     public string Replaces { get; init; } = "";
 }
 
 /// <summary>
-/// An entry of a music play's queue (MSFP music section 5.2): a track's key,
+/// An entry of a music play's queue (MSFP Media music 5.2): a track's key,
 /// the copy it plays ("": its first), and its own delivery with its own
 /// MediaType or Transcode ("": the request's). Go's QueueEntry
 /// (wire.QueueAsk); named apart from <see cref="Protocol.QueueEntry"/>, an
@@ -206,7 +212,7 @@ public sealed record RemotePlayback
     public int Sheets { get; init; }
 
     /// <summary>
-    /// The queued tracks the peer prepared (music section 5.2), each fetched
+    /// The queued tracks the peer prepared (MSFP Media music 5.2), each fetched
     /// with <see cref="MediaPath.Entry"/> its Place + 1.
     /// </summary>
     public IReadOnlyList<RemoteEntry> Queue { get; init; } = [];
@@ -227,8 +233,8 @@ public sealed record RemotePlayback
 public sealed record RemoteEntry(int Place, string Title, string VersionId, string Method, string Protocol, string MimeType, long DurationMs);
 
 /// <summary>
-/// What a viewer did with a download away from this server (MSFP playback
-/// sections 3, 4 and 7): where it was, when, in which track of a queue (its
+/// What a viewer did with a download away from this server (MSFP
+/// Media playing 3, 4 and 6): where it was, when, in which track of a queue (its
 /// key; "" for the title), and whether it stopped there.
 /// </summary>
 /// <param name="PositionMs">Where it was.</param>
@@ -245,7 +251,7 @@ public sealed record OfflineReport(long PositionMs, DateTimeOffset At, string Ti
 /// </summary>
 internal sealed record RemoteStream(string Protocol, long Size, string Etag, string MediaType);
 
-/// <summary>A download on a peer, kept for its late reports (playback section 7) after it stopped here.</summary>
+/// <summary>A download on a peer, kept for its late reports (MSFP Media playing 6) after it stopped here.</summary>
 internal sealed record PastDownload(string Peer, string TheirId, string Title, IReadOnlyList<string> Queue, DateTimeOffset PlayedAt);
 
 /// <summary>A playback on a peer, live.</summary>
@@ -274,6 +280,9 @@ internal sealed class RemotePlay
 
     public CancellationTokenSource Ended { get; } = new();
 
+    /// <summary>The interval of progress the peer gave (progressSeconds).</summary>
+    public TimeSpan Every { get; init; } = Playback.ProgressInterval(Playback.DefaultProgressSeconds);
+
     // Under the remotes' lock. Told is when the peer was last sent progress
     // (null: never), Fresh says the host reported since; Track is the queued
     // track playing ("" for the title).
@@ -298,8 +307,8 @@ internal sealed class RemotePlay
     public Dictionary<int, int> FontBytes { get; } = [];
 }
 
-// Playback, on the viewer's side (MSFP playback sections 2 to 8, video
-// section 5, music section 5): this server's people play, download or scan
+// Playback, on the viewer's side (MSFP Media playing, MSFP playback sections 2
+// to 8, MSFP Media video 5, MSFP Media music 5): this server's people play, download or scan
 // a peer's title. The host decides who may, and what to ask (the copy, the
 // delivery: it has every copy's facts and knows its device; the engine says
 // nothing of the device); the engine calls play, checks and cleans every member of the
@@ -309,13 +318,9 @@ internal sealed class RemotePlay
 // restart the playbacks left on peers.
 public sealed partial class MsfpEngine
 {
-    // How often progress is sent while the viewer watches (playback section
-    // 3): never more often, but on a pause or a resume, and every 45 seconds
-    // while the host reports.
-    internal static readonly TimeSpan TellEvery = TimeSpan.FromSeconds(45);
-
-    // How long a play waits for the stop of the playback it replaces
-    // (playback section 2.3); how often a stop is sent when there's no answer.
+    // How long a play waits for the stops on their way to the same peer, so
+    // that they don't count against its streams; how often a stop is sent
+    // when there's no answer.
     private static readonly TimeSpan ReplaceWait = TimeSpan.FromSeconds(5);
     private const int StopTries = 3;
 
@@ -324,8 +329,8 @@ public sealed partial class MsfpEngine
     private readonly Dictionary<string, int> _stopping = new(StringComparer.Ordinal);
     private int _leftoversStopped;
 
-    // A transcode's targets as sent, in the steps MSFP gives them (playback
-    // section 2.7): the bitrate a whole 1,000, from 1,000; the height stepped
+    // A transcode's targets as sent, in the steps MSFP gives them (MSFP
+    // Media playing 2.7): the bitrate a whole 1,000, from 1,000; the height stepped
     // down to one of Video.Heights (480 below 480); video's targets left out
     // for a track.
     internal static TranscodeTargets? TargetsAsSent(TranscodeTargets? t, bool video)
@@ -352,8 +357,10 @@ public sealed partial class MsfpEngine
     /// when the peer can't be used, or its last limits say no stream (no
     /// downloads, no scans). StreamLimitReached, ServerBusy (no answer, none
     /// signed, or a 503) and BackingOff (a 429, or calls unanswered lately)
-    /// mean busy now; DeliveryRefused, ask with another delivery; NotPlayable
-    /// and the others, not playable (MSFP playback section 2.5).
+    /// mean busy now; DeliveryRefused and TargetRefused, ask with another
+    /// delivery or other targets (<see cref="MsfpException.Instead"/>); Gone,
+    /// the peer no longer holds the title (its titles are read again);
+    /// NotPlayable and the others, not playable (MSFP Media playing 2.5).
     /// </summary>
     /// <param name="peer">The peer's ID.</param>
     /// <param name="request">What to play.</param>
@@ -363,6 +370,7 @@ public sealed partial class MsfpEngine
     /// <see cref="MsfpError.NotSupported"/>, <see cref="MsfpError.RefusedDestination"/>,
     /// <see cref="MsfpError.CertificateRefused"/>, <see cref="MsfpError.StreamLimitReached"/>,
     /// <see cref="MsfpError.ServerBusy"/>, <see cref="MsfpError.BackingOff"/>, <see cref="MsfpError.DeliveryRefused"/>,
+    /// <see cref="MsfpError.TargetRefused"/>, <see cref="MsfpError.Gone"/>,
     /// <see cref="MsfpError.NotPlayable"/>, <see cref="MsfpError.InvalidRequest"/>.</exception>
     public async Task<RemotePlayback> PlayAsync(string peer, PlayRequest request, CancellationToken ct = default)
     {
@@ -413,8 +421,12 @@ public sealed partial class MsfpEngine
             }
         }
 
-        if (request.Replaces.Length > 0)
+        // The playback it replaces: named to the peer when it is there (MSFP
+        // Media playing 2.3); one elsewhere is stopped first.
+        RemotePlay? old = null;
+        if (request.Replaces.Length > 0 && (old = LiveRemote(request.Replaces)) is not null && old.Peer != p.Id)
         {
+            old = null;
             try
             {
                 await StopAsync(request.Replaces, -1, ct).ConfigureAwait(false);
@@ -490,6 +502,7 @@ public sealed partial class MsfpEngine
             .Integer("startPositionMs", NonZero(start)).Integer("maxBitrateKbps", NonZero(kbps))
             .String("audioTrack", Playback.TryTrackId(request.AudioTrack, 'a', out _) ? request.AudioTrack : null)
             .String("versionId", Playback.Id(request.VersionId) ? request.VersionId : null)
+            .String("replaces", old?.TheirId)
             .Node("queue", queue));
         Reply r;
         try
@@ -498,7 +511,7 @@ public sealed partial class MsfpEngine
         }
         catch (MsfpException e) when (e.Code == MsfpError.Unreachable)
         {
-            // No answer, or none signed: busy now (playback section 2.5).
+            // No answer, or none signed: busy now (MSFP Media playing 2.5).
             throw new MsfpException(MsfpError.ServerBusy, e.Message, e);
         }
 
@@ -507,7 +520,9 @@ public sealed partial class MsfpEngine
             case 409 when r.Problem == ProblemType.NotPlayable:
                 throw new MsfpException(MsfpError.NotPlayable);
             case 409 when r.Problem == ProblemType.Delivery:
-                throw new MsfpException(MsfpError.DeliveryRefused);
+                throw new MsfpException(MsfpError.DeliveryRefused) { Instead = Protocol.Problems.ReadInstead(r.Body, purpose) };
+            case 409 when r.Problem == ProblemType.Target:
+                throw new MsfpException(MsfpError.TargetRefused) { Instead = Protocol.Problems.ReadInstead(r.Body, purpose) };
             case 409:
                 throw new MsfpException(MsfpError.StreamLimitReached);
             case 503:
@@ -516,6 +531,11 @@ public sealed partial class MsfpEngine
                 throw new MsfpException(MsfpError.BackingOff);
             case 404 when r.Problem == ProblemType.NotSupported:
                 throw new MsfpException(MsfpError.NotSupported);
+            case 404 when r.Problem == ProblemType.Gone:
+                // Held for this server, and no longer: its titles are read
+                // again (MSFP Media base 4).
+                ReadSoon(p.Id);
+                throw new MsfpException(MsfpError.Gone);
             case not 200:
                 if (r.Status == 404)
                 {
@@ -545,8 +565,15 @@ public sealed partial class MsfpEngine
 
         rm.View = rm.View with { Id = NewId("r", 16) };
         rm.Position = rm.View.PositionMs;
+        if (old is not null)
+        {
+            // Answered: the peer ended the old one (MSFP Media playing 2.3).
+            EndRemote(old, EndReason.Replaced, false);
+            await ForgetLeftoverAsync(old, ct).ConfigureAwait(false);
+        }
+
         // Kept until stopped, so that after a restart the peer is told it's
-        // over (playback section 6.3).
+        // over (MSFP Media playing 5).
         try
         {
             await _store.UpdateAsync(tx => tx.PutLeftoverAsync(new Leftover(p.Id, rm.TheirId)), ct).ConfigureAwait(false);
@@ -597,8 +624,8 @@ public sealed partial class MsfpEngine
         return rm.View;
     }
 
-    // Checks and cleans a peer's play answer (playback section 2.3, video
-    // section 5.3, music section 5.2), its URLs built from the peer's stream
+    // Checks and cleans a peer's play answer (MSFP Media playing 2.3, MSFP
+    // Media video 5.3, MSFP Media music 5.2), its URLs built from the peer's stream
     // root and the answer's ticket: null, and why, when it breaks a "must".
     private async Task<(RemotePlay? Remote, string Why)> ReadPlayAsync(PeerRecord p, byte[] raw, PlayRequest req, IReadOnlyList<QueueAsk> asked,
         string purpose, bool audioOnly, CancellationToken ct)
@@ -623,7 +650,11 @@ public sealed partial class MsfpEngine
             a = again;
         }
 
-        var rm = new RemotePlay { Peer = p.Id, PeerName = p.Name, TheirId = a.Id, Base = MediaUrls.Base(root, a.Ticket), AudioOnly = audioOnly };
+        var rm = new RemotePlay
+        {
+            Peer = p.Id, PeerName = p.Name, TheirId = a.Id, Base = MediaUrls.Base(root, a.Ticket), AudioOnly = audioOnly,
+            Every = Playback.ProgressInterval(a.ProgressSeconds),
+        };
         var changed = c is null || a.ReadTitleAgain;
         var view = new RemotePlayback
         {
@@ -680,8 +711,8 @@ public sealed partial class MsfpEngine
         return (rm, "");
     }
 
-    // Whether a transcode's targets are of their forms (playback section
-    // 2.7): codecs and the range tokens.
+    // Whether a transcode's targets are of their forms (MSFP
+    // Media playing 2.7): codecs and the range tokens.
     private static bool TargetsWellFormed(TranscodeTargets t) =>
         new[] { t.VideoCodec, t.AudioCodec, t.Range }.All(x => x.Length == 0 || Names.IsToken(x));
 
@@ -709,13 +740,14 @@ public sealed partial class MsfpEngine
 
     /// <summary>
     /// Starts a new playback of the copy a playback of delivery file was
-    /// reading, once it ended (a long pause: MSFP playback section 2.7), so
+    /// reading, once it ended (a long pause: MSFP Media playing 2.7), so
     /// that the host goes on reading at the same byte: the same title, copy,
     /// purpose and delivery, only if the new answer's etag is the one it was
     /// reading; else the new playback is stopped and
     /// <see cref="MsfpError.CopyChanged"/> says the title must be read again.
-    /// The old one is stopped first if it is still live. Make one only for a
-    /// read that arrives.
+    /// The old one, if it is still live, is the one the new play replaces
+    /// (<see cref="PlayRequest.Replaces"/>). Make one only for a read that
+    /// arrives.
     /// </summary>
     /// <param name="old">The playback that was read.</param>
     /// <param name="ct">Cancels.</param>
@@ -729,20 +761,10 @@ public sealed partial class MsfpEngine
             throw new MsfpException(MsfpError.InvalidRequest, "only a playback of delivery file restarts");
         }
 
-        if (LiveRemote(old.Id) is not null)
-        {
-            try
-            {
-                await StopAsync(old.Id, -1, ct).ConfigureAwait(false);
-            }
-            catch (MsfpException e) when (e.Code == MsfpError.NotFound)
-            {
-            }
-        }
-
         var pb = await PlayAsync(old.Peer, new PlayRequest
         {
             Title = old.Title, Purpose = old.Purpose, Delivery = Playback.DeliveryFile, VersionId = old.VersionId, AudioTrack = old.AudioTrack,
+            Replaces = LiveRemote(old.Id) is not null ? old.Id : "",
         }, ct).ConfigureAwait(false);
         if (pb.Etag != old.Etag || pb.VersionId != old.VersionId)
         {
@@ -785,17 +807,19 @@ public sealed partial class MsfpEngine
     }
 
     /// <summary>
-    /// Notes where a viewer is in a playback on a peer (MSFP playback section
-    /// 3): the peer is told at the first report, at once on a pause or a
-    /// resume, and otherwise every 45 seconds at most while the host reports,
-    /// by RunAsync's work of each second when no report comes at the time. It
+    /// Notes where a viewer is in a playback on a peer, and whether it is
+    /// paused (MSFP Media playing 3): the peer is told at the first report, at
+    /// once on a pause or a resume, and otherwise about every progressSeconds
+    /// its answer gave (45 to 120, 60 by default), while the host reports, by
+    /// RunAsync's work of each second when no report comes at the time. It
     /// returns at once. A 410 from the peer ends the playback
     /// (<see cref="RemotePlaybackEnded"/>). A scan sends none.
     /// <para>
-    /// The peer ends a playback it hears nothing of for 2 minutes (playback
-    /// section 6.3): while a viewer is on it, paused too, call Progress at
-    /// least every minute, whatever the player reports. Calls cost nothing
-    /// more: the peer still gets one report per 45 seconds at most.
+    /// The peer ends a playback it hears nothing of for its idle limit, twice
+    /// that interval, 90 seconds at the least (MSFP Media playing 5): while a
+    /// viewer is on it, paused too, call Progress at least every minute,
+    /// whatever the player reports. Calls cost nothing more: the peer still
+    /// gets one report per interval.
     /// </para>
     /// </summary>
     /// <param name="id">The engine's ID of the playback.</param>
@@ -816,7 +840,7 @@ public sealed partial class MsfpEngine
             rm.Position = Math.Min(Math.Max(positionMs, 0), Playback.MaxPositionMs);
             rm.Paused = paused;
             rm.Fresh = true;
-            if (rm.Told is not { } told || paused != rm.ToldPaused || now - told >= TellEvery)
+            if (rm.Told is not { } told || paused != rm.ToldPaused || now - told >= rm.Every)
             {
                 body = Tell(rm, now);
             }
@@ -831,7 +855,7 @@ public sealed partial class MsfpEngine
     /// <summary>
     /// Says which track of a playback's queue plays now (its key; the
     /// playback's own title, or one of its Queue): progress and stop carry
-    /// it, positions then in that track (MSFP music section 5.2).
+    /// it, positions then in that track (MSFP Media music 5.2).
     /// </summary>
     /// <param name="id">The engine's ID of the playback.</param>
     /// <param name="title">The track's key.</param>
@@ -862,11 +886,13 @@ public sealed partial class MsfpEngine
         rm.Told = now;
         rm.ToldPaused = rm.Paused;
         rm.Fresh = false;
-        return JsonOut.Object(o => o.String("id", rm.TheirId).Integer("positionMs", rm.Position).String("title", Nonempty(rm.Track)));
+        return JsonOut.Object(o => o.String("id", rm.TheirId).Integer("positionMs", rm.Position).String("title", Nonempty(rm.Track))
+            .Bool("paused", rm.Paused ? true : null));
     }
 
     // Sends progress for the playbacks on peers the host reported since they
-    // were last sent it, 45 seconds ago or more.
+    // were last sent it, an interval ago or more: a host whose reports don't
+    // fall on the time still keeps its playbacks there told every interval.
     private void TellWatched()
     {
         var now = Now();
@@ -875,7 +901,7 @@ public sealed partial class MsfpEngine
         {
             foreach (var rm in _remotes.Values)
             {
-                if (rm.Fresh && (rm.Told is not { } told || now - told >= TellEvery))
+                if (rm.Fresh && (rm.Told is not { } told || now - told >= rm.Every))
                 {
                     send.Add((rm, Tell(rm, now)));
                 }
@@ -923,7 +949,7 @@ public sealed partial class MsfpEngine
     /// <summary>
     /// Sends a download's late report, as progress or stop with at, when the
     /// viewer's device syncs: for 30 days after its play, even once it
-    /// stopped here (MSFP playback section 7). Send them in the order of their
+    /// stopped here (MSFP Media playing 6). Send them in the order of their
     /// At.
     /// </summary>
     /// <param name="id">The engine's ID of the download.</param>
@@ -1170,7 +1196,7 @@ public sealed partial class MsfpEngine
     }
 
     // Tells peers the playbacks this server had on them before it started
-    // are over (playback section 6.3): once, at the first run.
+    // are over (MSFP Media playing 5): once, at the first run.
     private async Task StopLeftoversAsync(CancellationToken ct)
     {
         if (Interlocked.Exchange(ref _leftoversStopped, 1) != 0)

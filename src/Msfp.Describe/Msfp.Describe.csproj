@@ -6,7 +6,7 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IsPackable>true</IsPackable>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
-    <Description>MSFP's copies from media files: the media type from a file's first bytes, ffprobe run safely (the sniffed demuxer, the file protocol only, bounded runs, codec records read apart, attachments never read), RFC 6381 codecs strings from the codec records, and the copy shaped in MSFP's vocabularies (video sections 3.2 to 3.6, the registry). The counterpart of msfp-go's describe package.</Description>
+    <Description>MSFP's copies from media files: the media type from a file's first bytes, ffprobe run safely (the sniffed demuxer, the file protocol only, bounded runs, codec records read apart, attachments never read), RFC 6381 codecs strings from the codec records, and the copy shaped in MSFP Media's vocabularies (MSFP Media video 3.2 to 3.6, the registry). The counterpart of msfp-go's describe package.</Description>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Msfp.Protocol/Msfp.Protocol.csproj" />

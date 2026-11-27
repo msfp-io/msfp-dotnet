@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// The versions a hello lists (core section 10): the core versions its
+/// The versions a hello lists (MSFP core section 10): the core versions its
 /// sender speaks, and each part's. Two servers use, for the core and for
 /// each part, the highest version both list.
 /// </summary>
@@ -29,10 +29,10 @@ public sealed record Versions(IReadOnlyList<int> Core, IReadOnlyDictionary<strin
     /// <summary>The groups part: groups of servers, their events, mail and pairing through a group.</summary>
     public const string PartGroups = "groups";
 
-    /// <summary>How many entries of each list are read (core section 10.2).</summary>
+    /// <summary>How many entries of each list are read (MSFP core section 10.2).</summary>
     public const int MaxEntries = 8;
 
-    // What each part needs on to be on itself (core section 10.1).
+    // What each part needs on to be on itself (MSFP core section 10.1).
     private static readonly Dictionary<string, string[]> Needs = new(StringComparer.Ordinal)
     {
         [PartCatalog] = [],
@@ -43,15 +43,15 @@ public sealed record Versions(IReadOnlyList<int> Core, IReadOnlyDictionary<strin
         [PartGroups] = [],
     };
 
-    /// <summary>The parts this library knows, in the order a hello lists them (core section 10.1's table).</summary>
+    /// <summary>The parts this library knows, in the order a hello lists them (MSFP core section 10.1's table).</summary>
     public static IReadOnlyList<string> KnownParts { get; } = [PartCatalog, PartPlayback, PartMedia, PartVideo, PartMusic, PartGroups];
 
     /// <summary>None at all.</summary>
     public static Versions None { get; } = new([], new Dictionary<string, IReadOnlyList<int>>());
 
     /// <summary>
-    /// Reads a hello's core and parts members (null when absent) as core
-    /// section 10.2 says: absent means none. Entries beyond 8 and entries
+    /// Reads a hello's core and parts members (null when absent) as MSFP
+    /// core section 10.2 says: absent means none. Entries beyond 8 and entries
     /// that aren't non-negative integers are ignored, duplicates count
     /// once. A part this library doesn't know is ignored, whatever its
     /// value. A core or a known part's list that isn't a list, or parts
@@ -95,7 +95,7 @@ public sealed record Versions(IReadOnlyList<int> Core, IReadOnlyDictionary<strin
         return Read(core, parts, (hasCore, hasParts));
     }
 
-    private static List<int> ReadList(JsonNode? raw)
+    internal static List<int> ReadList(JsonNode? raw)
     {
         if (raw is not JsonArray entries)
         {
@@ -134,7 +134,7 @@ public sealed record Versions(IReadOnlyList<int> Core, IReadOnlyDictionary<strin
     }
 
     /// <summary>
-    /// What two servers use between them (core section 10.3): the core
+    /// What two servers use between them (MSFP core section 10.3): the core
     /// version, and each part that is on with its version. A part is on
     /// when both list a version of it, and every part it needs is on. Null
     /// when they have no core version in common: they can't talk, and no part is on.
@@ -196,7 +196,7 @@ public sealed record Versions(IReadOnlyList<int> Core, IReadOnlyDictionary<strin
     }
 }
 
-/// <summary>What two servers agreed on (core section 10.3).</summary>
+/// <summary>What two servers agreed on (MSFP core section 10.3).</summary>
 /// <param name="Core">The core version.</param>
 /// <param name="Parts">Each part that is on, with its version.</param>
 public sealed record Agreement(int Core, IReadOnlyDictionary<string, int> Parts)

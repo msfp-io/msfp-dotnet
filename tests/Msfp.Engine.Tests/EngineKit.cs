@@ -340,7 +340,7 @@ internal sealed class CallerNetwork(Network net) : HttpMessageHandler
     /// <summary>Connections to host fail, as to an address nothing listens at.</summary>
     public CallerNetwork Closed(string host) => Rule(host, _ => throw new HttpRequestException("connection refused: " + host));
 
-    /// <summary>Connections to host are refused destinations (core section 3.3).</summary>
+    /// <summary>Connections to host are refused destinations (MSFP core section 3.3).</summary>
     public CallerNetwork Refused(string host) =>
         Rule(host, _ => throw new HttpRequestException("refused", new MsfpException(MsfpError.RefusedDestination, host)));
 

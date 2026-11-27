@@ -2,8 +2,8 @@ using System.Globalization;
 
 namespace Msfp.Protocol;
 
-// What an owning server plays and serves for a play (MSFP playback sections
-// 2.2, 2.6 and 2.7): the copy and the audio the request names, else the
+// What an owning server plays and serves for a play (MSFP
+// Media playing 2.2, 2.6 and 2.7): the copy and the audio the request names, else the
 // first copy and the file's default audio; whether it refuses the delivery
 // asked of that copy (step 7); what the baseline serves without delivery;
 // and whether the playback takes a transcode. The viewer's server chooses:
@@ -52,25 +52,25 @@ public static partial class Playback
     }
 
     /// <summary>
-    /// Step 7 of playback section 2.2, the refusals MSFP itself names, each a
-    /// 409 delivery-refused: a delivery that isn't file, remux or transcode
-    /// (a token read at step 1, core section 8.5); a remux to a media type of
-    /// another subtype than mp2t or mp4 (<see cref="Names.RemuxSubtypes"/>),
-    /// or of the wrong top-level type (video/… for a copy with video, audio/…
-    /// for one without), or whose segment format can't carry the copy's
-    /// streams; a transcode codec the owning server doesn't encode (the video
-    /// codec only for a copy with video); a copied stream (<see cref="Names.Copy"/>)
-    /// that neither segment format carries; burnSubtitle with video copy; a
-    /// range other than sdr or keep, or one the owning server can't make
-    /// (for a copy with video whose video isn't copied); file of a copy of
-    /// several parts (whatever the purpose); file or remux of a play whose
-    /// copy's overall rate (size × 8 / durationMs) is above
+    /// Step 7 of MSFP Media playing 2.2, the refusals the language names.
+    /// 409 delivery-refused, the delivery as such: a delivery that isn't
+    /// file, remux or transcode (a token read at step 1, MSFP Media base 3);
+    /// file of a copy of several parts (whatever the purpose); file or remux
+    /// of a play whose copy's overall rate (size × 8 / durationMs) is above
     /// <paramref name="capKbps"/> (<see cref="PlayRequest.BitrateCap"/>, 0:
-    /// no cap); and a burnSubtitle the copy doesn't have. What the owning
-    /// server makes is <paramref name="makes"/> (null, or a null member: not
-    /// checked here). Null when none applies; an owning server may still
-    /// refuse for reasons of its own (its policy, what it can make of the
-    /// copy).
+    /// no cap). 409 target-refused, a target the source doesn't make: a
+    /// remux to a media type of another subtype than mp2t or mp4
+    /// (<see cref="Names.RemuxSubtypes"/>), or of the wrong top-level type
+    /// (video/… for a copy with video, audio/… for one without), or whose
+    /// segment format can't carry the copy's streams; a transcode codec the
+    /// source doesn't encode (the video codec only for a copy with video); a
+    /// copied stream (<see cref="Names.Copy"/>) that neither segment format
+    /// carries; burnSubtitle with video copy; a range other than sdr or keep,
+    /// or one the source can't make (for a copy with video whose video isn't
+    /// copied); and a burnSubtitle the copy doesn't have. What the source
+    /// makes is <paramref name="makes"/> (null, or a null member: not
+    /// checked here). Null when none applies; a source may still refuse for
+    /// reasons of its own (its policy, what it can make of the copy).
     /// </summary>
     /// <param name="request">The request, as <see cref="ReadPlay(ReadOnlySpan{byte}, Func{string, bool}?)"/> read it.</param>
     /// <param name="copy">The copy chosen (<see cref="ChooseCopy"/>).</param>
@@ -82,11 +82,12 @@ public static partial class Playback
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(copy);
         static PlayRefusal Refuse(string why) => new(409, ProblemDeliveryRefused, why);
+        static PlayRefusal RefuseTarget(string why) => new(409, ProblemTargetRefused, why);
         var hasVideo = copy.Video is not null;
         var audio = copy.AudioTracks.FirstOrDefault(a => a.Id == audioTrack);
         if (request.Delivery.Length > 0 && request.Delivery is not (DeliveryFile or DeliveryRemux or DeliveryTranscode))
         {
-            return Refuse("a delivery the owning server doesn't make");
+            return Refuse("a delivery the source doesn't make");
         }
 
         if (request.Delivery == DeliveryRemux)
@@ -96,17 +97,17 @@ public static partial class Playback
             var sub = slash < 0 ? "" : request.MediaType[(slash + 1)..];
             if (!Names.RemuxSubtypes.Contains(sub, StringComparer.Ordinal))
             {
-                return Refuse("a remux to a media type of another subtype than mp2t or mp4");
+                return RefuseTarget("a remux to a media type of another subtype than mp2t or mp4");
             }
 
             if (top != (hasVideo ? "video" : "audio"))
             {
-                return Refuse("a remux to " + request.MediaType + " of a copy that calls for " + (hasVideo ? "video/" : "audio/"));
+                return RefuseTarget("a remux to " + request.MediaType + " of a copy that calls for " + (hasVideo ? "video/" : "audio/"));
             }
 
             if (makes?.Carries(sub, audio?.Codec, copy.Video?.Codec) == false)
             {
-                return Refuse("a remux to a segment format that can't carry the copy's streams");
+                return RefuseTarget("a remux to a segment format that can't carry the copy's streams");
             }
         }
 
@@ -117,12 +118,12 @@ public static partial class Playback
             if (hasVideo && !videoCopy && t.VideoCodec.Length > 0 && makes?.VideoEncoders is { } ve &&
                 !ve.Contains(t.VideoCodec, StringComparer.Ordinal))
             {
-                return Refuse("a video codec the owning server doesn't encode");
+                return RefuseTarget("a video codec the source doesn't encode");
             }
 
             if (!audioCopy && t.AudioCodec.Length > 0 && makes?.AudioEncoders is { } ae && !ae.Contains(t.AudioCodec, StringComparer.Ordinal))
             {
-                return Refuse("an audio codec the owning server doesn't encode");
+                return RefuseTarget("an audio codec the source doesn't encode");
             }
 
             if ((videoCopy || audioCopy) && makes?.SegmentCodecs is not null)
@@ -131,25 +132,25 @@ public static partial class Playback
                 var a = audioCopy ? audio?.Codec : null;
                 if (!makes.Carries("mp2t", a, v) && !makes.Carries("mp4", a, v))
                 {
-                    return Refuse("a copied stream no segment format can carry");
+                    return RefuseTarget("a copied stream no segment format can carry");
                 }
             }
 
             if (videoCopy && t.BurnSubtitle.Length > 0)
             {
-                return Refuse("burnSubtitle with video copy");
+                return RefuseTarget("burnSubtitle with video copy");
             }
 
             if (hasVideo && !videoCopy && t.Range.Length > 0)
             {
                 if (t.Range is not (Names.RangeSdr or Names.RangeKeep))
                 {
-                    return Refuse("a range other than sdr or keep");
+                    return RefuseTarget("a range other than sdr or keep");
                 }
 
                 if (makes?.Ranges is { } ranges && !ranges.Contains(t.Range, StringComparer.Ordinal))
                 {
-                    return Refuse("a range the owning server can't make");
+                    return RefuseTarget("a range the source can't make");
                 }
             }
         }
@@ -167,15 +168,15 @@ public static partial class Playback
 
         if (request.Transcode is { BurnSubtitle.Length: > 0 } b && !copy.SubtitleTracks.Any(s => s.Id == b.BurnSubtitle))
         {
-            return Refuse("burnSubtitle isn't a subtitle track of the copy");
+            return RefuseTarget("burnSubtitle isn't a subtitle track of the copy");
         }
 
         return null;
     }
 
     /// <summary>
-    /// What the owning server serves of a copy without delivery (playback
-    /// section 2.7): the baseline, every stream already within it left
+    /// What the owning server serves of a copy without delivery (MSFP
+    /// Media playing 2.7): the baseline, every stream already within it left
     /// unchanged (<see cref="Names.Copy"/>), else converted to the baseline's
     /// codec; a remux when both are left unchanged, else a transcode. The
     /// video for a copy with video only: H.264 at most High profile and level
@@ -196,8 +197,8 @@ public static partial class Playback
     }
 
     /// <summary>
-    /// Whether a play of <paramref name="copy"/> takes a transcode (playback
-    /// sections 2.6 and 6): a delivery transcode, unless both its video and
+    /// Whether a play of <paramref name="copy"/> takes a transcode (MSFP
+    /// Media playing 2.6, MSFP playback section 6): a delivery transcode, unless both its video and
     /// its audio are copy; the baseline when it converts a stream
     /// (<see cref="Baseline"/>). A file or a remux never does.
     /// </summary>
@@ -240,7 +241,7 @@ public static partial class Playback
 }
 
 /// <summary>
-/// What an owning server makes, for step 7 of playback section 2.2
+/// What an owning server makes, for step 7 of MSFP Media playing 2.2
 /// (<see cref="Playback.RefuseDelivery"/>): a null member is not checked.
 /// </summary>
 public sealed record OwnerMakes
@@ -272,7 +273,7 @@ public sealed record OwnerMakes
 }
 
 /// <summary>
-/// What the baseline serves of a copy (playback section 2.7): each stream
+/// What the baseline serves of a copy (MSFP Media playing 2.7): each stream
 /// <see cref="Names.Copy"/>, left unchanged, or the baseline's codec; the
 /// method, remux or transcode.
 /// </summary>

@@ -4,7 +4,7 @@ using Msfp.Protocol;
 
 namespace Msfp;
 
-// Servers that can't be called (core section 7.5), this one and its peers.
+// Servers that can't be called (MSFP core section 7.5), this one and its peers.
 //
 // This server can't be called when its operator says so
 // (SetUncallableAsync): at home behind a router, say, it can connect out,
@@ -68,7 +68,7 @@ public sealed partial class MsfpEngine
     internal const int FailingCalls = 3;
 
     // How often, at most, a peer in state theirs is sent a hello while the
-    // panel is open (core section 7.1, step 7).
+    // panel is open (MSFP core section 7.1, step 7).
     internal static readonly TimeSpan CheckEvery = TimeSpan.FromSeconds(20);
 
     /// <summary>
@@ -76,8 +76,8 @@ public sealed partial class MsfpEngine
     /// On: the address becomes one of the .invalid form, made once and kept,
     /// with no former address (nothing calls either); live codes are
     /// withdrawn, and none is made (<see cref="MsfpError.NoCodes"/>); every
-    /// peer is sent a hello at once, then on the schedule of core section
-    /// 7.5 (RunAsync). Off: this server moves back to its address
+    /// peer is sent a hello at once, then on the schedule of MSFP
+    /// core section 7.5 (RunAsync). Off: this server moves back to its address
     /// (<see cref="MsfpConfig.Address"/>, or the last
     /// <see cref="SetAddressAsync"/>), announced as an address change once it
     /// reaches itself there; until then it still says it can't be called.
@@ -226,10 +226,10 @@ public sealed partial class MsfpEngine
     // What this server remembers of its calls to each peer.
 
     // Notes how a call to p went: whether it connected, for p's hello
-    // answers (callsFailed: core section 7.5); and whether it was answered by
+    // answers (callsFailed: MSFP core section 7.5); and whether it was answered by
     // p at its stored base: after FailingCalls answers in a row that weren't
-    // p's, its discovery document is fetched again, at most hourly (core
-    // section 11).
+    // p's, its discovery document is fetched again, at most hourly (MSFP
+    // core section 11).
     private void CalledPeer(PeerRecord p, MsfpException? error)
     {
         if (p.Id.Length == 0)

@@ -20,6 +20,10 @@ public class RefusalTests
         [ProblemType.RateLimited] = MsfpError.RateLimited,
         [ProblemType.Internal] = MsfpError.PeerFailed,
         [ProblemType.ServerBusy] = MsfpError.ServerBusy,
+        [ProblemType.Target] = MsfpError.TargetRefused,
+        [ProblemType.Gone] = MsfpError.Gone,
+        [ProblemType.Unreachable] = MsfpError.ServerBusy,
+        ["ticket-refused"] = MsfpError.NotFound,
     };
 
     [Fact]

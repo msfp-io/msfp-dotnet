@@ -5,7 +5,7 @@ using System.Text.Json.Nodes;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// A rotation statement (core section 12.2): a server moving from key Old
+/// A rotation statement (MSFP core section 12.2): a server moving from key Old
 /// to key New, committing to the key after New.
 /// </summary>
 /// <param name="Old">The key it moves from.</param>
@@ -17,7 +17,7 @@ namespace Msfp.Protocol;
 public sealed record Rotation(byte[] Old, byte[] New, byte[]? Next, long Date, byte[] OldSignature, byte[] NewSignature)
 {
     /// <summary>
-    /// The statement as rotate sends it (core section 9.3), and as a hello
+    /// The statement as rotate sends it (MSFP core section 9.3), and as a hello
     /// answer's rotation member carries it (section 12.4): newKey,
     /// nextCommitment (when there is one), date, oldSignature,
     /// newSignature. The old key isn't in it: the request is signed with it.
@@ -33,13 +33,13 @@ public sealed record Rotation(byte[] Old, byte[] New, byte[]? Next, long Date, b
     public byte[] Body() => JsonOut.Object(WriteBody);
 }
 
-/// <summary>A revocation statement (core section 12.6): a server saying its key Key is compromised.</summary>
+/// <summary>A revocation statement (MSFP core section 12.6): a server saying its key Key is compromised.</summary>
 /// <param name="Key">The key revoked.</param>
 /// <param name="Date">When, Unix seconds.</param>
 /// <param name="Signature">Its signature with Key.</param>
 public sealed record Revocation(byte[] Key, long Date, byte[] Signature)
 {
-    /// <summary>The statement as revoke sends it (core section 9.4): date, signature.</summary>
+    /// <summary>The statement as revoke sends it (MSFP core section 9.4): date, signature.</summary>
     public void WriteBody(JsonOut o)
     {
         ArgumentNullException.ThrowIfNull(o);
@@ -51,7 +51,7 @@ public sealed record Revocation(byte[] Key, long Date, byte[] Signature)
 }
 
 /// <summary>
-/// Key rotation and revocation (core section 12): the statements, their
+/// Key rotation and revocation (MSFP core section 12): the statements, their
 /// signatures and the bodies that carry them. What a server keeps, and
 /// when it sends what, is the engine's.
 /// </summary>
@@ -66,7 +66,7 @@ public static class Rotations
     /// <summary>revoke's answer: the key is revoked here (200).</summary>
     public const string StateSuspended = "suspended";
 
-    /// <summary>The text of a next key for offline keeping (core section 12.5; decision 12): this prefix, then the seed, base64url.</summary>
+    /// <summary>The text of a next key for offline keeping (MSFP core section 12.5; decision 12): this prefix, then the seed, base64url.</summary>
     public const string NextKeyPrefix = "msfp-next-key-1.";
 
     private const string RotationLabel = "msfp-key-rotation-1";
@@ -105,7 +105,7 @@ public static class Rotations
 
     /// <summary>
     /// Reads a rotate body sent signed with old, at now, and checks it as
-    /// core section 12.3, step 1 says: the statement rebuilt with old, both
+    /// MSFP core section 12.3, step 1 says: the statement rebuilt with old, both
     /// signatures (the new key valid under section 2.1, and not old), the
     /// date within MaxSkew. Whether the new key may be accepted is the
     /// receiver's to decide.
@@ -166,7 +166,7 @@ public static class Rotations
         }
     }
 
-    /// <summary>The text of a next key's seed, to keep offline (core section 12.5): "msfp-next-key-1." and the seed in base64url.</summary>
+    /// <summary>The text of a next key's seed, to keep offline (MSFP core section 12.5): "msfp-next-key-1." and the seed in base64url.</summary>
     public static string ExportNextKey(MsfpKey next)
     {
         ArgumentNullException.ThrowIfNull(next);

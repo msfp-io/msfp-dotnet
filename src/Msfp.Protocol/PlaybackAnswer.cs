@@ -2,7 +2,7 @@ using System.Text.Json.Nodes;
 
 namespace Msfp.Protocol;
 
-// play's answer (MSFP playback section 2.3, video section 5.3), as a
+// play's answer (MSFP Media playing 2.3, MSFP Media video 5.3), as a
 // viewer's server checks and cleans it, and the restart of a file being
 // read (section 2.7). The answer carries no URLs: the viewer's server builds
 // them from the stream root and the ticket (MediaUrls).
@@ -18,8 +18,8 @@ public static partial class Playback
     public const string ProtocolFile = "file";
 
     /// <summary>
-    /// Checks and cleans play's answer (playback section 2.3, video section
-    /// 5.3) against what the viewer's server asked and knows
+    /// Checks and cleans play's answer (MSFP Media playing 2.3, MSFP
+    /// Media video 5.3) against what the viewer's server asked and knows
     /// (<paramref name="asked"/>). Refused (null): a body that isn't an
     /// I-JSON object, null at its top; id or ticket not of the opaque form;
     /// protocol not hls or file, or not the delivery's (file for file, hls
@@ -32,7 +32,12 @@ public static partial class Playback
     /// dropped; maxBitrateKbps out of range dropped; scanBytes (scans only)
     /// <see cref="ScanBytesFloor"/> when missing or out of range; video's
     /// subtitles (<see cref="Video.ReadServed"/>) and fontCount
-    /// (<see cref="Video.ReadFontCount"/>) for a video title only. Unknown
+    /// (<see cref="Video.ReadFontCount"/>) for a video title only;
+    /// progressSeconds (MSFP Media playing 3) <see cref="DefaultProgressSeconds"/>
+    /// when absent, null, not an integer or out of 45 to 120. With a
+    /// capability list asked (<see cref="PlayAsked.Capabilities"/>), the
+    /// method is the source's pick, and the protocol file with direct, hls
+    /// otherwise. Unknown
     /// members (the stream, tracks, length, fonts and trickplay of earlier
     /// drafts among them) are ignored. A refused answer: the viewer's server
     /// sends stop for its id, when it has one, and gives up.
@@ -44,15 +49,29 @@ public static partial class Playback
         JsonObject o;
         try
         {
-            o = StrictJson.ReadAnswer(body, keepNestedNulls: true);
+            o = StrictJson.ParseObject(body, nulls: true);
         }
         catch (ProtocolException)
         {
             return null;
         }
 
+        // Null at the top refuses the answer, but in progressSeconds, read
+        // as absent (MSFP Media playing 3).
+        if (o.Any(p => p.Value is null && p.Key != "progressSeconds"))
+        {
+            return null;
+        }
+
         var delivery = asked.Delivery ?? "";
         var wantProtocol = delivery == DeliveryFile ? ProtocolFile : ProtocolHls;
+        if (asked.Capabilities)
+        {
+            // The source picked the delivery (MSFP Media playing 2.8): the
+            // file with direct, HLS otherwise.
+            wantProtocol = JsonMembers.AsString(o["method"]) == MethodDirect ? ProtocolFile : ProtocolHls;
+        }
+
         var wantMethod = delivery switch
         {
             DeliveryFile => MethodDirect,
@@ -114,9 +133,13 @@ public static partial class Playback
             scanBytes = ScanCapOf(JsonMembers.AsInteger(o["scanBytes"]) ?? 0);
         }
 
+        var progress = JsonMembers.AsInteger(o["progressSeconds"]) is { } ps and >= MinProgressSeconds and <= MaxProgressSeconds
+            ? (int)ps
+            : DefaultProgressSeconds;
         var video = asked.Video;
         return new PlayAnswer
         {
+            ProgressSeconds = progress,
             Id = id,
             Ticket = ticket,
             Protocol = protocol,
@@ -135,7 +158,7 @@ public static partial class Playback
     }
 
     /// <summary>
-    /// The bytes a scan's ticket may read in all (playback section 8), from
+    /// The bytes a scan's ticket may read in all (MSFP playback section 8), from
     /// the scanBytes its answer states: that, from <see cref="ScanBytesFloor"/>
     /// to <see cref="ScanBytesTop"/>; the floor when it is missing (0) or
     /// out of range.
@@ -144,7 +167,7 @@ public static partial class Playback
 
     /// <summary>
     /// Whether the bytes of a new playback may follow those of
-    /// <paramref name="reading"/> (playback section 2.7): only for a reading
+    /// <paramref name="reading"/> (MSFP Media playing 2.7): only for a reading
     /// of delivery file, a new play of the same copy (its versionId),
     /// purpose and delivery, answered 200 (<paramref name="status"/>) with an
     /// answer <see cref="ReadPlayAnswer"/> keeps, of the same etag, compared
@@ -192,13 +215,16 @@ public sealed record PlayAsked
     /// <summary>The copy's etag in the catalog; "" when unknown.</summary>
     public string CatalogEtag { get; init; } = "";
 
-    /// <summary>The copy's subtitle tracks in the catalog (their formats tell the forms video section 5.4 fixes).</summary>
+    /// <summary>The copy's subtitle tracks in the catalog (their formats tell the forms MSFP Media video 5.4 fixes).</summary>
     public IReadOnlyList<CopySubtitle> Subtitles { get; init; } = [];
+
+    /// <summary>Whether the request sent a capability list instead of a delivery (MSFP Media playing 2.8: a player to its own source; never between servers).</summary>
+    public bool Capabilities { get; init; }
 }
 
 /// <summary>
-/// What a viewer's server keeps of play's answer (playback section 2.3,
-/// video section 5.3), checked and cleaned (<see cref="Playback.ReadPlayAnswer"/>).
+/// What a viewer's server keeps of play's answer (MSFP Media playing 2.3,
+/// MSFP Media video 5.3), checked and cleaned (<see cref="Playback.ReadPlayAnswer"/>).
 /// It says only what the catalog can't: the playback, its ticket and what
 /// plays. Every URL is built from the ticket (<see cref="Urls"/>,
 /// <see cref="MediaUrls"/>). Music's queue is music's to read.
@@ -230,8 +256,8 @@ public sealed record PlayAnswer
     public string AudioTrack { get; init; } = "";
 
     /// <summary>
-    /// Whether the playlist carries every audio track as a rendition (media
-    /// section 3.1), so that switching tracks needs no new playback; false
+    /// Whether the playlist carries every audio track as a rendition (MSFP
+    /// Media fetching 3.1), so that switching tracks needs no new playback; false
     /// when the owning server made none (or the stream is a file).
     /// </summary>
     public bool AudioRenditions { get; init; }
@@ -250,6 +276,14 @@ public sealed record PlayAnswer
 
     /// <summary>The etag isn't the catalog's: the answer wins for this playback; the title is read again from titles.</summary>
     public bool ReadTitleAgain { get; init; }
+
+    /// <summary>
+    /// The interval of progress the source asks for, in seconds (MSFP Media
+    /// playing 3): 45 to 120, <see cref="Playback.DefaultProgressSeconds"/>
+    /// when the answer gives none, or one out of range. The source ends the
+    /// playback after twice that unused (<see cref="Playback.IdleLimit"/>).
+    /// </summary>
+    public int ProgressSeconds { get; init; } = Playback.DefaultProgressSeconds;
 
     /// <summary>The stream's URL under the owning server's stream root.</summary>
     public string StreamUrl(string root) => MediaUrls.Stream(root, Ticket, Protocol);
@@ -281,7 +315,7 @@ public sealed record PlayAnswer
     }
 }
 
-/// <summary>A playback's file a viewer's server is reading (playback section 2.7).</summary>
+/// <summary>A playback's file a viewer's server is reading (MSFP Media playing 2.7).</summary>
 /// <param name="VersionId">Its copy.</param>
 /// <param name="Etag">The copy's etag.</param>
 /// <param name="Purpose">The playback's purpose.</param>
@@ -291,7 +325,7 @@ public sealed record FileReading(string VersionId, string Etag, string Purpose, 
 
 /// <summary>
 /// What a viewer's server does with a new play of a file it was reading
-/// (playback section 2.7): Join, going on at Offset; else StopNew (a new
+/// (MSFP Media playing 2.7): Join, going on at Offset; else StopNew (a new
 /// playback was started: stop it), FailRead and ReadTitles (read the title
 /// again from titles).
 /// </summary>

@@ -3,32 +3,32 @@ using System.Text.Json.Nodes;
 
 namespace Msfp.Protocol;
 
-// play's request (MSFP playback sections 2.1, 2.2 and 2.7, video section
-// 5.1): what a viewer's server asks for, and how an owning server reads it,
+// play's request (MSFP Media playing 2.1, 2.2 and 2.7, MSFP
+// Media video 5.1): what a viewer's server asks for, and how an owning server reads it,
 // refusing what step 1 of section 2.2 refuses. The request says nothing of
 // the viewer's device: the viewer's server asks for a delivery, or leaves
 // it out for the baseline.
 public static partial class Playback
 {
-    /// <summary>A playback to watch or listen to (playback section 1).</summary>
+    /// <summary>A playback to watch or listen to (MSFP Media playing 1).</summary>
     public const string PurposePlay = "play";
 
-    /// <summary>A playback to keep a file of (playback section 7).</summary>
+    /// <summary>A playback to keep a file of (MSFP Media playing 6).</summary>
     public const string PurposeDownload = "download";
 
-    /// <summary>A playback to read a few bytes of the file (playback section 8).</summary>
+    /// <summary>A playback to read a few bytes of the file (MSFP playback section 8).</summary>
     public const string PurposeScan = "scan";
 
-    /// <summary>The copy's file as it is (playback section 2.7).</summary>
+    /// <summary>The copy's file as it is (MSFP Media playing 2.7).</summary>
     public const string DeliveryFile = "file";
 
-    /// <summary>The copy's streams unchanged, as HLS segments of the media type the request names (playback section 2.7).</summary>
+    /// <summary>The copy's streams unchanged, as HLS segments of the media type the request names (MSFP Media playing 2.7).</summary>
     public const string DeliveryRemux = "remux";
 
-    /// <summary>The copy converted (playback section 2.7).</summary>
+    /// <summary>The copy converted (MSFP Media playing 2.7).</summary>
     public const string DeliveryTranscode = "transcode";
 
-    /// <summary>A play answer's method for the file as it is (playback section 2.3).</summary>
+    /// <summary>A play answer's method for the file as it is (MSFP Media playing 2.3).</summary>
     public const string MethodDirect = "direct";
 
     /// <summary>A play answer's method for a remux.</summary>
@@ -46,8 +46,20 @@ public static partial class Playback
     /// <summary>The problem type of a limit reached (409).</summary>
     public const string ProblemStreamLimit = "stream-limit-reached";
 
-    /// <summary>The problem type of a delivery refused (409).</summary>
+    /// <summary>The problem type of a delivery refused as such (409, MSFP Media playing 2.5).</summary>
     public const string ProblemDeliveryRefused = "delivery-refused";
+
+    /// <summary>The problem type of a target the source doesn't make (409, MSFP Media playing 2.5): a remux's media type, a transcode codec, a range, a copied stream, a subtitle to burn.</summary>
+    public const string ProblemTargetRefused = "target-refused";
+
+    /// <summary>The problem type of a title the source held for the caller and no longer does (404, MSFP Media base 4).</summary>
+    public const string ProblemGone = "gone";
+
+    /// <summary>The problem type of media the source can't reach now (503, temporary; MSFP Media base 4).</summary>
+    public const string ProblemUnreachable = "unreachable";
+
+    /// <summary>The problem type of a media request whose ticket isn't valid (404, MSFP Media base 4).</summary>
+    public const string ProblemTicketRefused = "ticket-refused";
 
     /// <summary>The problem type of a copy the owning server can't play (409).</summary>
     public const string ProblemNotPlayable = "not-playable";
@@ -64,15 +76,15 @@ public static partial class Playback
     /// <summary>The largest bitrate play takes, in kbit/s.</summary>
     public const int MaxKbps = 10_000_000;
 
-    /// <summary>The values of a transcode's audioChannels (playback section 2.7).</summary>
+    /// <summary>The values of a transcode's audioChannels (MSFP Media playing 2.7).</summary>
     public static readonly IReadOnlyList<int> ChannelSteps = [2, 6, 8];
 
     // The members of play's request this part and video know: null in any
-    // of them, anywhere, refuses the request (core section 2.3).
-    private static readonly string[] PlayMembers =
+    // of them, anywhere, refuses the request (MSFP Media base 2.2).
+    internal static readonly string[] PlayMembers =
     [
         "title", "purpose", "delivery", "mediaType", "transcode", "audioRenditions", "startPositionMs", "maxBitrateKbps",
-        "versionId", "audioTrack",
+        "versionId", "audioTrack", "replaces", "capabilities",
     ];
 
     /// <summary>
@@ -119,19 +131,9 @@ public static partial class Playback
     };
 
     /// <summary>
-    /// Reads play's request as step 1 of playback section 2.2 checks it: an
-    /// I-JSON object; title a key <paramref name="playable"/> says play takes
-    /// (null: <see cref="TitleKey.TryParse"/>'s); purpose of its list;
-    /// delivery a token and mediaType a media type (core section 8.5: an
-    /// unknown value is kept, and refused at step 7 by
-    /// <see cref="RefuseDelivery"/>), mediaType with delivery remux only, and
-    /// then required; a transcode object with delivery transcode only, its
-    /// codecs and range tokens (copy among them), its numbers of their steps;
-    /// numbers in range; purpose and a delivery of the list together as
-    /// <see cref="PurposeAllows"/> says. Unknown members (capabilities,
-    /// container, the languages and subtitleTrack of earlier drafts among
-    /// them) are ignored, whatever they hold. Track IDs
-    /// are checked later, at step 4 (<see cref="PlayRequest.TrackIdsOk"/>).
+    /// Reads play's request as MSFP reads it (MSFP Media playing 2): a
+    /// <see cref="PlayReader"/> of the purposes play, download and scan,
+    /// refusing a capability list (400). See <see cref="PlayReader.Read(ReadOnlySpan{byte}, out JsonObject)"/>.
     /// </summary>
     /// <exception cref="PlayRefusal">The request is refused (400 invalid-request).</exception>
     public static PlayRequest ReadPlay(ReadOnlySpan<byte> body, Func<string, bool>? playable = null) => ReadPlay(body, playable, out _);
@@ -146,22 +148,14 @@ public static partial class Playback
     /// <param name="playable">Whether play takes a key; null: <see cref="TitleKey.TryParse"/>'s.</param>
     /// <param name="members">The request's object, as read.</param>
     /// <exception cref="PlayRefusal">The request is refused (400 invalid-request).</exception>
-    public static PlayRequest ReadPlay(ReadOnlySpan<byte> body, Func<string, bool>? playable, out JsonObject members)
+    public static PlayRequest ReadPlay(ReadOnlySpan<byte> body, Func<string, bool>? playable, out JsonObject members) =>
+        new PlayReader { Playable = playable }.Read(body, out members);
+
+    // Reads delivery, mediaType and transcode: a request's, or an entry of
+    // a refusal's instead (MSFP Media base 4). Empty says burnSubtitle was
+    // "" or not a string (malformed, refused at step 4).
+    internal static (string Delivery, string? MediaType, TranscodeTargets? Targets, bool Empty) ReadDelivery(JsonObject o)
     {
-        var o = RequestObject(body, PlayMembers);
-        members = o;
-        playable ??= t => TitleKey.TryParse(t, out var k) && k.Playable;
-        if (Text(o, "title") is not { } title || !playable(title))
-        {
-            throw BadPlay("title isn't the key of a title play takes");
-        }
-
-        var purpose = Text(o, "purpose") ?? PurposePlay;
-        if (purpose is not (PurposePlay or PurposeDownload or PurposeScan))
-        {
-            throw BadPlay("purpose isn't play, download or scan");
-        }
-
         var delivery = Text(o, "delivery") ?? "";
         if (o.ContainsKey("delivery") && !Names.IsToken(delivery))
         {
@@ -196,41 +190,15 @@ public static partial class Playback
             (targets, emptyTrack) = ReadTargets(t);
         }
 
-        var renditions = Boolean(o, "audioRenditions") ?? false;
-
-        var start = Integer(o, "startPositionMs", MaxPositionMs);
-        var kbps = (int)Integer(o, "maxBitrateKbps", MaxKbps);
-        var versionId = Text(o, "versionId") ?? "";
-        var audioTrack = Text(o, "audioTrack");
-        emptyTrack |= audioTrack == "";
-        var known = delivery is "" or DeliveryFile or DeliveryRemux or DeliveryTranscode;
-        if (known && !PurposeAllows(purpose, delivery, targets ?? (delivery == DeliveryTranscode ? new TranscodeTargets() : null)))
-        {
-            throw BadPlay("purpose " + purpose + " doesn't take that delivery");
-        }
-
-        return new PlayRequest
-        {
-            Title = title,
-            Purpose = purpose,
-            Delivery = delivery,
-            MediaType = mediaType ?? "",
-            Transcode = targets,
-            AudioRenditions = renditions,
-            StartPositionMs = start,
-            MaxBitrateKbps = kbps,
-            AudioTrack = audioTrack ?? "",
-            VersionId = versionId,
-            EmptyTrack = emptyTrack,
-        };
+        return (delivery, mediaType, targets, emptyTrack);
     }
 
-    // The members a queue entry may carry of a request (music section 5.2).
+    // The members a queue entry may carry of a request (MSFP Media music 5.2).
     private static readonly string[] EntryMembers = ["title", "versionId", "delivery", "mediaType", "transcode"];
 
     /// <summary>
     /// What the owning server starts for one entry of a request's queue
-    /// (playback section 2.1, music section 5.2), read as a play is
+    /// (MSFP Media playing 2.1, MSFP Media music 5.2), read as a play is
     /// (<see cref="ReadPlay(ReadOnlySpan{byte}, Func{string, bool}?)"/>): the
     /// entry's title and versionId (without one, its first copy), its own
     /// delivery with its own mediaType or transcode, or without one the
@@ -281,7 +249,7 @@ public static partial class Playback
         return ReadPlay(System.Text.Encoding.UTF8.GetBytes(o.ToJsonString()), playable);
     }
 
-    // Reads a transcode object (playback section 2.7, video section 5.1):
+    // Reads a transcode object (MSFP Media playing 2.7, MSFP Media video 5.1):
     // its codecs and range tokens (an unknown one is refused at step 7,
     // 409; copy is a token), its
     // numbers of their steps, else refused; Empty says burnSubtitle was "" or not a string
@@ -345,7 +313,7 @@ public static partial class Playback
     internal static PlayRefusal BadPlay(string why) => new(400, ProblemInvalid, why);
 
     // Reads body as a request's object: I-JSON, an object, with no null
-    // anywhere in the members known (core section 2.3).
+    // anywhere in the members known (MSFP Media base 2.2).
     internal static JsonObject RequestObject(ReadOnlySpan<byte> body, IEnumerable<string> known)
     {
         try
@@ -393,8 +361,128 @@ public static partial class Playback
 }
 
 /// <summary>
+/// Reads play's requests for a carrier (MSFP Media playing 2): the titles
+/// play takes (<see cref="Playable"/>; null: <see cref="TitleKey.TryParse"/>'s),
+/// the purposes the carrier takes (<see cref="Purposes"/>; null: MSFP's,
+/// play, download and scan), and whether it takes a capability list
+/// (<see cref="Capabilities"/>: a carrier between a player and its own
+/// source may; MSFP refuses it).
+/// </summary>
+public sealed record PlayReader
+{
+    /// <summary>Whether play takes a key; null: <see cref="TitleKey.TryParse"/>'s.</summary>
+    public Func<string, bool>? Playable { get; init; }
+
+    /// <summary>The purposes the carrier takes; null: play, download and scan.</summary>
+    public IReadOnlyList<string>? Purposes { get; init; }
+
+    /// <summary>Whether the carrier takes a capability list (MSFP Media playing 2.8); MSFP never does.</summary>
+    public bool Capabilities { get; init; }
+
+    /// <summary>Reads play's request, as <see cref="Read(ReadOnlySpan{byte}, out JsonObject)"/>.</summary>
+    /// <exception cref="PlayRefusal">The request is refused (400 invalid-request).</exception>
+    public PlayRequest Read(ReadOnlySpan<byte> body) => Read(body, out _);
+
+    /// <summary>
+    /// Reads play's request as step 1 of MSFP Media playing 2.2 checks it:
+    /// an I-JSON object; title a key <see cref="Playable"/> says play takes;
+    /// purpose of the carrier's list; delivery a token and mediaType a media
+    /// type (MSFP Media base 3: an unknown value is kept, and refused at
+    /// step 7 by <see cref="Playback.RefuseDelivery"/>), mediaType with
+    /// delivery remux only, and then required; a transcode object with
+    /// delivery transcode only, its codecs and range tokens (copy among
+    /// them), its numbers of their steps; numbers in range; replaces of a
+    /// playback ID's form; capabilities only when the carrier takes it, of
+    /// playing 2.8's forms, never with delivery, mediaType or transcode, and
+    /// with purpose play only; purpose and a delivery of the list together
+    /// as <see cref="Playback.PurposeAllows"/> says. Unknown members (the
+    /// container, languages and subtitleTrack of earlier drafts among them)
+    /// are ignored, whatever they hold. Track IDs are checked later, at step
+    /// 4 (<see cref="PlayRequest.TrackIdsOk"/>). Music's queue is left to
+    /// <see cref="Music.CheckQueue"/>, from <paramref name="members"/>.
+    /// </summary>
+    /// <param name="body">The request's body.</param>
+    /// <param name="members">The request's object, as read.</param>
+    /// <exception cref="PlayRefusal">The request is refused (400 invalid-request).</exception>
+    public PlayRequest Read(ReadOnlySpan<byte> body, out JsonObject members)
+    {
+        var o = Playback.RequestObject(body, Playback.PlayMembers);
+        members = o;
+        var playable = Playable ?? (t => TitleKey.TryParse(t, out var k) && k.Playable);
+        if (Playback.Text(o, "title") is not { } title || !playable(title))
+        {
+            throw Playback.BadPlay("title isn't the key of a title play takes");
+        }
+
+        var purpose = Playback.Text(o, "purpose") ?? Playback.PurposePlay;
+        IReadOnlyList<string> purposes = Purposes ?? [Playback.PurposePlay, Playback.PurposeDownload, Playback.PurposeScan];
+        if (!purposes.Contains(purpose, StringComparer.Ordinal))
+        {
+            throw Playback.BadPlay("purpose " + purpose + " isn't one this carrier takes");
+        }
+
+        var (delivery, mediaType, targets, emptyTrack) = Playback.ReadDelivery(o);
+        var renditions = Playback.Boolean(o, "audioRenditions") ?? false;
+        var start = Playback.Integer(o, "startPositionMs", Playback.MaxPositionMs);
+        var kbps = (int)Playback.Integer(o, "maxBitrateKbps", Playback.MaxKbps);
+        var versionId = Playback.Text(o, "versionId") ?? "";
+        var audioTrack = Playback.Text(o, "audioTrack");
+        emptyTrack |= audioTrack == "";
+        var replaces = Playback.Text(o, "replaces");
+        if (replaces is not null && !Playback.PlayId(replaces))
+        {
+            throw Playback.BadPlay("replaces isn't a playback ID");
+        }
+
+        Capabilities? capabilities = null;
+        if (o.TryGetPropertyValue("capabilities", out var caps))
+        {
+            if (!Capabilities)
+            {
+                throw Playback.BadPlay("a capability list, which this carrier doesn't take");
+            }
+
+            if (delivery.Length > 0 || mediaType is not null || targets is not null)
+            {
+                throw Playback.BadPlay("a capability list with delivery, mediaType or transcode");
+            }
+
+            if (purpose != Playback.PurposePlay)
+            {
+                throw Playback.BadPlay("a capability list with purpose " + purpose);
+            }
+
+            capabilities = Msfp.Protocol.Capabilities.Read(caps);
+        }
+
+        var known = delivery is "" or Playback.DeliveryFile or Playback.DeliveryRemux or Playback.DeliveryTranscode;
+        if (known && !Playback.PurposeAllows(purpose, delivery, targets ?? (delivery == Playback.DeliveryTranscode ? new TranscodeTargets() : null)))
+        {
+            throw Playback.BadPlay("purpose " + purpose + " doesn't take that delivery");
+        }
+
+        return new PlayRequest
+        {
+            Title = title,
+            Purpose = purpose,
+            Delivery = delivery,
+            MediaType = mediaType ?? "",
+            Transcode = targets,
+            AudioRenditions = renditions,
+            StartPositionMs = start,
+            MaxBitrateKbps = kbps,
+            AudioTrack = audioTrack ?? "",
+            VersionId = versionId,
+            Replaces = replaces ?? "",
+            Capabilities = capabilities,
+            EmptyTrack = emptyTrack,
+        };
+    }
+}
+
+/// <summary>
 /// An owning server's refusal of a play, a progress or a stop: the status
-/// and the problem type of its signed body (playback sections 2.2, 3, 4).
+/// and the problem type of its signed body (MSFP Media playing 2.2, 3 and 4).
 /// </summary>
 public sealed class PlayRefusal : Exception
 {
@@ -421,7 +509,7 @@ public sealed class PlayRefusal : Exception
 }
 
 /// <summary>
-/// A play's transcode object (playback section 2.7, video section 5.1):
+/// A play's transcode object (MSFP Media playing 2.7, MSFP Media video 5.1):
 /// each target left out ("" or 0) takes the baseline's value
 /// (<see cref="WithBaseline"/>).
 /// </summary>
@@ -448,11 +536,11 @@ public sealed record TranscodeTargets
     /// <summary>The picture's range, a token: sdr (tone-mapped to SDR, 8-bit, BT.709, the default) or keep (the copy's transfer and primaries kept, 10-bit); ignored with video copy.</summary>
     public string Range { get; init; } = "";
 
-    /// <summary>Whether it names a download's size (playback section 7): maxHeight, maxBitrateKbps or both.</summary>
+    /// <summary>Whether it names a download's size (MSFP Media playing 6): maxHeight, maxBitrateKbps or both.</summary>
     public bool Sized => MaxHeight != 0 || MaxBitrateKbps != 0;
 
     /// <summary>
-    /// The targets the owning server converts to (playback section 2.7):
+    /// The targets the owning server converts to (MSFP Media playing 2.7):
     /// these, those left out taking the baseline's values (videoCodec
     /// <see cref="Names.BaselineVideoCodec"/>, range sdr, audioCodec
     /// <see cref="Names.BaselineAudioCodec"/>, audioChannels
@@ -523,7 +611,7 @@ public sealed record PlayRequest
     public long StartPositionMs { get; init; }
 
     /// <summary>
-    /// What a delivery transcode converts to (playback section 2.7): the
+    /// What a delivery transcode converts to (MSFP Media playing 2.7): the
     /// request's targets, a transcode object left out included, those left
     /// out taking the baseline's values (<see cref="TranscodeTargets.WithBaseline"/>);
     /// null for any other delivery.
@@ -541,13 +629,28 @@ public sealed record PlayRequest
     /// <summary>The copy wanted.</summary>
     public string VersionId { get; init; } = "";
 
+    /// <summary>
+    /// The playback of the caller's this one replaces, "" for none (MSFP
+    /// Media playing 2.3): to change the audio, the copy, the delivery or
+    /// the quality. The source counts both as one; once this one is
+    /// answered 200, the old one is over.
+    /// </summary>
+    public string Replaces { get; init; } = "";
+
+    /// <summary>
+    /// The device's capability list (MSFP Media playing 2.8), read only by a
+    /// carrier that takes it (<see cref="PlayReader.Capabilities"/>); null
+    /// otherwise. MSFP refuses it, and the engine never sends one.
+    /// </summary>
+    public Capabilities? Capabilities { get; init; }
+
     // The request had an audioTrack or a burnSubtitle that
     // was "", which reads as absent but is malformed.
     internal bool EmptyTrack { get; init; }
 
     /// <summary>
     /// Whether the request's track IDs have their forms, as step 4 of
-    /// playback section 2.2 checks them once the copy is chosen: audioTrack
+    /// MSFP Media playing 2.2 checks them once the copy is chosen: audioTrack
     /// a&lt;n&gt;, transcode.burnSubtitle s&lt;n&gt;; n from 0 to 999 without
     /// leading zeros.
     /// </summary>
@@ -557,7 +660,7 @@ public sealed record PlayRequest
         (Transcode is not { BurnSubtitle.Length: > 0 } t || Playback.TryTrackId(t.BurnSubtitle, 's', out _));
 
     /// <summary>
-    /// The cap of playback section 2.2, step 6, for a play: the lowest
+    /// The cap of MSFP Media playing 2.2, step 6, for a play: the lowest
     /// non-zero of the request's maxBitrateKbps and its transcode's, the
     /// owning server's own cap and the pairing's bitrateKbps; 0, no cap,
     /// without any. A download's and a scan's aren't capped so (sections 7
@@ -588,5 +691,6 @@ public sealed record PlayRequest
         .Integer("startPositionMs", TranscodeTargets.NonZero(StartPositionMs))
         .Integer("maxBitrateKbps", TranscodeTargets.NonZero(MaxBitrateKbps))
         .String("audioTrack", TranscodeTargets.NonEmpty(AudioTrack))
-        .String("versionId", TranscodeTargets.NonEmpty(VersionId)));
+        .String("versionId", TranscodeTargets.NonEmpty(VersionId))
+        .String("replaces", TranscodeTargets.NonEmpty(Replaces)));
 }

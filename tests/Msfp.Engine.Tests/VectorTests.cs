@@ -5,7 +5,7 @@ using Msfp.Protocol;
 namespace Msfp.Tests;
 
 /// <summary>
-/// The vectors of core section 17 through two engines (msfp-go's
+/// The vectors of MSFP core section 17 through two engines (msfp-go's
 /// vectors_test.go): A at a.example.org and B at 192.0.2.10:8096, their
 /// keys from keys.json, each on its own clock at 1800000000. Their pair
 /// exchange byte for byte both ways, the hello and play requests a peer
@@ -297,8 +297,8 @@ public sealed class VectorTests
 
     // The addresses of strict.json's uncallableAddresses, in hellos saying
     // inbound false, through an engine: each valid one is stored at once,
-    // each invalid one refused, signed, and nothing kept (core sections 5.2
-    // and 9.2).
+    // each invalid one refused, signed, and nothing kept (MSFP
+    // core sections 5.2 and 9.2).
     [Fact]
     public async Task UncallableAddressVectorsThroughEngine()
     {

@@ -14,7 +14,7 @@ public sealed record PeerView
     /// <summary>Its address.</summary>
     public required string Address { get; init; }
 
-    /// <summary>Its current key's fingerprint, for the operators to compare (core section 4.2).</summary>
+    /// <summary>Its current key's fingerprint, for the operators to compare (MSFP core section 4.2).</summary>
     public required string Fingerprint { get; init; }
 
     /// <summary>Where the pairing stands.</summary>
@@ -65,7 +65,7 @@ public sealed record PeerView
     /// <summary>During this server's move, announced: it still signs for our former address.</summary>
     public bool NotMoved { get; init; }
 
-    /// <summary>It hasn't moved after some days (core section 13.1).</summary>
+    /// <summary>It hasn't moved after some days (MSFP core section 13.1).</summary>
     public bool MoveLate { get; init; }
 
     /// <summary>Its new address being confirmed; null for none.</summary>
@@ -121,7 +121,7 @@ public sealed record PeerView
 /// <param name="At">When.</param>
 public sealed record KeyNotice(string Fingerprint, DateTimeOffset At);
 
-/// <summary>A peer's new address being confirmed (core section 13.2).</summary>
+/// <summary>A peer's new address being confirmed (MSFP core section 13.2).</summary>
 /// <param name="Address">The address it named.</param>
 /// <param name="Since">When it first named it.</param>
 /// <param name="FailingSince">When the confirmation began failing; null while it hasn't failed.</param>
@@ -161,7 +161,7 @@ public sealed record ServerView
     /// <summary>The discovery document is served.</summary>
     public bool Discovery { get; init; }
 
-    /// <summary>The committed next key's fingerprint (from its commitment, core section 4.2).</summary>
+    /// <summary>The committed next key's fingerprint (from its commitment, MSFP core section 4.2).</summary>
     public required string NextKey { get; init; }
 
     /// <summary>Whether the next key's seed is still here.</summary>

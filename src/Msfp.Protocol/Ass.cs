@@ -14,7 +14,7 @@ namespace Msfp.Protocol;
 /// </summary>
 public static partial class Ass
 {
-    /// <summary>The most an ASS part may be, in bytes, as read: 5 MiB (video section 6.4, media section 2.4). A whole track is at most <see cref="WebVtt.MaxWholeText"/>.</summary>
+    /// <summary>The most an ASS part may be, in bytes, as read: 5 MiB (MSFP Media video 6.4, MSFP Media fetching 2.4). A whole track is at most <see cref="WebVtt.MaxWholeText"/>.</summary>
     public const int MaxAss = 5 << 20;
 
     private const int MaxStyles = 1024;
@@ -51,7 +51,7 @@ public static partial class Ass
     private static partial Regex IntForm();
 
     /// <summary>
-    /// Rebuilds an ASS or SSA part (a stretch) as video section 6.4 says:
+    /// Rebuilds an ASS or SSA part (a stretch) as MSFP Media video 6.4 says:
     /// false when it is over <see cref="MaxAss"/>, its first line isn't
     /// [Script Info], or it holds more than 50,000 events once rebuilt.
     /// </summary>
@@ -73,8 +73,8 @@ public static partial class Ass
     /// Part <paramref name="n"/> of a whole ASS or SSA track, for an owning
     /// server that holds its subtitles as one file: the track rebuilt as
     /// <see cref="TryRebuildWhole"/> does, its header and the events that
-    /// show during the part's stretch (media section 3.4, video section
-    /// 6.4). A part with no event is valid. False when the track is refused,
+    /// show during the part's stretch (MSFP Media fetching 3.4, MSFP
+    /// Media video 6.4). A part with no event is valid. False when the track is refused,
     /// or its part holds more events than a part may.
     /// </summary>
     /// <param name="track">The whole track.</param>

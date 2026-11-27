@@ -9,7 +9,7 @@ public sealed partial class MsfpEngine
     internal static readonly TimeSpan TidyEvery = TimeSpan.FromHours(1);
     internal static readonly TimeSpan TickEvery = TimeSpan.FromSeconds(1);
 
-    // How long a forgotten key is kept (core section 7.4: entries may go after a year).
+    // How long a forgotten key is kept (MSFP core section 7.4: entries may go after a year).
     internal static readonly TimeSpan ForgetAfter = TimeSpan.FromDays(365);
 
     // How often a peer on our old key is told the new one again.
@@ -169,7 +169,7 @@ public sealed partial class MsfpEngine
     private static readonly TimeSpan GroupsTickEvery = TimeSpan.FromSeconds(30);
     private DateTimeOffset? _groupsTick;
 
-    // What time does to keys (core sections 12.4, 12.6, 12.7): our old key
+    // What time does to keys (MSFP core sections 12.4, 12.6 and 12.7): our old key
     // deleted 30 days after the change began (that change only), the key
     // revoked with no next key 30 days after; a peer
     // suspended 30 days without a valid rotation gone; a peer on our old
@@ -210,7 +210,7 @@ public sealed partial class MsfpEngine
                 }
 
                 // Gone, and still suspended: a paired hello doesn't bring it
-                // back (core section 12.6).
+                // back (MSFP core section 12.6).
                 p.State = PeerState.Gone;
                 await tx.PutPeerAsync(p).ConfigureAwait(false);
                 _log.LogWarning("msfp: a peer whose key was revoked 30 days ago, with no new key since, is gone: {Peer}", p.Id);

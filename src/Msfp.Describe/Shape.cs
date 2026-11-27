@@ -4,7 +4,7 @@ using Msfp.Protocol;
 
 namespace Msfp.Describe;
 
-/// <summary>A subtitle file beside the video (video section 3.3, external): what the host knows of it. <see cref="Shaper.Shape"/> numbers it above the file's streams, in the order given.</summary>
+/// <summary>A subtitle file beside the video (MSFP Media video 3.3, external): what the host knows of it. <see cref="Shaper.Shape"/> numbers it above the file's streams, in the order given.</summary>
 /// <param name="Language">A media server's code; sent as <see cref="Languages.TrySentTag"/> gives it.</param>
 /// <param name="Format">The registry's token (subrip, webvtt, ass…).</param>
 public sealed record External(string Language, string Format)
@@ -22,10 +22,10 @@ public sealed record External(string Language, string Format)
     public bool HearingImpaired { get; init; }
 }
 
-/// <summary>A probe shaped into the copy it describes (video sections 3.2 to 3.6).</summary>
+/// <summary>A probe shaped into the copy it describes (MSFP Media video 3.2 to 3.6).</summary>
 public static partial class Shaper
 {
-    /// <summary>The greatest term of an fps fraction (video section 3.2).</summary>
+    /// <summary>The greatest term of an fps fraction (MSFP Media video 3.2).</summary>
     public const int MaxFpsTerm = 1_000_000;
 
     /// <summary>The greatest term of a sample aspect.</summary>

@@ -13,23 +13,23 @@ namespace Msfp.Protocol;
 /// </summary>
 public static partial class Media
 {
-    /// <summary>The most a playlist may be, as read: 2 MiB (media section 2.4).</summary>
+    /// <summary>The most a playlist may be, as read: 2 MiB (MSFP Media fetching 2.4).</summary>
     public const int MaxPlaylist = 2 << 20;
 
-    /// <summary>The most URIs a paired server's playlist may hold (media section 3.1): URI lines and URI= values together.</summary>
+    /// <summary>The most URIs a paired server's playlist may hold (MSFP Media fetching 3.1): URI lines and URI= values together.</summary>
     public const int MaxPlaylistUris = 50_000;
 
-    /// <summary>The most #EXT-X-MEDIA lines a master playlist may hold (media section 3.1).</summary>
+    /// <summary>The most #EXT-X-MEDIA lines a master playlist may hold (MSFP Media fetching 3.1).</summary>
     public const int MaxRenditions = 32;
 
-    /// <summary>The longest target duration a media playlist may give, in seconds (media section 3.1).</summary>
+    /// <summary>The longest target duration a media playlist may give, in seconds (MSFP Media fetching 3.1).</summary>
     public const int MaxTargetDuration = 60;
 
-    /// <summary>The tags a relayed master playlist keeps (media section 3.1); other tags and comments are dropped.</summary>
+    /// <summary>The tags a relayed master playlist keeps (MSFP Media fetching 3.1); other tags and comments are dropped.</summary>
     public static readonly IReadOnlyList<string> MasterSubset =
         ["#EXTM3U", "#EXT-X-VERSION", "#EXT-X-INDEPENDENT-SEGMENTS", "#EXT-X-STREAM-INF", "#EXT-X-MEDIA"];
 
-    /// <summary>The tags a relayed media playlist keeps (media section 3.1); other tags and comments are dropped.</summary>
+    /// <summary>The tags a relayed media playlist keeps (MSFP Media fetching 3.1); other tags and comments are dropped.</summary>
     public static readonly IReadOnlyList<string> MediaSubset =
     [
         "#EXTM3U", "#EXT-X-VERSION", "#EXT-X-TARGETDURATION", "#EXT-X-MEDIA-SEQUENCE",
@@ -54,8 +54,8 @@ public static partial class Media
     private static partial Regex IntForm();
 
     /// <summary>
-    /// Whether <paramref name="s"/> may name a file of a stream (media
-    /// section 1): 1 to 64 characters of A–Z a–z 0–9 . _ -, never "." or
+    /// Whether <paramref name="s"/> may name a file of a stream (MSFP
+    /// Media fetching 1): 1 to 64 characters of A–Z a–z 0–9 . _ -, never "." or
     /// "..", which a URL resolves as a folder, not a file.
     /// </summary>
     public static bool FileName(string s)
@@ -65,8 +65,8 @@ public static partial class Media
     }
 
     /// <summary>
-    /// The folder of queue entry <paramref name="n"/>'s stream (media
-    /// sections 1 and 3), under a playback's base (&lt;stream root&gt;&lt;ticket&gt;/):
+    /// The folder of queue entry <paramref name="n"/>'s stream (MSFP
+    /// Media fetching 1 and 3), under a playback's base (&lt;stream root&gt;&lt;ticket&gt;/):
     /// its file and master.m3u8 are there, and the bare names its playlists
     /// give resolve there.
     /// </summary>
@@ -76,7 +76,7 @@ public static partial class Media
         baseUrl + "queue/" + n.ToString(CultureInfo.InvariantCulture) + "/";
 
     /// <summary>
-    /// Checks a paired server's playlist as media section 3.1 says, in its
+    /// Checks a paired server's playlist as MSFP Media fetching 3.1 says, in its
     /// order (<see cref="FilterPlaylist"/>).
     /// </summary>
     /// <param name="body">The playlist, as fetched.</param>
@@ -85,7 +85,7 @@ public static partial class Media
     public static void CheckPlaylist(ReadOnlySpan<byte> body, Func<string, bool>? audio) => FilterPlaylist(body, null, audio);
 
     /// <summary>
-    /// A paired server's playlist once checked as media section 3.1 says, in
+    /// A paired server's playlist once checked as MSFP Media fetching 3.1 says, in
     /// its order, keeping only the tags of <paramref name="subset"/>, comments
     /// dropped, each line ending in a line feed; with a null subset, every
     /// line is kept. The checks: at most 2 MiB (1); lines split at line

@@ -10,8 +10,8 @@ namespace Msfp;
 /// <param name="Served">What is served of it.</param>
 internal sealed record ServedFacts(Copy Copy, string Audio, Served Served);
 
-// The master playlist's attributes (MSFP media section 3.1, playback section
-// 2.7): each #EXT-X-STREAM-INF carries BANDWIDTH, CODECS and, for video,
+// The master playlist's attributes (MSFP Media fetching 3.1, MSFP
+// Media playing 2.7): each #EXT-X-STREAM-INF carries BANDWIDTH, CODECS and, for video,
 // RESOLUTION; VIDEO-RANGE (PQ or HLG) when the picture served is PQ or HLG;
 // SUPPLEMENTAL-CODECS when Dolby Vision is kept; an E-AC-3 rendition whose
 // objects is dolby-atmos may say CHANNELS "16/JOC". They are the host's to

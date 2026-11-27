@@ -1,6 +1,6 @@
 namespace Msfp.Tests;
 
-/// <summary>Changes of address (core section 13; msfp-go's address_test.go).</summary>
+/// <summary>Changes of address (MSFP core section 13; msfp-go's address_test.go).</summary>
 public sealed class AddressTests
 {
     private static Task WaitAll(params TestServer[] servers) => Task.WhenAll(servers.Select(s => s.WaitAsync()));
@@ -142,7 +142,7 @@ public sealed class AddressTests
         await a.Engine.RunOnceAsync();
         await WaitAll(a, b);
         Assert.Equal(A2, (await b.Engine.PeerAsync(aOnB)).Address);
-        // The 30 days of A1 run from when A2 was reached (core section 13.1, step 1).
+        // The 30 days of A1 run from when A2 was reached (MSFP core section 13.1, step 1).
         Assert.Equal(clock.GetUtcNow(), (await a.Engine.ServerAsync()).MovedAt);
     }
 
@@ -236,7 +236,7 @@ public sealed class AddressTests
 
     // A peer that names a second new address while its first is checked:
     // the first, once it answers under its key, is stored all the same, and
-    // the second is checked next (core section 13.2); it failing, the first
+    // the second is checked next (MSFP core section 13.2); it failing, the first
     // stays.
     [Fact]
     public async Task MoveNamedAgainWhileChecked()

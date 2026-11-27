@@ -58,8 +58,8 @@ public static class MsfpJson
         }
     }
 
-    // CopyNames gives the toolkit's copy records (a title's copies, video
-    // section 3.2 and music section 3.3) the names of the specification's
+    // CopyNames gives the toolkit's copy records (a title's copies, MSFP
+    // Media video 3.2 and MSFP Media music 3.3) the names of the specification's
     // table, as the Go engine writes them, absent members left out.
     private static void CopyNames(JsonTypeInfo info)
     {

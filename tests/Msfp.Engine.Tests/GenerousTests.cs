@@ -1,7 +1,7 @@
 namespace Msfp.Tests;
 
 // msfp-go's TestGenerousLimits: a peer linked by hand and through groups
-// gets the most generous of its relations' limits (playback section 5,
+// gets the most generous of its relations' limits (MSFP playback section 5,
 // groups section 9).
 public sealed class GenerousTests
 {

@@ -39,7 +39,7 @@ internal sealed record EntryServed(string Protocol, long Size, string Etag, stri
 
 /// <summary>
 /// A playback ended lately: whose, why, when; for a download, what its late
-/// reports need (playback section 7).
+/// reports need (MSFP Media playing 6).
 /// </summary>
 internal sealed record EndedPlay(string Peer, EndReason Reason, DateTimeOffset At, string Purpose, string Title,
     IReadOnlyList<string> Queue, string Handle, DateTimeOffset PlayedAt)
@@ -107,6 +107,9 @@ internal sealed class LivePlayback
     /// <summary>Cancelled when it ends: its open responses are cut.</summary>
     public CancellationTokenSource Ended { get; } = new();
 
+    /// <summary>Its idle limit: twice the progressSeconds its answer gave.</summary>
+    public TimeSpan Idle { get; init; } = Playback.IdleEnd;
+
     // Under the plays' lock.
     public DateTimeOffset Used { get; set; }
 
@@ -126,12 +129,12 @@ internal sealed class LivePlayback
 
     public int ScanReads { get; set; }
 
-    /// <summary>The playlists served, by entry/name: served the same again (media section 3.1).</summary>
+    /// <summary>The playlists served, by entry/name: served the same again (MSFP Media fetching 3.1).</summary>
     public Dictionary<string, byte[]> Playlists { get; } = new(StringComparer.Ordinal);
 
     public int PlaylistBytes { get; set; }
 
-    /// <summary>entry/name: the names its playlists gave, the only ones served (media section 1).</summary>
+    /// <summary>entry/name: the names its playlists gave, the only ones served (MSFP Media fetching 1).</summary>
     public HashSet<string> Names { get; } = new(StringComparer.Ordinal);
 
     /// <summary>Its own stream's facts, for its master playlist.</summary>
@@ -197,7 +200,7 @@ internal sealed class CountSlot(Plays plays, Func<DateTimeOffset> now, string po
 
     /// <summary>
     /// Counts a remux that turned out to re-encode the video as a transcode
-    /// from then on (playback section 6); false when the pairing has none
+    /// from then on (MSFP playback section 6); false when the pairing has none
     /// left: the host then stops it. A download's or a scan's takes none of
     /// the pool's (the server's budget is the host's).
     /// </summary>
@@ -314,8 +317,8 @@ internal sealed record OfferedCopy(string Handle, Copy Copy, string Lyrics = "")
 }
 
 /// <summary>
-/// Paces a download's bytes at its speed cap (playback section 7, media
-/// section 4.1): over any 10 seconds, never more than the cap allows, all
+/// Paces a download's bytes at its speed cap (MSFP Media playing 6, MSFP
+/// Media fetching 4.3): over any 10 seconds, never more than the cap allows, all
 /// its fetches together; it slows the body, never refuses. It lets a
 /// second's worth through at once and refills at nine tenths of the cap, so
 /// that a second's burst and nine seconds' refill stay within ten seconds'
@@ -349,8 +352,8 @@ internal sealed class Pacer(int kbps, TimeProvider time)
     }
 }
 
-// Playback, on the owning side (MSFP playback sections 2 to 8, video
-// section 5, music section 5): play, progress and stop from peers, the
+// Playback, on the owning side (MSFP Media playing, MSFP playback sections 2
+// to 8, MSFP Media video 5, MSFP Media music 5): play, progress and stop from peers, the
 // choice of the copy and the tracks among the title's copies as the catalog
 // sends them, the delivery and the purpose (a play, a download, a scan),
 // the pool's limits counted in one step with the host's start (Admit), the
@@ -360,7 +363,7 @@ internal sealed class Pacer(int kbps, TimeProvider time)
 // reports (Downloads.cs).
 public sealed partial class MsfpEngine
 {
-    // Times of a playback (playback section 6.3): expired playbacks are
+    // Times of a playback (MSFP Media playing 5): expired playbacks are
     // looked for every 30 seconds; why one ended is kept an hour (a
     // download's for its late reports); the host's Stop and Progress made in
     // the background get 30 seconds.
@@ -370,11 +373,36 @@ public sealed partial class MsfpEngine
 
     private readonly Plays _plays = new();
 
+    // Whether the playback a play replaces (old, null for none) counts as the
+    // new one in a pool: live, of the same purpose, counted in that pool among
+    // the same streams (MSFP playback section 6). Under the plays' lock.
+    private static bool Credits(LivePlayback? old, string pool, string purpose, bool audio) =>
+        old is { Slot: { Released: false } slot } && slot.Pool == pool && slot.Purpose == purpose && slot.Audio == audio;
+
+    // The live playback of peer that a play's replaces names; null for none,
+    // or for one of another peer.
+    private LivePlayback? Replaced(string peer, string id)
+    {
+        if (id.Length == 0)
+        {
+            return null;
+        }
+
+        lock (_plays)
+        {
+            return _plays.ById.TryGetValue(id, out var pb) && pb.Peer == peer ? pb : null;
+        }
+    }
+
     // Counts a playback of purpose in a pool, in one step no other play comes
-    // between (playback section 6.2): for a play, a stream (and for
+    // between (MSFP playback section 6.2): for a play, a stream (and for
     // "transcode" a transcode); for a download, one of its downloads and of
-    // the day's; for a scan, one of the day's.
-    private CountSlot AdmitIn(string pool, Limits l, string purpose, bool audio, string method)
+    // the day's; for a scan, one of the day's. The playback it replaces (old)
+    // is counted as ended, when it counts in that pool
+    // (Protocol.LimitUse.Without): a play frees its stream and its
+    // transcode, a download its download but never the day's count, a scan
+    // nothing.
+    private CountSlot AdmitIn(string pool, Limits l, string purpose, bool audio, string method, LivePlayback? old)
     {
         if (method is not ("direct" or "remux" or "transcode"))
         {
@@ -387,10 +415,12 @@ public sealed partial class MsfpEngine
             var c = _plays.CountsOf(pool);
             var now = Now();
             c.Trim(now);
+            var credit = Credits(old, pool, purpose, s.Audio) ? 1 : 0;
+            var creditTranscode = credit == 1 && old!.Slot.Transcode ? 1 : 0;
             switch (purpose)
             {
                 case Playback.PurposeDownload:
-                    if (c.Downloads >= l.Downloads || (l.DownloadsPerDay > 0 && c.DownloadDay.Count >= l.DownloadsPerDay))
+                    if (c.Downloads - credit >= l.Downloads || (l.DownloadsPerDay > 0 && c.DownloadDay.Count >= l.DownloadsPerDay))
                     {
                         throw new MsfpException(MsfpError.StreamLimitReached);
                     }
@@ -410,12 +440,12 @@ public sealed partial class MsfpEngine
 
             var (most, mostTranscodes) = s.Caps();
             var (streams, transcodes) = c.Of(s.Audio);
-            if (streams >= most)
+            if (streams - credit >= most)
             {
                 throw new MsfpException(MsfpError.StreamLimitReached);
             }
 
-            if (method == "transcode" && transcodes >= mostTranscodes)
+            if (method == "transcode" && transcodes - creditTranscode >= mostTranscodes)
             {
                 throw new MsfpException(MsfpError.ServerBusy);
             }
@@ -427,33 +457,35 @@ public sealed partial class MsfpEngine
         return s;
     }
 
-    // Whether a pool has room for a playback of purpose now (Room), and
-    // whether its limits allow any at all (Open).
-    private (bool Room, bool Open) RoomIn(string pool, Limits l, string purpose, bool audio)
+    // Whether a pool has room for a playback of purpose now (Room), the
+    // playback it replaces (old) counted as ended, and whether its limits
+    // allow any at all (Open).
+    private (bool Room, bool Open) RoomIn(string pool, Limits l, string purpose, bool audio, LivePlayback? old)
     {
         lock (_plays)
         {
             _plays.Counts.TryGetValue(pool, out var c);
             var now = Now();
+            var counted = audio && l.Audio;
+            var credit = Credits(old, pool, purpose, counted) ? 1 : 0;
             switch (purpose)
             {
                 case Playback.PurposeDownload:
                     var today = c?.DownloadDay.Count(t => now < t + TimeSpan.FromHours(24)) ?? 0;
-                    return ((c?.Downloads ?? 0) < l.Downloads && (l.DownloadsPerDay == 0 || today < l.DownloadsPerDay), l.Downloads > 0);
+                    return ((c?.Downloads ?? 0) - credit < l.Downloads && (l.DownloadsPerDay == 0 || today < l.DownloadsPerDay), l.Downloads > 0);
                 case Playback.PurposeScan:
                     var scans = c?.ScanDay.Count(t => now < t + TimeSpan.FromHours(24)) ?? 0;
                     return (scans < l.ScansPerDay, l.ScansPerDay > 0);
             }
 
-            var counted = audio && l.Audio;
             var most = counted ? l.AudioStreams : l.Streams;
             var used = c?.Of(counted).Streams ?? 0;
-            return (used < most, most > 0);
+            return (used - credit < most, most > 0);
         }
     }
 
     // A copy's version ID toward a peer: a keyed MAC of its handle under the
-    // IDs secret, which tells the peer nothing of it (catalog section 2.1),
+    // IDs secret, which tells the peer nothing of it (MSFP Media listing 2.1),
     // stable as long as the handle is. Its form is Overfin's from before the
     // engine ("ver_", then the first 16 bytes of HMAC-SHA-256 over "version",
     // the peer's ID and the handle, a line feed between each, base64url).
@@ -464,8 +496,8 @@ public sealed partial class MsfpEngine
     }
 
     // The copies of exactly that title the peer may play here, as the
-    // catalog sends them to it (playback section 2.2, step 3; video section
-    // 3.7: in the host's order of preference), and the host's libraries holding it among those
+    // catalog sends them to it (MSFP Media playing 2.2, step 3; MSFP
+    // Media video 3.7: in the host's order of preference), and the host's libraries holding it among those
     // offered; none when the title isn't sent to the peer.
     private async Task<(List<OfferedCopy> Copies, List<string> Libraries)> OfferedCopiesAsync(PeerRecord p, string key, CancellationToken ct)
     {
@@ -540,7 +572,7 @@ public sealed partial class MsfpEngine
     }
 
     // A track's copy as a copy with no video, its one audio track a0, the
-    // file's default (music section 5).
+    // file's default (MSFP Media music 5).
     internal static Copy AsCopy(MusicCopy c) => new(c.Id, c.DurationMs, c.MediaType, c.Size, c.Etag,
     [
         new CopyAudio("a0", c.Codec)
@@ -550,8 +582,8 @@ public sealed partial class MsfpEngine
         },
     ]);
 
-    // How a subtitle track of format is served apart (video section 5.3):
-    // the form video section 5.4's table gives a listed format, else the one
+    // How a subtitle track of format is served apart (MSFP Media video 5.3):
+    // the form MSFP Media video 5.4's table gives a listed format, else the one
     // the host says (form), else none; none either when the host says it
     // can't.
     private static SubtitleServed ServedAs(string id, string format, string? form, bool notApart)
@@ -574,6 +606,7 @@ public sealed partial class MsfpEngine
     {
         Playback.ProblemStreamLimit => Answer.Refuse(ProblemType.StreamLimit),
         Playback.ProblemDeliveryRefused => Answer.Refuse(ProblemType.Delivery),
+        Playback.ProblemTargetRefused => Answer.Refuse(ProblemType.Target),
         Playback.ProblemNotPlayable => Answer.Refuse(ProblemType.NotPlayable),
         Playback.ProblemServerBusy => Answer.Refuse(ProblemType.ServerBusy),
         Playback.ProblemStopped => Answer.Refuse(ProblemType.Stopped),
@@ -588,7 +621,7 @@ public sealed partial class MsfpEngine
 
     private static long? NonZero(long n) => n != 0 ? n : null;
 
-    // Plays a paired peer's title here (playback section 2.2), in its steps.
+    // Plays a paired peer's title here (MSFP Media playing 2.2), in its steps.
     private async Task<Answer> PlayAsync(CallRequest req, CancellationToken ct)
     {
         var p = req.Peer;
@@ -632,12 +665,17 @@ public sealed partial class MsfpEngine
 
         if (!video && @in.Transcode is { } tt)
         {
-            // Members of another content part are ignored (playback section 2.4).
+            // Members of another content part are ignored (MSFP Media playing 2.4).
             @in = @in with { Transcode = tt with { BurnSubtitle = "" } };
         }
 
+        // The playback it replaces, if it names a live one of this peer's:
+        // the limits count both as one (MSFP Media playing 2.2, step 8; MSFP
+        // playback section 6). Any other replaces is ignored.
+        var old = Replaced(p.Id, @in.Replaces);
+
         // 2. No room at all for this purpose in any of the link's pools.
-        if (!PoolRoom(p, @in.Purpose, audioOnly).Open)
+        if (!PoolRoom(p, @in.Purpose, audioOnly, old).Open)
         {
             return Answer.Refuse(ProblemType.StreamLimit);
         }
@@ -678,7 +716,7 @@ public sealed partial class MsfpEngine
 
         // 5. The purpose's limits all in use: refused before any work (the
         // count that matters is Admit's).
-        if (!PoolRoom(p, @in.Purpose, audioOnly).Room)
+        if (!PoolRoom(p, @in.Purpose, audioOnly, old).Room)
         {
             return Answer.Refuse(ProblemType.StreamLimit);
         }
@@ -721,8 +759,8 @@ public sealed partial class MsfpEngine
 
         // The queue: each entry's copy (the one it names, else its first) and
         // its own delivery, else the request's; one not offered, of no such
-        // copy, or that can't be served so keeps its place empty (music
-        // section 5.2). A codec not made refuses the request.
+        // copy, or that can't be served so keeps its place empty (MSFP
+        // Media music 5.2). A codec not made refuses the request.
         var queued = new List<QueuedCopy>();
         var queueCopies = new Dictionary<int, OfferedCopy>();
         var queueTranscodes = false;
@@ -769,7 +807,7 @@ public sealed partial class MsfpEngine
 
         // The method admitted: a transcode whose video and audio are both
         // copied takes no transcode; a queue with a track converted takes one
-        // (playback section 2.6, music section 5.2).
+        // (MSFP Media playing 2.6, MSFP Media music 5.2).
         var takes = served!.Transcodes;
         string Counted(string method) => method switch
         {
@@ -786,7 +824,7 @@ public sealed partial class MsfpEngine
             Copy = chosen.Handle, Title = @in.Title, AudioOnly = audioOnly, Purpose = purpose, Delivery = @in.Delivery,
             MediaType = @in.MediaType, Transcode = @in.Transcode, Served = served, AudioRenditions = @in.AudioRenditions,
             Parts = Math.Max(chosen.Copy.Parts ?? 1, 1), Peer = PeerRefOf(p), AudioTrack = audio, StartMs = start,
-            MaxBitrateKbps = kbps, Queue = queued,
+            MaxBitrateKbps = kbps, Queue = queued, Replaces = old?.Handle ?? "",
             Admit = method =>
             {
                 if (slot is not null)
@@ -794,7 +832,7 @@ public sealed partial class MsfpEngine
                     throw new MsfpException(MsfpError.Internal, "admit called twice");
                 }
 
-                slot = AdmitPools(p, purpose, audioOnly, Counted(method));
+                slot = AdmitPools(p, purpose, audioOnly, Counted(method), old);
                 return slot;
             },
         };
@@ -824,7 +862,7 @@ public sealed partial class MsfpEngine
             // the limits refuse it.
             try
             {
-                slot = AdmitPools(p, purpose, audioOnly, Counted(started.Method));
+                slot = AdmitPools(p, purpose, audioOnly, Counted(started.Method), old);
             }
             catch (MsfpException e)
             {
@@ -876,7 +914,7 @@ public sealed partial class MsfpEngine
         }
 
         // 9. The answer: the ticket, and what the catalog can't know
-        // (playback section 2.3); the viewer's server builds every URL.
+        // (MSFP Media playing 2.3); the viewer's server builds every URL.
         var hls = started.Protocol == Playback.ProtocolHls;
         var subtitles = new List<ServedSubtitle>();
         foreach (var t in chosen.Copy.SubtitleTracks)
@@ -893,14 +931,22 @@ public sealed partial class MsfpEngine
             .String("method", started.Method).String("etag", chosen.Copy.ETag).Integer("positionMs", started.PositionMs)
             .String("versionId", chosen.Id).String("audioTrack", Nonempty(audio))
             // Asked for, never refused: the answer says whether the host made
-            // them (playback section 2.3), false when it made none.
+            // them (MSFP Media playing 2.3), false when it made none.
             .Bool("audioRenditions", @in.AudioRenditions && hls ? started.AudioRenditions : null)
             .Integer("maxBitrateKbps", purpose == Playback.PurposePlay ? kbps : null)
             .Integer("scanBytes", purpose == Playback.PurposeScan ? pb.ScanCap : null)
             .Objects("subtitles", subtitles.Count > 0 ? subtitles : null,
                 (w, t) => w.String("id", t.Id).String("form", t.Form).Bool("ass", t.Ass ? true : null))
             .Integer("fontCount", pb.Fonts > 0 ? pb.Fonts : null)
-            .Objects("queue", answered.Count > 0 ? answered : null, (w, e) => e.Write(w)));
+            .Objects("queue", answered.Count > 0 ? answered : null, (w, e) => e.Write(w))
+            .Integer("progressSeconds", _cfg.ProgressSeconds));
+        if (old is not null)
+        {
+            // Answered 200: the playback it replaces ends now (MSFP Media
+            // playing 2.3).
+            EndPlayback(old, EndReason.Replaced);
+        }
+
         _log.LogInformation("msfp: a peer's playback started: {Peer} {Playback} {Method} {Purpose}", p.Id, pb.Id, started.Method, purpose);
         Notify(new PlaybackStarted(p.Id, p.Name, pb.Id, pb.Title, pb.Method, pb.Purpose));
         return Answer.Ok(output);
@@ -989,7 +1035,7 @@ public sealed partial class MsfpEngine
     }
 
     // Makes a started playback live: its ID and its ticket, 128 bits and 256
-    // bits of randomness, the ticket kept by its hash only (media section 1).
+    // bits of randomness, the ticket kept by its hash only (MSFP Media fetching 1).
     // It gives the ticket's text, for the answer only.
     private (LivePlayback? Playback, string Ticket) Register(PeerRecord p, Protocol.PlayRequest @in, IReadOnlyList<QueueAsk> queue,
         List<string> libs, OfferedCopy c, CopyInfo info, string audio, Served served, Started s, CountSlot slot,
@@ -1002,7 +1048,7 @@ public sealed partial class MsfpEngine
         {
             Id = id, Peer = p.Id, PeerName = p.Name, Title = @in.Title, Queue = queue.Select(q => q.Title).ToList(), Libraries = libs,
             Offers = PeerRefOf(p).Libraries, Handle = s.Handle, Method = s.Method, Purpose = @in.Purpose, AudioOnly = audioOnly,
-            Ticket = SHA256.HashData(Encoding.UTF8.GetBytes(ticket)), Started = now, Used = now, Slot = slot,
+            Ticket = SHA256.HashData(Encoding.UTF8.GetBytes(ticket)), Started = now, Used = now, Idle = Playback.IdleLimit(_cfg.ProgressSeconds), Slot = slot,
             Facts = new ServedFacts(c.Copy, audio, served),
         };
         pb.Entries[0] = new EntryServed(s.Protocol, c.Copy.Size, c.Copy.ETag, c.Copy.MediaType);
@@ -1023,7 +1069,7 @@ public sealed partial class MsfpEngine
 
         if (!audioOnly && @in.Purpose != Playback.PurposeScan)
         {
-            // A playback's ticket opens its copy's sheets (video section 5.5);
+            // A playback's ticket opens its copy's sheets (MSFP Media video 5.5);
             // a download's opens none. The layout left only with a
             // SheetEncoder (SendCopy).
             if (c.Copy.PreviewLayout is { } t && @in.Purpose == Playback.PurposePlay && _cfg.SheetEncoder is not null)
@@ -1067,8 +1113,8 @@ public sealed partial class MsfpEngine
     }
 
     // The stream root of the address the request was signed for: the former
-    // one during a move, for a peer still on it (media section 1, core
-    // section 13.1, step 5).
+    // one during a move, for a peer still on it (MSFP Media fetching 1, MSFP
+    // core section 13.1, step 5).
     private string StreamBase(CallRequest req)
     {
         var a = OurAddress();
@@ -1087,6 +1133,11 @@ public sealed partial class MsfpEngine
                     return Answer.Refuse(ProblemType.NotPlayable);
                 case MsfpError.DeliveryRefused:
                     return Answer.Refuse(ProblemType.Delivery);
+                case MsfpError.TargetRefused:
+                    return Answer.Refuse(ProblemType.Target);
+                case MsfpError.Unreachable:
+                    // The host can't reach the media now (MSFP Media base 4).
+                    return Answer.Refuse(ProblemType.Unreachable);
                 case MsfpError.StreamLimitReached:
                     return Answer.Refuse(ProblemType.StreamLimit);
                 case MsfpError.ServerBusy:
@@ -1124,8 +1175,8 @@ public sealed partial class MsfpEngine
     }
 
     // Ends a live playback, once: its ticket stops working at once, its open
-    // responses are cut, its stream is freed, the host is told (playback
-    // section 6.3).
+    // responses are cut, its stream is freed, the host is told (MSFP
+    // Media playing 5).
     private void EndPlayback(LivePlayback pb, EndReason why)
     {
         lock (_plays)
@@ -1199,7 +1250,7 @@ public sealed partial class MsfpEngine
                 {
                     tooLong.Add(pb);
                 }
-                else if (Playback.Idles(pb.Purpose) && now - pb.Used >= Playback.IdleEnd)
+                else if (Playback.Idles(pb.Purpose) && now - pb.Used >= pb.Idle)
                 {
                     expired.Add(pb);
                 }
@@ -1270,7 +1321,7 @@ public sealed partial class MsfpEngine
         }
     }
 
-    // Answers a peer's progress or stop (playback sections 3, 4 and 7): read
+    // Answers a peer's progress or stop (MSFP Media playing 3, 4 and 6): read
     // as MSFP reads it, applied to the playback's state, kept reports passed
     // on to the host; a stop ends a live playback.
     private async Task<Answer> ReportAsync(CallRequest req, string call, CancellationToken ct)
@@ -1349,7 +1400,7 @@ public sealed partial class MsfpEngine
             var hr = new Report
             {
                 Handle = handle, Title = outcome.Title, PositionMs = outcome.PositionMs, HasPosition = outcome.HasPosition,
-                At = outcome.At, Stop = call == Playback.CallStop, Late = pb is null,
+                At = outcome.At, Stop = call == Playback.CallStop, Late = pb is null, Paused = r.Paused,
             };
             try
             {
@@ -1369,16 +1420,16 @@ public sealed partial class MsfpEngine
         return Answer.Ok("{}"u8.ToArray());
     }
 
-    // A peer telling that a playback is still watched (playback section 3).
+    // A peer telling that a playback is still watched (MSFP Media playing 3).
     private Task<Answer> ProgressAsync(CallRequest req, CancellationToken ct) => ReportAsync(req, Playback.CallProgress, ct);
 
-    // A peer telling that a playback is over (playback section 4): 200
+    // A peer telling that a playback is over (MSFP Media playing 4): 200
     // whether or not it was live; another pairing's changes nothing.
     private Task<Answer> StopAsync(CallRequest req, CancellationToken ct) => ReportAsync(req, Playback.CallStop, ct);
 
     /// <summary>
-    /// Ends a peer's playback here from the host's side, for why (playback
-    /// section 6.3): <see cref="EndReason.Operator"/> when the operator stops
+    /// Ends a peer's playback here from the host's side, for why (MSFP
+    /// Media playing 5): <see cref="EndReason.Operator"/> when the operator stops
     /// it, <see cref="EndReason.Expired"/> or <see cref="EndReason.TooLong"/>
     /// when the host's own idle or time rules end it,
     /// <see cref="EndReason.NotOffered"/> when its copy is no longer shared.
@@ -1422,7 +1473,7 @@ public sealed partial class MsfpEngine
     }
 
     // Whether a peer may still use a playback here: paired, not suspended,
-    // its title's library still offered (media section 4). Read from storage
+    // its title's library still offered (MSFP Media fetching 4.2). Read from storage
     // at each media request, so an ending noticed only then still stops the
     // ticket.
     private async Task<bool> PlayAllowedAsync(LivePlayback pb, CancellationToken ct)

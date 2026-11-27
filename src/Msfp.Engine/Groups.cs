@@ -367,7 +367,7 @@ public sealed partial class MsfpEngine
         if (banned is not null && banned.Inbound == Inbound.Yes)
         {
             // The banned server hears of it before its link here ends, which
-            // it does when nothing else holds it (core section 7.7).
+            // it does when nothing else holds it (MSFP core section 7.7).
             try
             {
                 await CallAsync(banned, CallGroupPush, PushBody(id, [sent!], []), ct, background: true).ConfigureAwait(false);
@@ -489,8 +489,8 @@ public sealed partial class MsfpEngine
     }
 
     /// <summary>
-    /// Chooses whether this server shares its local titles (MSFP catalog
-    /// section 4.3) with a group, in the libraries it offers it: off by
+    /// Chooses whether this server shares its local titles (MSFP
+    /// Media listing 4.3) with a group, in the libraries it offers it: off by
     /// default. A change forces a whole reading on every link through it.
     /// </summary>
     /// <param name="id">The group's ID.</param>
@@ -520,7 +520,7 @@ public sealed partial class MsfpEngine
     }
 
     // Ends the playbacks from libraries their link is no longer offered
-    // (playback section 6.3).
+    // (MSFP Media playing 5).
     private async Task EndPlaybacksNotOfferedAsync(CancellationToken ct)
     {
         var offers = new Dictionary<string, List<string>>(StringComparer.Ordinal);
@@ -630,8 +630,8 @@ public sealed partial class MsfpEngine
     /// Leaves a group, or gives up joining it. Every link through it loses
     /// it as a relation; one with no relation left ends, but those in
     /// <paramref name="ask"/>, asked for the individual relation first, which
-    /// stay until their operators answer (MSFP groups section 7, core section
-    /// 7.7).
+    /// stay until their operators answer (MSFP groups section 7, MSFP
+    /// core section 7.7).
     /// </summary>
     /// <exception cref="MsfpException"><see cref="MsfpError.NotFound"/>, <see cref="MsfpError.NotMember"/>, <see cref="MsfpError.NoRight"/> (the owner gives the group away first).</exception>
     public async Task LeaveGroupAsync(string id, IReadOnlyList<string>? ask = null, CancellationToken ct = default)
@@ -974,8 +974,8 @@ public sealed partial class MsfpEngine
             p.Groups.Remove(id);
             if (p.State == PeerState.Paired && !Holds(p, false))
             {
-                // Banned, or left: a link nothing else holds ends (core
-                // section 7.7); one the leaver asked to keep is held by its ask.
+                // Banned, or left: a link nothing else holds ends (MSFP
+                // core section 7.7); one the leaver asked to keep is held by its ask.
                 var pid = p.Id;
                 effects.Add(() => Background(ct => EndAsync(pid, ct)));
             }
@@ -1063,7 +1063,7 @@ public sealed partial class MsfpEngine
 
     // The host libraries whose local titles a link is shared: those its
     // individual relation offers when it shares local titles, and those of
-    // its groups that do (catalog section 5, groups section 9: a relation
+    // its groups that do (MSFP catalog section 5, groups section 9: a relation
     // that allows it, and offers the library).
     internal static List<string> LocalOffered(PeerRecord p)
     {
@@ -1095,12 +1095,12 @@ public sealed partial class MsfpEngine
 
     // Whether one of a link's pools has room now for a playback of purpose
     // (Room), and whether one allows any at all (Open).
-    private (bool Room, bool Open) PoolRoom(PeerRecord p, string purpose, bool audio)
+    private (bool Room, bool Open) PoolRoom(PeerRecord p, string purpose, bool audio, LivePlayback? old)
     {
         bool room = false, open = false;
         foreach (var pool in PoolsOf(p))
         {
-            var (r, o) = RoomIn(PoolKey(p, pool), pool.Limits, purpose, audio);
+            var (r, o) = RoomIn(PoolKey(p, pool), pool.Limits, purpose, audio, old);
             room |= r;
             open |= o;
         }
@@ -1109,17 +1109,17 @@ public sealed partial class MsfpEngine
     }
 
     // Admits a playback of purpose in the first of a link's pools with room
-    // (groups section 9, playback section 5): each playback counts against
+    // (groups section 9, MSFP playback section 5): each playback counts against
     // exactly one, and a day's counts are kept in the pool it counted
     // against.
-    private CountSlot AdmitPools(PeerRecord p, string purpose, bool audio, string method)
+    private CountSlot AdmitPools(PeerRecord p, string purpose, bool audio, string method, LivePlayback? old)
     {
         var error = new MsfpException(MsfpError.StreamLimitReached);
         foreach (var pool in PoolsOf(p))
         {
             try
             {
-                return AdmitIn(PoolKey(p, pool), pool.Limits, purpose, audio, method);
+                return AdmitIn(PoolKey(p, pool), pool.Limits, purpose, audio, method, old);
             }
             catch (MsfpException e) when (e.Code is MsfpError.StreamLimitReached or MsfpError.ServerBusy)
             {

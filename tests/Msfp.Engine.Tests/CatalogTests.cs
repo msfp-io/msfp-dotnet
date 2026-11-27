@@ -50,7 +50,7 @@ public sealed class CatalogTests
     }
 
     // A whole reading that fails halfway keeps the previous complete list:
-    // nothing of the pages it read (catalog section 3.2).
+    // nothing of the pages it read (MSFP Media listing 3.2).
     [Fact]
     public async Task WholeReadingFailsHalfway()
     {
@@ -120,7 +120,7 @@ public sealed class CatalogTests
         Assert.DoesNotContain("\"changes\":true", s.Exchanges("titles")[^1].ResponseBody, StringComparison.Ordinal);
     }
 
-    // A new place is a change of the title (video section 4.1): sent again
+    // A new place is a change of the title (MSFP Media video 4.1): sent again
     // under the same key; one that loses its place is gone.
     [Fact]
     public async Task PlaceChanges()
@@ -304,7 +304,7 @@ public sealed class CatalogTests
     }
 
     // A host's copy with more subtitle tracks than MSFP allows leaves with
-    // the first 64 (video section 3.2): the engine sends nothing a receiver
+    // the first 64 (MSFP Media video 3.2): the engine sends nothing a receiver
     // would drop.
     [Fact]
     public async Task OwnSubtitleTracksCapped()
@@ -457,7 +457,7 @@ public sealed class CatalogTests
         };
         const string Nameless = "track/mb/0c000000-0000-4000-8000-000000000004";
         h.Titles[Nameless] = new MusicTitle { Key = Nameless, Kind = "track", Libraries = ["music"] };
-        // A track's members its album has: left out (music section 3).
+        // A track's members its album has: left out (MSFP Media music 3).
         const string Same = "track/mb/0c000000-0000-4000-8000-000000000007";
         h.Titles[Same] = new MusicTitle
         {
@@ -499,8 +499,8 @@ public sealed class CatalogTests
         Assert.Empty(await s2.PeerTitlesAsync());
     }
 
-    // A film's copies (video section 3.2): sent in the host's order, its
-    // preference (video section 3.7), under version IDs, cleaned as a receiver keeps them; the best picture and the
+    // A film's copies (MSFP Media video 3.2): sent in the host's order, its
+    // preference (MSFP Media video 3.7), under version IDs, cleaned as a receiver keeps them; the best picture and the
     // languages are worked out from them; a copy's new etag is a change of
     // the title.
     [Fact]

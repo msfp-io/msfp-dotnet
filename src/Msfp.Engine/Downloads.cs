@@ -3,7 +3,7 @@ using Msfp.Protocol;
 
 namespace Msfp;
 
-// Downloads kept for their late reports (MSFP playback section 7): a
+// Downloads kept for their late reports (MSFP Media playing 6): a
 // download's progress and stop with at count for 30 days after its play, on
 // both sides, across restarts. A store that implements IDownloadsTx keeps
 // them; the engine keeps them in memory besides, read back at OpenAsync. A

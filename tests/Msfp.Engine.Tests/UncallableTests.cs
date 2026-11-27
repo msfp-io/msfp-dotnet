@@ -4,7 +4,7 @@ using Msfp.Protocol;
 
 namespace Msfp.Tests;
 
-/// <summary>Servers that can't be called (core section 7.5; msfp-go's uncallable_test.go).</summary>
+/// <summary>Servers that can't be called (MSFP core section 7.5; msfp-go's uncallable_test.go).</summary>
 public sealed class UncallableTests
 {
     // U can't be called: it redeems A's code, is paired by its scheduled
@@ -113,8 +113,8 @@ public sealed class UncallableTests
 
     // Turning "can't be called" off: until this server reaches its real
     // address, it still says it can't be called, with its .invalid address,
-    // and keeps its scheduled hellos; its move doesn't end meanwhile (core
-    // section 7.5, "Turning it off"). Then its peer confirms its address; an
+    // and keeps its scheduled hellos; its move doesn't end meanwhile (MSFP
+    // core section 7.5, "Turning it off"). Then its peer confirms its address; an
     // answer there that says inbound false after all puts it back as one
     // that can't be called (back).
     [Theory]

@@ -8,7 +8,7 @@ namespace Msfp.Protocol;
 /// <summary>
 /// Writes a federation body: compact JSON, its members in the order they
 /// are written (the order of the specification's tables), and never a
-/// null (core section 2.3): a member given null is left out, as Go's
+/// null (MSFP Media base 2.2): a member given null is left out, as Go's
 /// omitempty would.
 /// </summary>
 /// <example>
@@ -77,7 +77,7 @@ public sealed class JsonOut
         return this;
     }
 
-    /// <summary>Bytes as base64url (core section 2.2); left out when null.</summary>
+    /// <summary>Bytes as base64url (MSFP core section 2.2); left out when null.</summary>
     public JsonOut Bytes(string name, ReadOnlySpan<byte> value, bool present = true)
     {
         if (present)

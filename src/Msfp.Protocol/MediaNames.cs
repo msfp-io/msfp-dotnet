@@ -3,7 +3,7 @@ using System.Globalization;
 namespace Msfp.Protocol;
 
 /// <summary>
-/// What a ticket opens on the owning server (media sections 1 and 4): its
+/// What a ticket opens on the owning server (MSFP Media fetching 1 and 4.2): its
 /// kind, and for a playback or a download what its answer opened.
 /// </summary>
 public sealed record TicketScope
@@ -45,14 +45,14 @@ public sealed record TicketScope
     public IReadOnlyCollection<string> Names { get; init; } = [];
 }
 
-// The names an owning server serves under a ticket (media section 1), and
-// the media types a viewer's server relays (media section 3).
+// The names an owning server serves under a ticket (MSFP Media fetching 1), and
+// the media types a viewer's server relays (MSFP Media fetching 3).
 public static partial class Media
 {
     /// <summary>
     /// Whether the owning server serves <paramref name="name"/>, the URL's
     /// path after &lt;stream root&gt;&lt;ticket&gt;/, under a ticket of
-    /// <paramref name="scope"/> (media section 1): exactly the names its kind
+    /// <paramref name="scope"/> (MSFP Media fetching 1): exactly the names its kind
     /// opens, within their counts (a font from fontCount on, a sheet from the
     /// sheet count on, a subtitle track with no entry of that form, a queue
     /// entry it didn't prepare are not), numbers in decimal without leading
@@ -140,9 +140,9 @@ public static partial class Media
     }
 
     /// <summary>
-    /// The Content-Type a viewer's server relays a copy's file with (media
-    /// section 3): the copy's own mediaType from the catalog, whatever its
-    /// top-level type, when it is a media type (core section 8.5);
+    /// The Content-Type a viewer's server relays a copy's file with (MSFP
+    /// Media fetching 3): the copy's own mediaType from the catalog, whatever its
+    /// top-level type, when it is a media type (MSFP Media base 3);
     /// application/octet-stream when it has none. A segment's is
     /// <see cref="Playback.RelayedMediaType"/>'s.
     /// </summary>

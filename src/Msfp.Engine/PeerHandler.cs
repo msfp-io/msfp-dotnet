@@ -6,7 +6,7 @@ using Msfp.Protocol;
 namespace Msfp;
 
 /// <summary>
-/// The engine's own HTTP handlers for calls to peers (core section 3):
+/// The engine's own HTTP handlers for calls to peers (MSFP core section 3):
 /// connections through the host's dialer or the engine's, which refuses
 /// local and other special destinations (section 3.3); certificates
 /// publicly trusted, or named by the peer (section 3.2), or any for pair

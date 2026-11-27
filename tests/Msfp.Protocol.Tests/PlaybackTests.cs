@@ -32,7 +32,7 @@ public class PlaybackTests
     }
 
     // Every media URL is built from the stream root, a ticket and a fixed
-    // name (media section 1).
+    // name (MSFP Media fetching 1).
     [Fact]
     public void Urls()
     {

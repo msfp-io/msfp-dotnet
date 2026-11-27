@@ -6,16 +6,16 @@ using Msfp.Protocol;
 
 namespace Msfp;
 
-// The catalog, on the owning side (MSFP catalog sections 2 and 3): what
+// The catalog, on the owning side (MSFP Media listing 2 and 3): what
 // this server offers each peer, the libraries and titles calls, and the
 // change log of its own titles, kept by the host (IChangeLog) or by the
 // engine from snapshots (IOwnLogTx).
 public sealed partial class MsfpEngine
 {
-    /// <summary>How many keys a titles page holds at most (catalog section 3.1).</summary>
+    /// <summary>How many keys a titles page holds at most (MSFP Media listing 3.1).</summary>
     internal const int TitlesPage = 5000;
 
-    /// <summary>How long the engine keeps its own change log (catalog section 3.2: at least 30 days).</summary>
+    /// <summary>How long the engine keeps its own change log (MSFP Media listing 3.2: at least 30 days).</summary>
     internal static readonly TimeSpan ChangesKept = TimeSpan.FromDays(30);
 
     internal const string CallLibraries = "libraries";
@@ -48,7 +48,7 @@ public sealed partial class MsfpEngine
         _cfg.Catalog is null ? [] : await _cfg.Catalog.LibrariesAsync(ct).ConfigureAwait(false);
 
     // Gives each host library its public ID, made when it is first offered:
-    // 96 random bits, never reused (catalog section 2.1).
+    // 96 random bits, never reused (MSFP Media listing 2.1).
     private async ValueTask<Dictionary<string, string>> PublicIdsAsync(IStoreTx tx, IEnumerable<string> hostIds)
     {
         var ids = new Dictionary<string, string>(await tx.LibraryIdsAsync().ConfigureAwait(false), StringComparer.Ordinal);
@@ -90,8 +90,8 @@ public sealed partial class MsfpEngine
     /// <summary>
     /// Sets the host libraries offered to a paired peer (IDs that aren't the
     /// host's are left out). The peer's next reading is a whole one, and its
-    /// playbacks from libraries no longer offered end at once (MSFP playback
-    /// section 6.3).
+    /// playbacks from libraries no longer offered end at once (MSFP
+    /// Media playing 5).
     /// </summary>
     /// <param name="peer">The peer's ID.</param>
     /// <param name="libraries">The host's library IDs.</param>
@@ -173,7 +173,7 @@ public sealed partial class MsfpEngine
 
     /// <summary>
     /// An opaque part of a title key the host may use for one of its titles
-    /// (MSFP catalog section 4.2): the identifier of a local title, or an
+    /// (MSFP Media listing 4.2): the identifier of a local title, or an
     /// extra's part after x/, made from the host's own identifier of it (its
     /// media server's item ID, say) as a keyed MAC under this server's IDs
     /// secret: 22 characters of base64url, stable as long as id is, and never
@@ -225,8 +225,8 @@ public sealed partial class MsfpEngine
     }
 
     /// <summary>
-    /// Sets what a peer may use of this server at once (MSFP playback section
-    /// 5), from its next play on.
+    /// Sets what a peer may use of this server at once (MSFP
+    /// playback section 5), from its next play on.
     /// </summary>
     /// <param name="peer">The peer's ID.</param>
     /// <param name="limits">The limits.</param>
@@ -329,7 +329,7 @@ public sealed partial class MsfpEngine
 
     // The change number from which a peer's readings know of a change of
     // what it sees (its offers, the parts on), set as its OffersSeq inside
-    // the change's transaction (catalog section 3.2). With the engine's own
+    // the change's transaction (MSFP Media listing 3.2). With the engine's own
     // log, a number of its own; with the host's, one above every number
     // given out, and above the host's now (mark, read before the
     // transaction): until the host's log moves past it, readings are whole.
@@ -474,8 +474,8 @@ public sealed partial class MsfpEngine
     // Whether two titles would be sent alike.
     private static bool SameTitle(Title a, Title b) => TitleJson.Marshal(a).AsSpan().SequenceEqual(TitleJson.Marshal(b));
 
-    // Answers a paired peer with what this server offers it (catalog section
-    // 2), and, with playback on, its limits.
+    // Answers a paired peer with what this server offers it (MSFP
+    // Media listing 2), and, with playback on, its limits.
     private async Task<Answer> LibrariesAsync(CallRequest req, CancellationToken ct)
     {
         var p = req.Peer;
@@ -506,13 +506,13 @@ public sealed partial class MsfpEngine
         var playback = On(p, Versions.PartPlayback);
         var music = On(p, Versions.PartMusic);
         return Answer.Ok(JsonOut.Object(o => o.String("name", Name())
-            // A library carries no kind (catalog section 2): its titles' keys
+            // A library carries no kind (MSFP Media listing 2): its titles' keys
             // say what it holds.
             .Objects("libraries", offered, (w, l) => w.String("id", ids[l.Id]).String("name", Music.CleanText(l.Name ?? "", MaxLibraryName)))
             .Object("limits", playback ? w => WriteLimits(w, Generous(p), music) : null)));
     }
 
-    // A limits object as sent (playback section 5, music section 5.1).
+    // A limits object as sent (MSFP playback section 5, MSFP Media music 5.1).
     private static void WriteLimits(JsonOut w, Limits l, bool music)
     {
         w.Integer("streams", l.Streams).Integer("transcodes", l.Transcodes).Integer("bitrateKbps", l.BitrateKbps);
@@ -522,7 +522,7 @@ public sealed partial class MsfpEngine
                 .Integer("downloadKbps", NonZero(l.DownloadKbps));
         }
 
-        // No scanBytes: each scan's answer states its cap (playback section 8).
+        // No scanBytes: each scan's answer states its cap (MSFP playback section 8).
         w.Integer("scansPerDay", NonZero(l.ScansPerDay));
         if (music && l.Audio)
         {
@@ -543,9 +543,6 @@ public sealed partial class MsfpEngine
             return false;
         }
     }
-
-    // A titles request (catalog section 3).
-    private sealed record TitlesRequest(List<string> Libraries, string After, long Since);
 
     // A page of titles as it is built.
     private sealed class TitlesOut
@@ -584,26 +581,14 @@ public sealed partial class MsfpEngine
     }
 
     // Answers a paired peer with a page of the titles in the libraries it
-    // asks for, of those offered to it, of the content parts on between the
-    // two: the whole list, or what changed since its last reading (catalog
-    // section 3).
+    // asks for (all those offered to it, when it names none), of those
+    // offered to it, of the content parts on between the two, that pass its
+    // filters: the whole list, or what changed since its last reading (MSFP
+    // Media listing 3).
     private async Task<Answer> TitlesAsync(CallRequest req, CancellationToken ct)
     {
         var p = req.Peer;
-        TitlesRequest? input = null;
-        try
-        {
-            var body = StrictJson.ReadRequest(req.Body, ["libraries", "after", "since"]);
-            if (body.GetStrings("libraries") is { } libraries)
-            {
-                input = new TitlesRequest(libraries, body.GetString("after") ?? "", body.GetInteger("since") ?? 0);
-            }
-        }
-        catch (ProtocolException)
-        {
-        }
-
-        if (p is null || p.State != PeerState.Paired || input is null || input.After.Length > CatalogRules.MaxAfter)
+        if (p is null || p.State != PeerState.Paired || TitlesRequest.Read(req.Body) is not { } input)
         {
             return Answer.Refuse(ProblemType.NotFound);
         }
@@ -631,7 +616,7 @@ public sealed partial class MsfpEngine
             }
         }
 
-        var libs = byPublic.Where(kv => input.Libraries.Contains(kv.Value)).Select(kv => kv.Key)
+        var libs = byPublic.Where(kv => input.Libraries is null || input.Libraries.Contains(kv.Value)).Select(kv => kv.Key)
             .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
         long seq, floor;
         try
@@ -645,16 +630,17 @@ public sealed partial class MsfpEngine
         }
 
         output.Seq = seq;
-        if (libs.Count == 0)
+        if (libs.Count == 0 || (input.Filter.Kind.Length > 0 && !TitleFilter.KnownKind(input.Filter.Kind)))
         {
+            // A kind of no content part lists nothing (MSFP Media listing 3.6).
             return Answer.Ok(output.Body());
         }
 
-        var sender = new TitleSender(this, p, libs, LocalOffered(p), byPublic, ct);
+        var sender = new TitleSender(this, p, libs, LocalOffered(p), byPublic, ct) { Filter = input.Filter };
         var sent = new List<string>();
         try
         {
-            if (input.Since > 0 && input.Since >= floor && input.Since <= seq && input.Since >= p.OffersSeq &&
+            if (input.Since > 0 && input.Since >= floor && input.Since <= seq && input.Since >= p.OffersSeq && input.Filter.Changes &&
                 !await sender.ChangesPageAsync(input, output, sent).ConfigureAwait(false))
             {
                 output = new TitlesOut { Seq = seq };
@@ -690,6 +676,18 @@ public sealed partial class MsfpEngine
         private readonly Dictionary<string, string> _parents = new(StringComparer.Ordinal);
         private readonly Dictionary<string, MusicTitle?> _albums = new(StringComparer.Ordinal);
 
+        // The request's filters (MSFP Media listing 3.6).
+        public TitleFilter Filter { get; init; } = new();
+
+        // Whether a host's title passes the request's filters.
+        private bool Passes(Title t) => Filter.None || Filter.Passes(new FilterFacts
+        {
+            Key = t.Key,
+            PlaceSeason = (t as VideoTitle)?.Place?.Season,
+            Album = (t as MusicTitle)?.Album ?? "",
+            Artists = (t as MusicTitle)?.Artists ?? [],
+        });
+
         // The host's album of that key, read once per sender; null when it has none.
         private async Task<MusicTitle?> AlbumAsync(string key)
         {
@@ -711,14 +709,22 @@ public sealed partial class MsfpEngine
             return _albums[key];
         }
 
-        // Fills a whole-list page: the titles after after, up to 5,000 and 3
-        // MiB of answer (catalog section 3.1), next set whenever a title
-        // remains after the page. Titles the peer can't be sent are skipped,
-        // and the host asked for more.
+        // Fills a whole-list page: the titles after after that pass the
+        // request's filters, up to 5,000 and 3 MiB of answer (MSFP Media
+        // listing 3.1), next set whenever a title remains after the page.
+        // Titles the peer can't be sent are skipped, and the host asked for
+        // more. Under a video title, only the keys of its film or series are
+        // looked at (TitleFilter.UnderPrefix).
         public async Task WholePageAsync(string after, TitlesOut output, List<string> sent)
         {
             var budget = new PageBudget(CatalogRules.PageReserve);
             var last = "";
+            var prefix = Filter.UnderPrefix;
+            if (prefix.Length > 0 && string.CompareOrdinal(after, prefix) < 0)
+            {
+                after = prefix;
+            }
+
             while (true)
             {
                 var page = await e._cfg.Catalog!.TitlesAsync(libs, after, TitlesPage, ct).ConfigureAwait(false);
@@ -729,8 +735,13 @@ public sealed partial class MsfpEngine
                         throw new MsfpException(MsfpError.Internal, "the host's titles aren't in key order");
                     }
 
+                    if (prefix.Length > 0 && !t.Key.StartsWith(prefix, StringComparison.Ordinal))
+                    {
+                        return; // past every key of the prefix
+                    }
+
                     after = t.Key;
-                    if (await TitleAsync(t).ConfigureAwait(false) is not { } raw)
+                    if (!Passes(t) || await TitleAsync(t).ConfigureAwait(false) is not { } raw)
                     {
                         continue;
                     }
@@ -817,6 +828,11 @@ public sealed partial class MsfpEngine
             var entries = new List<(string Key, byte[]? Raw)>(); // Raw null: gone
             foreach (var t in present)
             {
+                if (!Passes(t))
+                {
+                    continue;
+                }
+
                 if (await TitleAsync(t).ConfigureAwait(false) is { } raw)
                 {
                     entries.Add((t.Key, raw));
@@ -827,7 +843,7 @@ public sealed partial class MsfpEngine
                 }
             }
 
-            // A title's extras go with it (catalog section 3.5), whether the
+            // A title's extras go with it (MSFP Media listing 3.5), whether the
             // host still lists them or not.
             foreach (var k in gone.ToList())
             {
@@ -841,9 +857,15 @@ public sealed partial class MsfpEngine
             }
 
             entries.RemoveAll(en => gone.Contains(en.Key));
+            if (Filter.Kind.Length > 0)
+            {
+                // Changes of the titles of that kind only (MSFP Media listing
+                // 3.6): a key names its kind, so gone ones are told apart too.
+                gone.RemoveAll(k => !TitleKey.TryParse(k, out var tk) || tk.Kind != Filter.Kind);
+            }
 
-            // gone names only titles the peer was told of (catalog section
-            // 3.2), else it would learn of titles it never could see.
+            // gone names only titles the peer was told of (MSFP
+            // Media listing 3.2), else it would learn of titles it never could see.
             if (gone.Count > 0)
             {
                 IReadOnlyList<string> told = [];
@@ -895,10 +917,10 @@ public sealed partial class MsfpEngine
         // isn't canonical or isn't of its kind (with a warning: the host's
         // bug), of a content part off with the peer, in none of the libraries
         // asked, local while its libraries share no local titles with the
-        // peer (catalog section 5), an extra whose title isn't sent in the
-        // same library (catalog section 3.5), or left with nothing a receiver
+        // peer (MSFP catalog section 5), an extra whose title isn't sent in the
+        // same library (MSFP Media listing 3.5), or left with nothing a receiver
         // would keep. Its library is the one asked whose public ID comes first
-        // in byte order (catalog section 3).
+        // in byte order (MSFP Media listing 3).
         public async Task<byte[]?> TitleAsync(Title t)
         {
             if (!TitleKey.TryParse(t.Key, out var k) || k.Kind != t.Kind)
@@ -978,7 +1000,7 @@ public sealed partial class MsfpEngine
         }
 
         // The keys of the extras the host lists under a film, a series or a
-        // season (video section 4.6); none for another key.
+        // season (MSFP Media video 4.6); none for another key.
         private async Task<List<string>> ExtrasOfAsync(string key)
         {
             var output = new List<string>();
@@ -1035,11 +1057,11 @@ public sealed partial class MsfpEngine
     // (Video.ReadTitle), so that nothing leaves that a receiver would skip or
     // drop, and nothing MSFP doesn't take. Null when a receiver would skip
     // it: a film, an episode or an extra with no copy left, an episode keyed
-    // by its TMDB episode ID without a valid place (video sections 3.1 and
-    // 4.1), a local film or series without a name, or an extra whose type
-    // isn't a token. Theme songs and videos are extras like any (video
-    // section 3.9): sent when the host gives them. The copies keep the host's
-    // order, its preference (video section 3.7).
+    // by its TMDB episode ID without a valid place (MSFP
+    // Media video 3.1 and 4.1), a local film or series without a name, or an extra whose type
+    // isn't a token. Theme songs and videos are extras like any (MSFP
+    // Media video 3.9): sent when the host gives them. The copies keep the host's
+    // order, its preference (MSFP Media video 3.7).
     private byte[]? VideoOut(string peer, VideoTitle t, string library)
     {
         var copies = (t.Copies ?? []).Select(c => SendCopy(peer, c)).ToList();
@@ -1056,7 +1078,7 @@ public sealed partial class MsfpEngine
             }
             : null)
             .String("extraType", string.IsNullOrEmpty(t.ExtraType) ? null : t.ExtraType)
-            // An extra carries no name (video section 3.9).
+            // An extra carries no name (MSFP Media video 3.9).
             .String("name", string.IsNullOrEmpty(t.Name) || (VideoKey.TryParse(t.Key, out var vk) && vk.Kind == "extra") ? null : t.Name)
             .Integer("year", t.Year != 0 ? t.Year : null)
             .Bool("image", t.Image ? true : null));
@@ -1069,7 +1091,7 @@ public sealed partial class MsfpEngine
         var year = v.Description?.Year ?? 0;
         var image = v.Description?.Image ?? false;
         var with = v.With.Order(StringComparer.Ordinal).ToList();
-        // A title carries no kind: its key names it (video section 3).
+        // A title carries no kind: its key names it (MSFP Media video 3).
         return JsonOut.Object(o => o.String("key", v.Key).String("library", library)
             .Objects("copies", v.Copies.Count > 0 ? v.Copies : null, Copies.Write)
             .Object("place", v.Place is { } pl ? w => w.Integer("season", pl.Season).Integer("episode", pl.Episode) : null)
@@ -1091,7 +1113,7 @@ public sealed partial class MsfpEngine
     // One of the host's copies as it leaves toward a peer: its ID the version
     // ID play gives for it, never the host's handle; its language tags as
     // Languages.TrySentTag gives them. A copy carries no name and its tracks
-    // no title (video section 3.3): a viewer's server labels them from their
+    // no title (MSFP Media video 3.3): a viewer's server labels them from their
     // facts. Its previewLayout leaves only with a SheetEncoder, which
     // re-encodes every sheet it serves (.NET has no JPEG codec of its own).
     // What remains out of MSFP's bounds is dropped when it is read back.
@@ -1103,7 +1125,7 @@ public sealed partial class MsfpEngine
         PreviewLayout = _cfg.SheetEncoder is null ? null : c.PreviewLayout,
     };
 
-    // SendCopy for a track's copy (music section 3.3).
+    // SendCopy for a track's copy (MSFP Media music 3.3).
     internal MusicCopy SendMusicCopy(string peer, MusicCopy c) => c with { Id = VersionId(peer, c.Id) };
 
     private static string? SentTag(string? code) => code is not null && Languages.TrySentTag(code, out var tag) ? tag : null;
@@ -1111,7 +1133,7 @@ public sealed partial class MsfpEngine
     // The host's music title as sent, its copies made ready to leave, read
     // back as a receiver reads it: what a receiver would skip or drop isn't
     // sent. A track's artists, artistNames, dates and genres leave only when
-    // they differ from its album's (music section 3): an absent one is the
+    // they differ from its album's (MSFP Media music 3): an absent one is the
     // album's.
     private byte[]? MusicOut(string peer, MusicTitle t, string library, MusicTitle? album)
     {
