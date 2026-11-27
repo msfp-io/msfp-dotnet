@@ -38,7 +38,7 @@ it writes none of the protocol itself.
   This library follows the same design as the Go engine,
   [msfp-go](https://github.com/msfp-io/msfp-go), in .NET's own style.
 
-**Status: 0.8.0-preview**, published on NuGet as previews (`Msfp.Engine`,
+**Status: 0.9.0-preview**, published on NuGet as previews (`Msfp.Engine`,
 `Msfp.Protocol`, `Msfp.Describe`); before 1.0 the API may change. The protocol layer is complete
 and passes every test vector of MSFP version 0. The engine pairs (keys,
 codes, `pair`, `hello`, accepting and ending, signed answers, limits),
