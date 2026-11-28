@@ -198,7 +198,7 @@ public partial class PlaybackVectorTests
 
         // 8.
         var transcodes = "";
-        if (Playback.TakesTranscode(r, cp, audio))
+        if (Playback.TakesTranscode(r, cp, audio, cap))
         {
             if (lim.TranscodeRoom(r.Purpose, use) is { } busy)
             {
@@ -234,7 +234,7 @@ public partial class PlaybackVectorTests
         };
         if (r.Delivery.Length == 0)
         {
-            var b = Playback.Baseline(cp, audio);
+            var b = Playback.Baseline(cp, audio, cap);
             o["baseline"] = Node(w => w.String("video", b.Video).String("audio", b.Audio).String("method", b.Method));
         }
 
@@ -299,7 +299,7 @@ public partial class PlaybackVectorTests
         var media = TestVectors.Load(Media);
         var carrier = TestVectors.Load(Carrier);
         int N(JsonObject v, string s) => v[s]?.AsArray().Count ?? 0;
-        Assert.Equal(98 + 20 + 106 + 21 + 21 + 36,
+        Assert.Equal(98 + 20 + 106 + 24 + 21 + 36,
             N(media, "requests") + N(media, "replaces") + N(media, "deliveries") + N(media, "baseline") + N(media, "queueEntries") + N(media, "downloads"));
         Assert.Equal(61, N(media, "reports"));
         Assert.Equal(78, N(media, "answers"));

@@ -105,7 +105,8 @@ public sealed partial class MsfpEngine
     // Step 7 of MSFP Media playing 2.2 for copy c and its audio track audio:
     // what is served, or the refusals MSFP names (Playback.RefuseDelivery,
     // against what is made here). Without delivery, the baseline: each stream
-    // already within it left unchanged, the others converted to its codecs.
+    // already within it left unchanged, the others converted to its codecs; above
+    // the cap, the video (the audio, with no video) converted too.
     // Go's wire.Serve; Msfp.Protocol has its parts (RefuseDelivery, Baseline,
     // WithBaseline, TakesTranscode), put together here.
     internal static (Served? Served, PlayRefusal? Refused) Serve(Protocol.PlayRequest r, Copy c, string audio, int capKbps, Encoders enc)
@@ -129,11 +130,11 @@ public sealed partial class MsfpEngine
                 return (new Served
                 {
                     Method = Playback.MethodTranscode, Video = t.VideoCodec, Audio = t.AudioCodec, Transcode = t,
-                    Transcodes = Playback.TakesTranscode(r, c, audio),
+                    Transcodes = Playback.TakesTranscode(r, c, audio, capKbps),
                 }, null);
         }
 
-        var b = Playback.Baseline(c, audio);
+        var b = Playback.Baseline(c, audio, r.Purpose is Playback.PurposePlay or "" ? capKbps : 0);
         return (new Served
         {
             Method = b.Method, Video = b.Video ?? "", Audio = b.Audio, Transcodes = b.Method == Playback.MethodTranscode,

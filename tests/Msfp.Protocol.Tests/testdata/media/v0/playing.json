@@ -4539,6 +4539,30 @@
       "output": "{\"title\":\"track/local/Tl5Kp2\",\"purpose\":\"play\",\"baseline\":{\"audio\":\"copy\",\"method\":\"remux\"},\"versionId\":\"Lt1\",\"audioTrack\":\"a0\",\"startPositionMs\":0,\"counts\":\"streams\",\"progressSeconds\":60,\"idleSeconds\":120}"
     },
     {
+      "name": "within the baseline, at a cap equal to its overall rate (3,000 kbit/s): left unchanged, a remux",
+      "call": "play",
+      "text": "{\"title\":\"movie/tmdb/949\",\"versionId\":\"Lw3pX9cJ\",\"maxBitrateKbps\":3000}",
+      "valid": true,
+      "status": 200,
+      "output": "{\"title\":\"movie/tmdb/949\",\"purpose\":\"play\",\"baseline\":{\"video\":\"copy\",\"audio\":\"copy\",\"method\":\"remux\"},\"versionId\":\"Lw3pX9cJ\",\"audioTrack\":\"a1\",\"startPositionMs\":0,\"bitrateCapKbps\":3000,\"counts\":\"streams\",\"progressSeconds\":60,\"idleSeconds\":120}"
+    },
+    {
+      "name": "within the baseline, above the cap (3,000 kbit/s, a cap of 2,999): the cap wins, the picture converted, the audio left unchanged",
+      "call": "play",
+      "text": "{\"title\":\"movie/tmdb/949\",\"versionId\":\"Lw3pX9cJ\",\"maxBitrateKbps\":2999}",
+      "valid": true,
+      "status": 200,
+      "output": "{\"title\":\"movie/tmdb/949\",\"purpose\":\"play\",\"baseline\":{\"video\":\"h264\",\"audio\":\"copy\",\"method\":\"transcode\"},\"versionId\":\"Lw3pX9cJ\",\"audioTrack\":\"a1\",\"startPositionMs\":0,\"bitrateCapKbps\":2999,\"counts\":\"streams\",\"transcodes\":\"carrier and source\",\"progressSeconds\":60,\"idleSeconds\":120}"
+    },
+    {
+      "name": "a theme song of AAC-LC above the cap (256 kbit/s, a cap of 128): no video, the audio converted",
+      "call": "play",
+      "text": "{\"title\":\"movie/tmdb/348/x/Th1aQ2\",\"maxBitrateKbps\":128}",
+      "valid": true,
+      "status": 200,
+      "output": "{\"title\":\"movie/tmdb/348/x/Th1aQ2\",\"purpose\":\"play\",\"baseline\":{\"audio\":\"aac\",\"method\":\"transcode\"},\"versionId\":\"Th0\",\"audioTrack\":\"a0\",\"startPositionMs\":0,\"bitrateCapKbps\":128,\"counts\":\"streams\",\"transcodes\":\"carrier and source\",\"progressSeconds\":60,\"idleSeconds\":120}"
+    },
+    {
       "name": "a track of FLAC: converted to AAC, audio only",
       "call": "play",
       "text": "{\"title\":\"track/mb/0c000000-0000-4000-8000-000000000003\"}",

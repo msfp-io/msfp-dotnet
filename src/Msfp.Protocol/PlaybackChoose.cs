@@ -182,16 +182,21 @@ public static partial class Playback
     /// video for a copy with video only: H.264 at most High profile and level
     /// 4.1 (by its codecs), 8-bit, progressive, with H.273 primaries,
     /// transfer and matrix 1; the audio AAC-LC (mp4a.40.2), 1 or 2 channels,
-    /// at most 48 kHz. A fact the copy doesn't state isn't within.
+    /// at most 48 kHz. A fact the copy doesn't state isn't within. Above
+    /// <paramref name="capKbps"/>, the copy's overall rate (size × 8 /
+    /// durationMs) above the cap, the video (the audio, for a copy with no
+    /// video) is converted even when within: the cap wins.
     /// </summary>
     /// <param name="copy">The copy chosen.</param>
     /// <param name="audioTrack">The audio track chosen; "" for none.</param>
-    public static BaselinePlan Baseline(Copy copy, string audioTrack)
+    /// <param name="capKbps">The play's bitrate cap (<see cref="PlayRequest.BitrateCap"/>), 0 for none or for a download.</param>
+    public static BaselinePlan Baseline(Copy copy, string audioTrack, int capKbps = 0)
     {
         ArgumentNullException.ThrowIfNull(copy);
+        var over = capKbps > 0 && copy.DurationMs > 0 && copy.Size * 8 > (long)capKbps * copy.DurationMs;
         var audio = copy.AudioTracks.FirstOrDefault(a => a.Id == audioTrack);
-        var a = audio is not null && AudioWithin(audio) ? Names.Copy : Names.BaselineAudioCodec;
-        string? v = copy.Video is { } video ? VideoWithin(video) ? Names.Copy : Names.BaselineVideoCodec : null;
+        var a = audio is not null && AudioWithin(audio) && (copy.Video is not null || !over) ? Names.Copy : Names.BaselineAudioCodec;
+        string? v = copy.Video is { } video ? VideoWithin(video) && !over ? Names.Copy : Names.BaselineVideoCodec : null;
         var method = a == Names.Copy && (v is null || v == Names.Copy) ? MethodRemux : MethodTranscode;
         return new BaselinePlan(v, a, method);
     }
@@ -200,16 +205,16 @@ public static partial class Playback
     /// Whether a play of <paramref name="copy"/> takes a transcode (MSFP
     /// Media playing 2.6, MSFP playback section 6): a delivery transcode, unless both its video and
     /// its audio are copy; the baseline when it converts a stream
-    /// (<see cref="Baseline"/>). A file or a remux never does.
+    /// (<see cref="Baseline"/>, at <paramref name="capKbps"/> for a play). A file or a remux never does.
     /// </summary>
-    public static bool TakesTranscode(PlayRequest request, Copy copy, string audioTrack)
+    public static bool TakesTranscode(PlayRequest request, Copy copy, string audioTrack, int capKbps = 0)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(copy);
         return request.Delivery switch
         {
             DeliveryTranscode => !(copy.Video is not null && request.Transcode?.VideoCodec == Names.Copy && request.Transcode.AudioCodec == Names.Copy),
-            "" => Baseline(copy, audioTrack).Method == MethodTranscode,
+            "" => Baseline(copy, audioTrack, request.Purpose is PurposePlay or "" ? capKbps : 0).Method == MethodTranscode,
             _ => false,
         };
     }

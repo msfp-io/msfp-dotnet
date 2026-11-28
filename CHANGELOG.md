@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Changed
+- Without delivery, the baseline leaves no stream unchanged when the
+  copy's overall rate is above the play's cap: the video (the audio, for
+  a copy with no video) is converted (MSFP Media playing 2.7: the cap
+  wins). `Playback.Baseline` and `Playback.TakesTranscode` take the cap
+  (`capKbps`, 0 by default: none).
 - StrictJson refuses a body with a value at level 65 (the body's object
   at level 0), which it accepted for a scalar, and a number past the
   range of an IEEE 754 double (MSFP Media base 2.2).
