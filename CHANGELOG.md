@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.10.0-preview (2026-11-28): MSFP Media's vectors split and the owner's decisions of 2026-11-28
 
 ### Changed
 - The baseline is in MPEG-TS segments (MSFP Media playing 2.7):
