@@ -32,8 +32,9 @@ namespace Msfp.Examples.ShareFolder;
 /// <para>
 /// Files are served as they are: by byte ranges (delivery file), or as their
 /// HLS copy (a remux made beforehand) when the viewer doesn't play their
-/// container. A play without delivery of a copy outside the baseline is
-/// transcoded by ffmpeg before the answer (Baseline.cs). A copy is described
+/// container. A play without delivery of a copy outside the baseline, or
+/// whose HLS copy isn't of MPEG-TS segments (the baseline's), is made by
+/// ffmpeg before the answer (Baseline.cs). A copy is described
 /// from its file (Probes.cs).
 /// </para>
 /// </summary>
@@ -392,8 +393,10 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
     /// segments' media type (video/mp2t for .ts segments, video/mp4
     /// otherwise), and without delivery when the engine found the copy within
     /// the baseline (H.264 High 4.1 8-bit SDR BT.709 and AAC-LC stereo, the
-    /// HLS copy then taken to be the same streams); without delivery outside
-    /// it, a transcode ffmpeg makes (Baseline.cs). It makes no transcode asked
+    /// HLS copy then taken to be the same streams) and the HLS copy is of
+    /// MPEG-TS segments, the baseline's; without delivery otherwise, the
+    /// baseline ffmpeg makes (Baseline.cs): a transcode, or the streams
+    /// copied into MPEG-TS. It makes no transcode asked
     /// by delivery, and no audio renditions, which the answer then says
     /// (<see cref="Started"/>'s AudioRenditions false: MSFP
     /// Media playing 2.3). The handle is the protocol and the file's path.
@@ -419,10 +422,12 @@ internal sealed partial class Folder(string dir) : ICatalog, IImages, IPlayback,
                 var segments = hls && Directory.EnumerateFiles(hlsDir, "*.ts").Any() ? "mp2t" : "mp4";
                 (method, protocol) = hls && request.Served.Segments == segments ? ("remux", "hls") : throw new MsfpException(MsfpError.DeliveryRefused);
                 break;
-            case "" when request.Served.Method == Playback.MethodTranscode:
+            // The baseline is in MPEG-TS segments (MSFP Media playing 2.7):
+            // made by ffmpeg unless the HLS copy is of .ts segments.
+            case "" when request.Served.Method == Playback.MethodTranscode || !hls || !Directory.EnumerateFiles(hlsDir, "*.ts").Any():
                 return BaselineAsync(request, path, ct);
             default:
-                (method, protocol) = hls ? ("remux", "hls") : throw new MsfpException(MsfpError.NotPlayable);
+                (method, protocol) = ("remux", "hls");
                 break;
         }
 

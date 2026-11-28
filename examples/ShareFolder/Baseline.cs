@@ -12,8 +12,9 @@ internal sealed partial class Folder
     private int _n;
 
     /// <summary>
-    /// Makes the baseline of a copy outside it (MSFP Media playing 2.7), as
-    /// the request's Served says: the picture to H.264 High 4.1, 8-bit 4:2:0,
+    /// Makes the baseline of a copy (MSFP Media playing 2.7), as the
+    /// request's Served says (a transcode, or a remux when both streams are
+    /// copied): the picture to H.264 High 4.1, 8-bit 4:2:0,
     /// tagged BT.709, unless it is copied; the audio track played to AAC-LC
     /// stereo at 48 kHz, unless it is copied; as complete HLS with MPEG-TS
     /// segments, in a temporary folder the playback's stop removes. ffmpeg
@@ -22,7 +23,7 @@ internal sealed partial class Folder
     /// </summary>
     private async ValueTask<Started> BaselineAsync(StartRequest request, string path, CancellationToken ct)
     {
-        request.Admit?.Invoke(Playback.MethodTranscode);
+        request.Admit?.Invoke(request.Served.Method);
         var dir = Directory.CreateTempSubdirectory("share-folder-baseline-").FullName;
         var args = new List<string> { "-nostdin", "-v", "error", "-i", path, "-map_metadata", "-1", "-sn", "-dn" };
         if (request.AudioOnly || request.Served.Video.Length == 0)

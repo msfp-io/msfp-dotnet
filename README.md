@@ -194,7 +194,7 @@ copy (`VersionId`), its audio (`AudioTrack`) and its subtitles, and asks
 a delivery (the file as it is, a remux to `video/mp2t` or `video/mp4`
 segments, a transcode, a stream of which may be `copy`, to SDR or
 keeping the range), or none for the baseline every server plays, H.264
-and AAC in HLS; nothing of the device is sent (between servers the ask
+and AAC in HLS of MPEG-TS segments; nothing of the device is sent (between servers the ask
 is always explicit: MSFP refuses a capability list), and every media URL
 is built from the peer's ticket: none a peer wrote is fetched. A change of
 track, copy or quality is a new `PlayAsync` whose `Replaces` names the
@@ -322,9 +322,9 @@ named with their TMDB (or TheTVDB) IDs, `Title (Year) [tmdbid-949].mkv`
 or a folder of their own, episodes `S01E02` (by their TMDB episode ID when
 the name has one), extras in `Trailers/` and `Extras/`, local titles (no
 ID, an image beside them), `.vtt` subtitles, HLS copies
-(`<same name>.hls/`, H.264 and AAC: the baseline a play without a
-delivery gets) and previews (`<same name>.trickplay/`) made beforehand;
-nothing is transcoded. Copies are described from their files (the
+(`<same name>.hls/`, H.264 and AAC in `.ts` segments: the baseline a
+play without a delivery gets; ffmpeg makes it otherwise) and previews (`<same name>.trickplay/`) made beforehand;
+nothing else is transcoded. Copies are described from their files (the
 media type from their first bytes, an etag from their content; with
 `ffprobe` when it is installed, the Msfp.Describe package gives the rest:
 codecs strings, H.273 colour, Dolby Vision, the audio and subtitle tracks
