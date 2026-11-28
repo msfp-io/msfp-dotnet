@@ -2,7 +2,7 @@ using System.Text;
 
 namespace Msfp.Protocol.Tests;
 
-/// <summary>wire/media_test.go: the ass cases of media.json, parts and bounds.</summary>
+/// <summary>wire/media_test.go: the ass cases of video.json (MSFP Media), parts and bounds.</summary>
 public class AssTests
 {
     [Fact]

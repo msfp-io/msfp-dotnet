@@ -4,9 +4,10 @@ using System.Text.Json.Nodes;
 namespace Msfp.Protocol.Tests;
 
 /// <summary>
-/// wire/vectors_test.go's cases of strict.json in this part: media names
-/// (TestStrictVectors), language codes (TestLanguageCodeVectors),
-/// destinations (MSFP core section 3.3), open tokens (MSFP Media base 3) and
+/// wire/vectors_test.go's cases of the strict forms in this part: media names
+/// (TestStrictVectors; MSFP Media's fetching.json), language codes
+/// (TestLanguageCodeVectors; base.json), destinations (MSFP core section 3.3;
+/// MSFP's strict.json), open tokens (MSFP Media base 3; base.json) and
 /// libraries' kinds (MSFP Media listing 2.2).
 /// </summary>
 public class StrictVectorTests
@@ -14,34 +15,34 @@ public class StrictVectorTests
     [Fact]
     public void OpenTokenVectors()
     {
-        var cases = TestVectors.Cases("strict.json", "openTokens");
+        var cases = TestVectors.Cases("media/v0/base.json", "openTokens");
         var failures = cases.Where(c => Names.IsToken(c.Str("text")) != c.Valid())
             .Select(c => $"\"{c.Str("text")}\": want valid {c.Valid()} ({c.Str("reason")})").ToList();
-        TestVectors.NoFailures(failures, cases.Count, "strict.json openTokens");
+        TestVectors.NoFailures(failures, cases.Count, "base.json openTokens");
     }
 
     [Fact]
     public void OpenMediaTypeVectors()
     {
-        var cases = TestVectors.Cases("strict.json", "openMediaTypes");
+        var cases = TestVectors.Cases("media/v0/base.json", "openMediaTypes");
         var failures = cases.Where(c => Names.IsMediaType(c.Str("text")) != c.Valid())
             .Select(c => $"\"{c.Str("text")}\": want valid {c.Valid()}").ToList();
-        TestVectors.NoFailures(failures, cases.Count, "strict.json openMediaTypes");
+        TestVectors.NoFailures(failures, cases.Count, "base.json openMediaTypes");
     }
 
     [Fact]
     public void MediaNameVectors()
     {
-        var cases = TestVectors.Cases("strict.json", "mediaNames");
+        var cases = TestVectors.Cases("media/v0/fetching.json", "mediaNames");
         var failures = cases.Where(c => Media.FileName(c.Str("text")) != c.Valid())
             .Select(c => $"\"{c.Str("text")}\": want valid {c.Valid()}").ToList();
-        TestVectors.NoFailures(failures, cases.Count, "strict.json mediaNames");
+        TestVectors.NoFailures(failures, cases.Count, "fetching.json mediaNames");
     }
 
     [Fact]
     public void LanguageCodeVectors()
     {
-        var cases = TestVectors.Cases("strict.json", "languageCodes");
+        var cases = TestVectors.Cases("media/v0/base.json", "languageCodes");
         var failures = new List<string>();
         foreach (var c in cases)
         {
@@ -52,14 +53,14 @@ public class StrictVectorTests
             }
         }
 
-        TestVectors.NoFailures(failures, cases.Count, "strict.json languageCodes");
+        TestVectors.NoFailures(failures, cases.Count, "base.json languageCodes");
         Assert.Equal(["fr", "de", "fr-CA"], Languages.SentTags(["fre", "fr", "FRA", "und", "ger", "fr-ca", "fre-CA"]));
     }
 
     [Fact]
     public void DestinationVectors()
     {
-        var cases = TestVectors.Cases("strict.json", "destinations");
+        var cases = TestVectors.Cases("msfp/v0/strict.json", "destinations");
         var failures = new List<string>();
         foreach (var c in cases)
         {

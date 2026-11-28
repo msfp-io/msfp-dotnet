@@ -17,7 +17,7 @@ public class VideoTests
     [Fact]
     public void VideoVectors()
     {
-        var file = TestVectors.Load("video.json");
+        var file = TestVectors.Load("media/v0/video.json");
         var libraries = file["libraries"]!.AsArray().Select(n => n!.GetValue<string>()).ToList();
         var root = file["streamRoot"]!.GetValue<string>();
         var failures = new List<string>();
@@ -48,7 +48,7 @@ public class VideoTests
 
         foreach (var list in new[] { "titles", "extras", "localTitles" })
         {
-            foreach (var c in TestVectors.Cases("video.json", list))
+            foreach (var c in TestVectors.Cases("media/v0/video.json", list))
             {
                 var got = Read(c.Str("text"));
                 if (got is not null && !libraries.Contains(got.Library))
@@ -60,7 +60,7 @@ public class VideoTests
             }
         }
 
-        foreach (var c in TestVectors.Cases("video.json", "copies"))
+        foreach (var c in TestVectors.Cases("media/v0/video.json", "copies"))
         {
             // Six cases repeat a member (video's codecs), which I-JSON
             // refuses: they are read with the last value, as the generator
@@ -72,7 +72,7 @@ public class VideoTests
 
         foreach (var list in new[] { "localKeys", "tvdbKeys" })
         {
-            foreach (var c in TestVectors.Cases("video.json", list))
+            foreach (var c in TestVectors.Cases("media/v0/video.json", list))
             {
                 var ok = VideoKey.TryParse(c.Str("text"), out var k);
                 Check(list, c, null, ok);
@@ -83,7 +83,7 @@ public class VideoTests
             }
         }
 
-        foreach (var c in TestVectors.Cases("video.json", "previews"))
+        foreach (var c in TestVectors.Cases("media/v0/video.json", "previews"))
         {
             var body = Encoding.UTF8.GetBytes(c.Str("text"));
             if (c.Str("side") == "request")
@@ -97,7 +97,7 @@ public class VideoTests
             Check("previews", c, p is null ? null : Video.WritePreviewsAnswer(p), error is null);
         }
 
-        foreach (var c in TestVectors.Cases("video.json", "codecs"))
+        foreach (var c in TestVectors.Cases("media/v0/video.json", "codecs"))
         {
             var o = JsonNode.Parse(c.Str("text"))!.AsObject();
             CodecsFacts? f = null;
@@ -117,7 +117,7 @@ public class VideoTests
         }
 
         var answerCopy = Copies.Read(Encoding.UTF8.GetBytes(file["answerCopy"]!.GetValue<string>()))!;
-        foreach (var c in TestVectors.Cases("video.json", "answers"))
+        foreach (var c in TestVectors.Cases("media/v0/video.json", "answers"))
         {
             var o = JsonNode.Parse(c.Str("text")) as JsonObject;
             var ticket = o is null ? null : JsonMembers.AsString(o["ticket"]);
@@ -127,7 +127,7 @@ public class VideoTests
                 var served = Video.ReadServed(o["subtitles"], answerCopy.SubtitleTracks);
                 var fonts = Video.ReadFontCount(o["fontCount"]);
                 var a = new PlayAnswer { Ticket = ticket, Protocol = Playback.ProtocolHls, Subtitles = served, FontCount = fonts };
-                var urls = a.Urls(root).Skip(1).ToList(); // the stream's is playback.json's
+                var urls = a.Urls(root).Skip(1).ToList(); // the stream's is playing.json's
                 for (var n = 0; n < (answerCopy.PreviewLayout?.Sheets ?? 0); n++)
                 {
                     urls.Add(MediaUrls.Sheet(root, ticket, n));
@@ -141,7 +141,7 @@ public class VideoTests
             Check("answers", c, output, output is not null);
         }
 
-        foreach (var c in TestVectors.Cases("video.json", "fontSets"))
+        foreach (var c in TestVectors.Cases("media/v0/video.json", "fontSets"))
         {
             var sizes = (JsonNode.Parse(c.Str("text")) as JsonArray)?.Select(e => JsonMembers.AsInteger(e) ?? 0).ToList() ?? [0];
             var ok = Font.CheckSet(sizes, out _);

@@ -454,17 +454,18 @@ internal sealed class TestServer : IDisposable
 
 internal static class Vectors
 {
+    /// <summary>A vector file by its path under testdata: msfp/v0 (msfp-spec's vectors/v0) or media/v0 (msfp-media's).</summary>
     public static JsonObject Load(string name) =>
-        JsonNode.Parse(File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "testdata", "v0", name)))!.AsObject();
+        JsonNode.Parse(File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "testdata", name)))!.AsObject();
 
     public static Dictionary<string, JsonObject> Exchanges() =>
-        Load("exchanges.json")["exchanges"]!.AsArray().Select(x => x!.AsObject()).ToDictionary(x => x["name"]!.GetValue<string>());
+        Load("msfp/v0/exchanges.json")["exchanges"]!.AsArray().Select(x => x!.AsObject()).ToDictionary(x => x["name"]!.GetValue<string>());
 
     public static string S(this JsonObject o, string name) => o[name]!.GetValue<string>();
 
-    public static string Seed(string key) => Load("keys.json")["keys"]![key]!["seed"]!.GetValue<string>();
+    public static string Seed(string key) => Load("msfp/v0/keys.json")["keys"]![key]!["seed"]!.GetValue<string>();
 
-    public static string Public(string key) => Load("keys.json")["keys"]![key]!["public"]!.GetValue<string>();
+    public static string Public(string key) => Load("msfp/v0/keys.json")["keys"]![key]!["public"]!.GetValue<string>();
 }
 
 /// <summary>What the engine tests share: pairings, raw calls, keys read from a store.</summary>

@@ -8,13 +8,14 @@ namespace Msfp.Tests;
 // attributes it fills (msfp-go's names_test.go).
 public sealed class NamesTests
 {
-    // The names served under a ticket (media.json's names, MSFP
-    // Media fetching 1 and 4.2): exactly those its answer opened, 404 past the
-    // counts.
+    // The names served under a ticket (MSFP Media's fetching.json names,
+    // fetching 1 and 4.2, and MSFP's media.json names, the scan ticket of MSFP
+    // media 4.2): exactly those its answer opened, 404 past the counts.
     [Fact]
     public void ServedNames()
     {
-        var cases = Vectors.Load("media.json")["names"]!.AsArray().Select(n => n!.AsObject()).ToList();
+        var cases = new[] { "media/v0/fetching.json", "msfp/v0/media.json" }
+            .SelectMany(f => Vectors.Load(f)["names"]!.AsArray().Select(n => n!.AsObject())).ToList();
         Assert.NotEmpty(cases);
         var failures = new List<string>();
         foreach (var c in cases)

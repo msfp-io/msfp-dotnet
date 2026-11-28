@@ -2,7 +2,7 @@ using System.Buffers.Binary;
 
 namespace Msfp.Protocol.Tests;
 
-/// <summary>wire/pgs_test.go, and the pgs cases of media.json.</summary>
+/// <summary>wire/pgs_test.go, and the pgs cases of video.json (MSFP Media).</summary>
 public class PgsTests
 {
     private const byte Palette = 0x14, Object = 0x15, Presentation = 0x16, Window = 0x17, End = 0x80;
@@ -10,7 +10,7 @@ public class PgsTests
     [Fact]
     public void PgsVectors()
     {
-        var cases = TestVectors.Cases("media.json", "pgs");
+        var cases = TestVectors.Cases("media/v0/video.json", "pgs");
         var failures = new List<string>();
         foreach (var c in cases)
         {
@@ -20,7 +20,7 @@ public class PgsTests
             }
         }
 
-        TestVectors.NoFailures(failures, cases.Count, "media.json pgs");
+        TestVectors.NoFailures(failures, cases.Count, "video.json pgs");
     }
 
     // One PGS segment: its header (magic, times, type, size), then its body.

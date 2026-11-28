@@ -4,18 +4,20 @@ using System.Text.Json.Nodes;
 namespace Msfp.Protocol.Tests;
 
 /// <summary>
-/// wire/catalog_test.go and names_test.go: strict.json's titlePages,
-/// opaqueKeyParts and localImages, a local title's description, the one
+/// wire/catalog_test.go and names_test.go: MSFP Media's listing.json
+/// titlePages, opaqueKeyParts and localImages, a local title's description, the one
 /// language-tag rule, and the names lists.
 /// </summary>
 public class CatalogTests
 {
-    private const int CoreAnswer = 4 << 20; // the core's bound of an answer (MSFP core section 3)
-
     [Fact]
     public void PageVectors()
     {
-        var cases = TestVectors.Cases("strict.json", "titlePages");
+        // The carrier's bound for an answer, an input of the cases: MSFP's
+        // (core section 3), the one the engine reads answers with.
+        var answerBound = TestVectors.Load("media/v0/listing.json")["answerBound"]!.GetValue<int>();
+        Assert.Equal(4 << 20, answerBound);
+        var cases = TestVectors.Cases("media/v0/listing.json", "titlePages");
         var failures = new List<string>();
         foreach (var c in cases)
         {
@@ -36,14 +38,14 @@ public class CatalogTests
                 failures.Add($"{c.Str("name")}: CheckPage = {reason ?? "valid"}; want valid {c.Valid()} ({c.Str("reason")})");
             }
 
-            var caller = p.Bytes > CoreAnswer ? "fail" : CatalogRules.AskOn(p.After, p.Next) ? "ask on" : "stop";
+            var caller = p.Bytes > answerBound ? "fail" : CatalogRules.AskOn(p.After, p.Next) ? "ask on" : "stop";
             if (caller != c.Str("caller"))
             {
                 failures.Add($"{c.Str("name")}: the caller would {caller}; want {c.Str("caller")}");
             }
         }
 
-        TestVectors.NoFailures(failures, cases.Count, "strict.json titlePages");
+        TestVectors.NoFailures(failures, cases.Count, "listing.json titlePages");
     }
 
     [Fact]
@@ -81,16 +83,16 @@ public class CatalogTests
     [Fact]
     public void OpaqueKeyPartVectors()
     {
-        var cases = TestVectors.Cases("strict.json", "opaqueKeyParts");
+        var cases = TestVectors.Cases("media/v0/listing.json", "opaqueKeyParts");
         var failures = cases.Where(c => CatalogRules.OpaqueKeyPart(c.Str("text")) != c.Valid())
             .Select(c => $"\"{c.Str("text")}\" ({c.Str("reason")}): want valid {c.Valid()}").ToList();
-        TestVectors.NoFailures(failures, cases.Count, "strict.json opaqueKeyParts");
+        TestVectors.NoFailures(failures, cases.Count, "listing.json opaqueKeyParts");
     }
 
     [Fact]
     public void LocalImageVectors()
     {
-        var cases = TestVectors.Cases("strict.json", "localImages");
+        var cases = TestVectors.Cases("media/v0/listing.json", "localImages");
         var failures = new List<string>();
         var sides = new Dictionary<string, int>();
         foreach (var c in cases)
@@ -147,7 +149,7 @@ public class CatalogTests
             }
         }
 
-        TestVectors.NoFailures(failures, cases.Count, "strict.json localImages");
+        TestVectors.NoFailures(failures, cases.Count, "listing.json localImages");
         Assert.True(sides.ContainsKey("request") && sides.ContainsKey("answer") && sides.ContainsKey("image"));
 
         // On a whole image: the head is all of it.
@@ -200,7 +202,7 @@ public class CatalogTests
         }
 
         // The rule is TrySentTag's: every tag it sends is valid, and no other.
-        var cases = TestVectors.Cases("strict.json", "languageCodes");
+        var cases = TestVectors.Cases("media/v0/base.json", "languageCodes");
         var failures = new List<string>();
         foreach (var c in cases)
         {
@@ -215,7 +217,7 @@ public class CatalogTests
             }
         }
 
-        TestVectors.NoFailures(failures, cases.Count, "strict.json languageCodes as valid tags");
+        TestVectors.NoFailures(failures, cases.Count, "base.json languageCodes as valid tags");
     }
 
     // The token of MSFP Media base 3, and the open values a fact keeps.

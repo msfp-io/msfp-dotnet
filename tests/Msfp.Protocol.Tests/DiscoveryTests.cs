@@ -23,7 +23,7 @@ public class DiscoveryTests
     [Fact]
     public void BaseVectors()
     {
-        var cases = TestVectors.Cases("strict.json", "bases");
+        var cases = TestVectors.Cases("msfp/v0/strict.json", "bases");
         var failures = cases.Where(c => BaseOk(c.Str("text")) != c.Valid())
             .Select(c => $"\"{c.Str("text")}\" ({c.Str("reason")}): want valid {c.Valid()}").ToList();
         TestVectors.NoFailures(failures, cases.Count, "strict.json bases");

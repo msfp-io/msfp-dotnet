@@ -311,17 +311,17 @@ public sealed class MediaLanguageTests
         Assert.Throws<ProtocolException>(() => Discovery.Read("""{"msfpMedia":0}"""u8));
     }
 
-    // The titles request as the owning server reads it (strict.json,
+    // The titles request as the owning server reads it (listing.json,
     // titleOffer and titleRequests): a source of the offer, run with
     // TitlesRequest.Read and TitleFilter.
     [Fact]
     public void TitleRequestVectors()
     {
-        var v = TestVectors.Load("strict.json");
+        var v = TestVectors.Load("media/v0/listing.json");
         var offer = v["titleOffer"]!.AsObject();
         var visible = offer["visible"]!.AsArray().Select(e => e!.GetValue<string>()).ToList();
         var titles = offer["titles"]!.AsArray().Select(e => e!.AsObject()).ToList();
-        var cases = TestVectors.Cases("strict.json", "titleRequests");
+        var cases = TestVectors.Cases("media/v0/listing.json", "titleRequests");
         Assert.Equal(48, cases.Count);
         Assert.NotEmpty(titles);
         var failures = new List<string>();

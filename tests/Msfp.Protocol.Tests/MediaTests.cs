@@ -4,7 +4,7 @@ using System.Text.Json.Nodes;
 
 namespace Msfp.Protocol.Tests;
 
-/// <summary>wire/media_test.go: playlists, and the hls, names and relayTypes cases of media.json.</summary>
+/// <summary>wire/media_test.go: playlists, and the hls, names and relayTypes cases of fetching.json (MSFP Media), with the scan names of media.json (MSFP).</summary>
 public class MediaTests
 {
     // The playback of the hls vectors: audio tracks a1 to a40.
@@ -43,11 +43,13 @@ public class MediaTests
         return error is not null && error.Contains(want + ":", StringComparison.Ordinal);
     }
 
-    // The names an owning server serves under a ticket (MSFP Media fetching 1).
+    // The names an owning server serves under a ticket (MSFP Media fetching 1,
+    // fetching.json's names; and the scan ticket, MSFP media 4.2, MSFP's
+    // media.json names).
     [Fact]
     public void NameVectors()
     {
-        var cases = TestVectors.Cases("media.json", "names");
+        var cases = TestVectors.Cases("media/v0/fetching.json", "names").Concat(TestVectors.Cases("msfp/v0/media.json", "names")).ToList();
         var failures = new List<string>();
         foreach (var c in cases)
         {
@@ -71,14 +73,14 @@ public class MediaTests
             }
         }
 
-        TestVectors.NoFailures(failures, cases.Count, "media.json names");
+        TestVectors.NoFailures(failures, cases.Count, "fetching.json and media.json names");
     }
 
     // The media type a viewer's server relays (MSFP Media fetching 3).
     [Fact]
     public void RelayTypeVectors()
     {
-        var cases = TestVectors.Cases("media.json", "relayTypes");
+        var cases = TestVectors.Cases("media/v0/fetching.json", "relayTypes");
         var failures = new List<string>();
         foreach (var c in cases)
         {
@@ -89,13 +91,13 @@ public class MediaTests
             }
         }
 
-        TestVectors.NoFailures(failures, cases.Count, "media.json relayTypes");
+        TestVectors.NoFailures(failures, cases.Count, "fetching.json relayTypes");
     }
 
     [Fact]
     public void HlsVectors()
     {
-        var cases = TestVectors.Cases("media.json", "hls");
+        var cases = TestVectors.Cases("media/v0/fetching.json", "hls");
         var failures = new List<string>();
         foreach (var c in cases)
         {
@@ -106,7 +108,7 @@ public class MediaTests
             }
         }
 
-        TestVectors.NoFailures(failures, cases.Count, "media.json hls");
+        TestVectors.NoFailures(failures, cases.Count, "fetching.json hls");
     }
 
     private const string MediaHead = "#EXTM3U\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-TARGETDURATION:6\n";

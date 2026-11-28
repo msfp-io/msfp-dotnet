@@ -5,10 +5,17 @@ using System.Text.RegularExpressions;
 
 namespace Msfp.Protocol.Tests;
 
-/// <summary>The playback vectors (vectors/v0/playback.json): every array, as wire/playback_vectors_test.go runs them.</summary>
+/// <summary>
+/// The playback vectors, every array, as wire/playback_vectors_test.go runs
+/// them: MSFP Media's playing.json (msfp-media's vectors/v0), the language's
+/// cases under any carrier, and MSFP's playback.json (msfp-spec's vectors/v0),
+/// what MSFP decides as its carrier (the purpose scan, the refusal of a
+/// capability list, limits). Each file has its own context.
+/// </summary>
 public partial class PlaybackVectorTests
 {
-    private const string File = "playback.json";
+    private const string Media = "media/v0/playing.json";
+    private const string Carrier = "msfp/v0/playback.json";
 
     // Title keys as the vectors write them (MSFP Media video 4, MSFP
     // Media music 2), the kinds play takes, local schemes and extras included.
@@ -25,7 +32,7 @@ public partial class PlaybackVectorTests
 
     private static bool Playable(string key) => PlayableRe().IsMatch(key);
 
-    private static JsonObject Context => TestVectors.Load(File)["context"]!.AsObject();
+    private static JsonObject Context(string file) => TestVectors.Load(file)["context"]!.AsObject();
 
     private static int Int(JsonNode? n) => n is null ? 0 : (int)(JsonMembers.AsInteger(n) ?? 0);
 
@@ -198,7 +205,9 @@ public partial class PlaybackVectorTests
                 throw busy;
             }
 
-            transcodes = r.Purpose == Playback.PurposeDownload ? "server" : "pairing and server";
+            // MSFP Media's words (playing.json): the carrier's transcodes and
+            // the source's budget, the budget alone for a download.
+            transcodes = r.Purpose == Playback.PurposeDownload ? "source" : "carrier and source";
         }
 
         if (Strings(ctx["unreachable"]).Contains(r.Title))
@@ -287,31 +296,42 @@ public partial class PlaybackVectorTests
     [Fact]
     public void Counts()
     {
-        var v = TestVectors.Load(File);
-        int N(string s) => v[s]!.AsArray().Count;
-        Assert.Equal(108 + 20 + 107 + 21 + 21 + 36 + 19,
-            N("requests") + N("replaces") + N("deliveries") + N("baseline") + N("queueEntries") + N("downloads") + N("scans"));
-        Assert.Equal(61, N("reports"));
-        Assert.Equal(86, N("answers"));
-        Assert.Equal(19, N("restarts"));
-        Assert.Equal(21, N("limits"));
-        Assert.Equal(35, N("refusals"));
+        var media = TestVectors.Load(Media);
+        var carrier = TestVectors.Load(Carrier);
+        int N(JsonObject v, string s) => v[s]?.AsArray().Count ?? 0;
+        Assert.Equal(98 + 20 + 106 + 21 + 21 + 36,
+            N(media, "requests") + N(media, "replaces") + N(media, "deliveries") + N(media, "baseline") + N(media, "queueEntries") + N(media, "downloads"));
+        Assert.Equal(61, N(media, "reports"));
+        Assert.Equal(78, N(media, "answers"));
+        Assert.Equal(19, N(media, "restarts"));
+        Assert.Equal(35, N(media, "refusals"));
+        Assert.Equal(0, N(media, "scans") + N(media, "limits"));
+        Assert.Equal((10, 1, 19, 8, 21), (N(carrier, "requests"), N(carrier, "deliveries"), N(carrier, "scans"), N(carrier, "answers"), N(carrier, "limits")));
+        Assert.Equal(0, N(carrier, "replaces") + N(carrier, "baseline") + N(carrier, "queueEntries") + N(carrier, "downloads") +
+            N(carrier, "reports") + N(carrier, "restarts") + N(carrier, "refusals"));
+
+        // MSFP Media leaves the refusal over a carrier's limits to the
+        // carrier: the cases name it, and it is MSFP's.
+        var lr = Context(Media)["limitRefusal"]!.AsObject();
+        Assert.Equal((409, Playback.ProblemStreamLimit), (lr["status"]!.GetValue<int>(), lr.Str("type")));
     }
 
     [Theory]
-    [InlineData("requests")]
-    [InlineData("replaces")]
-    [InlineData("deliveries")]
-    [InlineData("baseline")]
-    [InlineData("queueEntries")]
-    [InlineData("downloads")]
-    [InlineData("scans")]
-    [InlineData("reports")]
-    public void Calls(string section)
+    [InlineData(Media, "requests")]
+    [InlineData(Media, "replaces")]
+    [InlineData(Media, "deliveries")]
+    [InlineData(Media, "baseline")]
+    [InlineData(Media, "queueEntries")]
+    [InlineData(Media, "downloads")]
+    [InlineData(Media, "reports")]
+    [InlineData(Carrier, "requests")]
+    [InlineData(Carrier, "deliveries")]
+    [InlineData(Carrier, "scans")]
+    public void Calls(string file, string section)
     {
-        var ctx = Context;
+        var ctx = Context(file);
         var now = DateTimeOffset.FromUnixTimeSeconds(ctx["now"]!.GetValue<long>());
-        var cases = TestVectors.Cases(File, section);
+        var cases = TestVectors.Cases(file, section);
         var failures = new List<string>();
         foreach (var c in cases)
         {
@@ -340,14 +360,16 @@ public partial class PlaybackVectorTests
             }
         }
 
-        TestVectors.NoFailures(failures, cases.Count, section);
+        TestVectors.NoFailures(failures, cases.Count, file + " " + section);
     }
 
-    [Fact]
-    public void Answers()
+    [Theory]
+    [InlineData(Media)]
+    [InlineData(Carrier)]
+    public void Answers(string file)
     {
-        var root = Context.Str("streamRoot");
-        var cases = TestVectors.Cases(File, "answers");
+        var root = Context(file).Str("streamRoot");
+        var cases = TestVectors.Cases(file, "answers");
         var failures = new List<string>();
         foreach (var c in cases)
         {
@@ -369,7 +391,7 @@ public partial class PlaybackVectorTests
             }
         }
 
-        TestVectors.NoFailures(failures, cases.Count, "answers");
+        TestVectors.NoFailures(failures, cases.Count, file + " answers");
     }
 
     private static JsonNode? AnswerJson(PlayAnswer a, string root) => Node(w => w
@@ -385,7 +407,7 @@ public partial class PlaybackVectorTests
     [Fact]
     public void Refusals()
     {
-        var cases = TestVectors.Cases(File, "refusals");
+        var cases = TestVectors.Cases(Media, "refusals");
         var failures = new List<string>();
         foreach (var c in cases)
         {
@@ -406,7 +428,7 @@ public partial class PlaybackVectorTests
     [Fact]
     public void Restarts()
     {
-        var cases = TestVectors.Cases(File, "restarts");
+        var cases = TestVectors.Cases(Media, "restarts");
         var failures = new List<string>();
         foreach (var c in cases)
         {
@@ -429,7 +451,7 @@ public partial class PlaybackVectorTests
     [Fact]
     public void Limits()
     {
-        var cases = TestVectors.Cases(File, "limits");
+        var cases = TestVectors.Cases(Carrier, "limits");
         var failures = new List<string>();
         foreach (var c in cases)
         {

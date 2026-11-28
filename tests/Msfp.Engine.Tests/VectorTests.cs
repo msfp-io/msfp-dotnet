@@ -20,7 +20,7 @@ public sealed class VectorTests
     private static async Task<Pair> NewPairAsync()
     {
         var vs = Vectors.Exchanges();
-        var code = Vectors.Load("code.json")["code"]!.AsObject();
+        var code = Vectors.Load("msfp/v0/code.json")["code"]!.AsObject();
         var net = new Network();
         var randA = new ScriptedRandom().Queue(Vectors.Seed("a"), Vectors.Seed("a2"), Ids, code.S("secret"));
         var randB = new ScriptedRandom().Queue(Vectors.Seed("b"), Vectors.Seed("b2"), Ids, vs["pair"].S("nonce"));
@@ -136,7 +136,7 @@ public sealed class VectorTests
     public async Task RotateThroughB()
     {
         var (_, _, b, _, onB, _) = await NewPairAsync();
-        var want = KeyVector("rotation.json");
+        var want = KeyVector("msfp/v0/rotation.json");
         b.Clock.Set(1800100000);
         var res = await ServeAsync(b.Engine, want);
         Assert.Equal(want["status"]!.GetValue<int>(), res.Status);
@@ -157,7 +157,7 @@ public sealed class VectorTests
     public async Task RevokeThroughB()
     {
         var (_, _, b, _, onB, _) = await NewPairAsync();
-        var want = KeyVector("revocation.json");
+        var want = KeyVector("msfp/v0/revocation.json");
         b.Clock.Set(1800200000);
         var res = await ServeAsync(b.Engine, want);
         Assert.Equal(want["status"]!.GetValue<int>(), res.Status);
@@ -187,7 +187,7 @@ public sealed class VectorTests
     public async Task RotateFromA()
     {
         var (net, a, b, onA, onB, _) = await NewPairAsync();
-        var want = KeyVector("rotation.json");
+        var want = KeyVector("msfp/v0/rotation.json");
         a.Clock.Set(1800100000);
         b.Clock.Set(1800100000);
         a.Random.Queue(Vectors.Seed("a3"), NonceHex(want));
@@ -216,7 +216,7 @@ public sealed class VectorTests
     public async Task KeyStolenFromA()
     {
         var (net, a, b, _, onB, _) = await NewPairAsync();
-        var want = KeyVector("revocation.json");
+        var want = KeyVector("msfp/v0/revocation.json");
         a.Clock.Set(1800200000);
         b.Clock.Set(1800200000);
         a.Random.Queue(NonceHex(want), Vectors.Seed("a3"));
@@ -305,7 +305,7 @@ public sealed class VectorTests
         var (_, a, _, onA, _, _) = await NewPairAsync();
         var keyB = MsfpKey.FromSeed(Convert.FromHexString(Vectors.Seed("b")));
         var stored = onA.Address;
-        foreach (var c in Vectors.Load("strict.json")["uncallableAddresses"]!.AsArray().Select(x => x!.AsObject()))
+        foreach (var c in Vectors.Load("msfp/v0/strict.json")["uncallableAddresses"]!.AsArray().Select(x => x!.AsObject()))
         {
             var text = c.S("text");
             var body = JsonOut.Object(o => o.String("state", "paired").Integers("core", [1]).String("address", text).Bool("inbound", false));

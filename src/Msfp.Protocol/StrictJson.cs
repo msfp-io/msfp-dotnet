@@ -11,8 +11,9 @@ namespace Msfp.Protocol;
 /// <remarks>
 /// <para>A body is UTF-8 without a byte order mark; it holds no surrogate
 /// (escaped or not) and no noncharacter; no object has the same member
-/// name twice, compared once their escapes are decoded; it nests at most
-/// 64 deep; it is an object. Member names match exactly: "State" is an
+/// name twice, compared once their escapes are decoded; it nests no value
+/// deeper than level 64 (its object at level 0); it holds no number past
+/// the range of an IEEE 754 double; it is an object. Member names match exactly: "State" is an
 /// unknown member, ignored, never "state".</para>
 /// <para>null is never a valid value (MSFP Media base 2.2). A request that
 /// holds one in a member its reader knows is refused
@@ -28,7 +29,11 @@ public static class StrictJson
     /// <summary>The largest integer MSFP writes, 2^53 − 1.</summary>
     public const long MaxInteger = 9_007_199_254_740_991;
 
-    /// <summary>How deeply a body may nest: MSFP's bodies are shallow.</summary>
+    /// <summary>
+    /// How deeply a body may nest (MSFP Media base 2.2): the body's object at
+    /// level 0, a member's value or an array's entry one level deeper than
+    /// what holds it; a value at level 65 is refused.
+    /// </summary>
     public const int MaxDepth = 64;
 
     /// <summary>
@@ -157,7 +162,10 @@ public static class StrictJson
 
         try
         {
-            // First pass: duplicates, null, depth, the grammar.
+            // First pass: duplicates, null, depth, numbers, the grammar. The
+            // reader's MaxDepth counts containers (65 of them reach a
+            // container at level 64), so a scalar at level 65 is refused
+            // here, by its own depth.
             var reader = new Utf8JsonReader(body, new JsonReaderOptions
             {
                 CommentHandling = JsonCommentHandling.Disallow,
@@ -167,6 +175,12 @@ public static class StrictJson
             var names = new Stack<HashSet<string>?>();
             while (reader.Read())
             {
+                if (reader.TokenType is not (JsonTokenType.PropertyName or JsonTokenType.EndObject or JsonTokenType.EndArray) &&
+                    reader.CurrentDepth > MaxDepth)
+                {
+                    throw Bad(); // a value nested too deep
+                }
+
                 switch (reader.TokenType)
                 {
                     case JsonTokenType.StartObject:
@@ -188,6 +202,8 @@ public static class StrictJson
                         break;
                     case JsonTokenType.Null when !nulls:
                         throw Bad(); // null is never a valid value
+                    case JsonTokenType.Number when !InDoubleRange(ref reader):
+                        throw Bad(); // past a double's range
                 }
             }
 
@@ -197,6 +213,21 @@ public static class StrictJson
         {
             throw Bad();
         }
+    }
+
+    // Whether the number at the reader is within an IEEE 754 double's range
+    // (MSFP Media base 2.2): one whose magnitude rounds above the largest
+    // double is refused; one too small for a double counts as 0, and
+    // precision is no reason to refuse.
+    private static bool InDoubleRange(ref Utf8JsonReader reader)
+    {
+        if (reader.TryGetDouble(out var d))
+        {
+            return double.IsFinite(d);
+        }
+
+        var text = System.Text.Encoding.UTF8.GetString(reader.ValueSpan); // a body is one span
+        return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out d) && double.IsFinite(d);
     }
 
     /// <summary>

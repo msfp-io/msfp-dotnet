@@ -2,7 +2,7 @@ using System.Text;
 
 namespace Msfp.Protocol.Tests;
 
-/// <summary>wire/webvtt_test.go, the webvtt cases of media.json, and TestWebVTTPart (music_test.go).</summary>
+/// <summary>wire/webvtt_test.go, the webvtt cases of video.json, and TestWebVTTPart (music_test.go).</summary>
 public class WebVttTests
 {
     private static string? Rebuild(string s) =>
@@ -15,7 +15,7 @@ public class WebVttTests
     // 1,025).
     internal static void RebuiltVectors(string section, Rebuilder rebuild)
     {
-        var cases = TestVectors.Cases("media.json", section);
+        var cases = TestVectors.Cases("media/v0/video.json", section);
         var failures = new List<string>();
         foreach (var c in cases)
         {
@@ -34,7 +34,7 @@ public class WebVttTests
             }
         }
 
-        TestVectors.NoFailures(failures, cases.Count, "media.json " + section);
+        TestVectors.NoFailures(failures, cases.Count, "video.json " + section);
     }
 
     [Fact]

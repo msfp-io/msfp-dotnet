@@ -620,7 +620,7 @@ public sealed class DeliveryTests
     [Fact]
     public async Task AssAndFonts()
     {
-        var v = Vectors.Load("media.json");
+        var v = Vectors.Load("media/v0/video.json");
         var ass = v["ass"]!.AsArray().Select(n => n!.AsObject()).First(c => (bool)c["valid"]!);
         var font = v["fonts"]!.AsArray().Select(n => n!.AsObject()).First(c => (bool)c["valid"]!);
         var fontBytes = Convert.FromHexString((string)font["hex"]!);

@@ -13,7 +13,7 @@ public sealed class GroupTests
     [Fact]
     public void Vectors()
     {
-        var v = TestVectors.Load("groups.json");
+        var v = TestVectors.Load("msfp/v0/groups.json");
         var keys = v["keys"]!.AsObject().ToDictionary(k => k.Key, k => k.Value!.GetValue<string>());
         var now = DateTimeOffset.FromUnixTimeSeconds(v["now"]!.GetValue<long>());
         var group = v.Str("group");
@@ -241,7 +241,7 @@ public sealed class GroupTests
     [Fact]
     public void OrderIndependent()
     {
-        var v = TestVectors.Load("groups.json");
+        var v = TestVectors.Load("msfp/v0/groups.json");
         var group = v.Str("group");
         var envs = v["events"]!.AsArray().Select(e => e!.AsObject()).Select(e => new GroupEnvelope { Event = e.Str("event"), Signature = e.Str("signature") }).ToList();
         static string Summary(GroupState s, IReadOnlyDictionary<string, GroupEventResult> r) => string.Join("\n",

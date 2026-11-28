@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- StrictJson refuses a body with a value at level 65 (the body's object
+  at level 0), which it accepted for a scalar, and a number past the
+  range of an IEEE 754 double (MSFP Media base 2.2).
+- Media.Serves's reason for an unprepared queue entry says "the source".
+- The test vectors follow the split: testdata/msfp/v0 is msfp-spec's
+  vectors/v0, testdata/media/v0 msfp-media's.
+
 ## v0.9.0-preview (2026-11-27): MSFP Media (proposal 19)
 
 MSFP's media language is now MSFP Media version 0, which MSFP carries

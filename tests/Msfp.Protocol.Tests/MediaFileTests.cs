@@ -2,7 +2,7 @@ using System.Text.Json.Nodes;
 
 namespace Msfp.Protocol.Tests;
 
-/// <summary>wire/media_test.go: the ranges, fileAnswers and scans cases of media.json, and segment answers.</summary>
+/// <summary>wire/media_test.go: the ranges and fileAnswers cases of fetching.json (MSFP Media), the scans of media.json (MSFP), and segment answers.</summary>
 public class MediaFileTests
 {
     private static long Long(JsonObject c, string name) => c[name]?.GetValue<long>() ?? 0;
@@ -12,7 +12,7 @@ public class MediaFileTests
     [Fact]
     public void RangeVectors()
     {
-        var cases = TestVectors.Cases("media.json", "ranges");
+        var cases = TestVectors.Cases("media/v0/fetching.json", "ranges");
         var failures = new List<string>();
         foreach (var c in cases)
         {
@@ -29,13 +29,13 @@ public class MediaFileTests
             }
         }
 
-        TestVectors.NoFailures(failures, cases.Count, "media.json ranges");
+        TestVectors.NoFailures(failures, cases.Count, "fetching.json ranges");
     }
 
     [Fact]
     public void FileAnswerVectors()
     {
-        var cases = TestVectors.Cases("media.json", "fileAnswers");
+        var cases = TestVectors.Cases("media/v0/fetching.json", "fileAnswers");
         var failures = new List<string>();
         foreach (var c in cases)
         {
@@ -47,13 +47,13 @@ public class MediaFileTests
             }
         }
 
-        TestVectors.NoFailures(failures, cases.Count, "media.json fileAnswers");
+        TestVectors.NoFailures(failures, cases.Count, "fetching.json fileAnswers");
     }
 
     [Fact]
     public void ScanVectors()
     {
-        var cases = TestVectors.Cases("media.json", "scans");
+        var cases = TestVectors.Cases("msfp/v0/media.json", "scans");
         var failures = new List<string>();
         foreach (var c in cases)
         {

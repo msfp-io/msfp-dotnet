@@ -270,12 +270,14 @@ public sealed class RelayTests
     private static byte[] Input(JsonObject c) =>
         (string?)c["hex"] is { Length: > 0 } hex ? Convert.FromHexString(hex) : HostKit.Bytes((string?)c["text"] ?? "");
 
-    // The cases of vectors/v0/media.json, through a relay: what a peer's
-    // playlists, WebVTT and PGS parts become on the way to the viewer.
+    // The cases of MSFP Media's vectors (fetching.json's hls, video.json's
+    // webvtt and pgs), through a relay: what a peer's playlists, WebVTT and
+    // PGS parts become on the way to the viewer.
     [Fact]
     public async Task MediaVectorsThroughRelay()
     {
-        var v = Vectors.Load("media.json");
+        var fetching = Vectors.Load("media/v0/fetching.json");
+        var video = Vectors.Load("media/v0/video.json");
         var h = HostKit.FilmHost();
         h.Files["pictures/s1/0"] = [];
         // The playback of the hls vectors: audio tracks a1 to a32 (32 at most
@@ -293,7 +295,7 @@ public sealed class RelayTests
             return await FetchAsync(s, pb.Id, p);
         }
 
-        foreach (var c in v["hls"]!.AsArray().Select(n => n!.AsObject()))
+        foreach (var c in fetching["hls"]!.AsArray().Select(n => n!.AsObject()))
         {
             // Each as a media playlist (a master's tags are a subset of a
             // media playlist's checks).
@@ -302,7 +304,7 @@ public sealed class RelayTests
             Assert.True((error is null) == (bool)c["valid"]!, "hls " + (string)c["name"]! + ": " + error);
         }
 
-        foreach (var c in v["webvtt"]!.AsArray().Select(n => n!.AsObject()))
+        foreach (var c in video["webvtt"]!.AsArray().Select(n => n!.AsObject()))
         {
             var input = Input(c);
             var (output, error) = await Fetch("subtitles/s0/0", input, new MediaPath { Kind = MediaKind.Subtitles, Track = "s0" });
@@ -314,7 +316,7 @@ public sealed class RelayTests
             }
         }
 
-        foreach (var c in v["pgs"]!.AsArray().Select(n => n!.AsObject()))
+        foreach (var c in video["pgs"]!.AsArray().Select(n => n!.AsObject()))
         {
             var input = Input(c);
             var (output, error) = await Fetch("pictures/s1/0", input, new MediaPath { Kind = MediaKind.Pictures, Track = "s1" });

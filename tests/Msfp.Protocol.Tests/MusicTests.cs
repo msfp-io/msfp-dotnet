@@ -9,7 +9,7 @@ public class MusicTests
     [Fact]
     public void MusicKeyVectors()
     {
-        var cases = TestVectors.Cases("music.json", "keys");
+        var cases = TestVectors.Cases("media/v0/music.json", "keys");
         var failures = new List<string>();
         foreach (var c in cases)
         {
@@ -33,8 +33,8 @@ public class MusicTests
     [InlineData("localTitles")]
     public void MusicTitleVectors(string section)
     {
-        var libraries = TestVectors.Load("music.json")["libraries"]!.AsArray().Select(n => n!.GetValue<string>()).ToList();
-        var cases = TestVectors.Cases("music.json", section);
+        var libraries = TestVectors.Load("media/v0/music.json")["libraries"]!.AsArray().Select(n => n!.GetValue<string>()).ToList();
+        var cases = TestVectors.Cases("media/v0/music.json", section);
         var failures = new List<string>();
         foreach (var c in cases)
         {
@@ -62,7 +62,7 @@ public class MusicTests
     [Fact]
     public void MusicQueueVectors()
     {
-        var cases = TestVectors.Cases("music.json", "queue");
+        var cases = TestVectors.Cases("media/v0/music.json", "queue");
         var failures = new List<string>();
         foreach (var c in cases)
         {
@@ -114,7 +114,7 @@ public class MusicTests
     [Fact]
     public void MusicLyricsVectors()
     {
-        var cases = TestVectors.Cases("music.json", "lyrics");
+        var cases = TestVectors.Cases("media/v0/music.json", "lyrics");
         var failures = new List<string>();
         foreach (var c in cases)
         {

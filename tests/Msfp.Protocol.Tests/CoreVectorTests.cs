@@ -7,7 +7,7 @@ namespace Msfp.Protocol.Tests;
 /// MSFP's version 0 test vectors of the core (keys.json, code.json,
 /// exchanges.json, rotation.json, revocation.json, strict.json) and the
 /// canonical forms of test-draft-strict.json that hold for core 0 (MSFP
-/// core section 17), recomputed with the code: msfp-go's wire/vectors_test.go,
+/// core section 17), and MSFP Media's base.json encodings, recomputed with the code: msfp-go's wire/vectors_test.go,
 /// json_test.go, rotation_test.go and uncallable_test.go.
 /// </summary>
 public sealed class CoreVectorTests
@@ -18,7 +18,7 @@ public sealed class CoreVectorTests
     internal static Dictionary<string, MsfpKey> VectorKeys()
     {
         var keys = new Dictionary<string, MsfpKey>();
-        foreach (var (name, k) in TestVectors.Load("keys.json")["keys"]!.AsObject())
+        foreach (var (name, k) in TestVectors.Load("msfp/v0/keys.json")["keys"]!.AsObject())
         {
             var key = MsfpKey.FromSeed(Convert.FromHexString(k!["seed"]!.GetValue<string>()));
             Assert.Equal(k["public"]!.GetValue<string>(), Base64UrlText.Encode(key.Public()));
@@ -55,7 +55,7 @@ public sealed class CoreVectorTests
     }
 
     internal static List<Exchange> Exchanges() =>
-        TestVectors.Load("exchanges.json")["exchanges"]!.AsArray().Select(x => new Exchange(x!.AsObject())).ToList();
+        TestVectors.Load("msfp/v0/exchanges.json")["exchanges"]!.AsArray().Select(x => new Exchange(x!.AsObject())).ToList();
 
     [Fact]
     public void Keys_FromSeeds() => VectorKeys();
@@ -63,7 +63,7 @@ public sealed class CoreVectorTests
     [Fact]
     public void Certificates_Pins()
     {
-        foreach (var (name, c) in TestVectors.Load("keys.json")["certificates"]!.AsObject())
+        foreach (var (name, c) in TestVectors.Load("msfp/v0/keys.json")["certificates"]!.AsObject())
         {
             var spki = Convert.FromHexString(c!["spki"]!.GetValue<string>());
             // An Ed25519 SubjectPublicKeyInfo (RFC 8410): a fixed DER prefix, then the key.
@@ -79,7 +79,7 @@ public sealed class CoreVectorTests
     public void Code()
     {
         var keys = VectorKeys();
-        var v = TestVectors.Load("code.json");
+        var v = TestVectors.Load("msfp/v0/code.json");
         var c = v["code"]!.AsObject();
         var secret = Convert.FromHexString(c.Str("secret"));
         var code = new PairingCode(c.Str("address"), keys[c.Str("key")].Public(), secret,
@@ -170,7 +170,7 @@ public sealed class CoreVectorTests
     public void Strict_AddressesAndCodes()
     {
         var failures = new List<string>();
-        var addresses = TestVectors.Cases("strict.json", "addresses");
+        var addresses = TestVectors.Cases("msfp/v0/strict.json", "addresses");
         foreach (var c in addresses)
         {
             if (Address.Valid(c.Str("text")) != c.Valid())
@@ -179,7 +179,7 @@ public sealed class CoreVectorTests
             }
         }
 
-        var codes = TestVectors.Cases("strict.json", "codes");
+        var codes = TestVectors.Cases("msfp/v0/strict.json", "codes");
         foreach (var c in codes)
         {
             var ok = true;
@@ -226,7 +226,7 @@ public sealed class CoreVectorTests
     public void Strict_UncallableAddresses()
     {
         var failures = new List<string>();
-        var cases = TestVectors.Cases("strict.json", "uncallableAddresses");
+        var cases = TestVectors.Cases("msfp/v0/strict.json", "uncallableAddresses");
         foreach (var c in cases)
         {
             if (Uncallables.Valid(c.Str("text")) != c.Valid())
@@ -253,7 +253,7 @@ public sealed class CoreVectorTests
     public void Strict_HelloVersions()
     {
         var failures = new List<string>();
-        var cases = TestVectors.Cases("strict.json", "helloVersions");
+        var cases = TestVectors.Cases("msfp/v0/strict.json", "helloVersions");
         foreach (var c in cases)
         {
             Hello? h = null;
@@ -404,6 +404,50 @@ public sealed class CoreVectorTests
         TestVectors.NoFailures(failures, total, "test-draft-strict.json json and integers");
     }
 
+    // The cases of MSFP Media base 2.1 and 2.2 (msfp-media's base.json): json
+    // as a request whose members are all unknown, and as an entry, which
+    // reads every member (null as left out); integers in an integer member;
+    // base64url through Base64UrlText. The engine reads no hex nor decimal
+    // text of MSFP Media's, so hex and decimals have no reader here.
+    [Fact]
+    public void MediaBase()
+    {
+        var failures = new List<string>();
+        var total = 0;
+        foreach (var c in TestVectors.Cases("media/v0/base.json", "json"))
+        {
+            total++;
+            var body = c.ContainsKey("hex") ? c.Hex() : Encoding.UTF8.GetBytes(c.Str("text"));
+            var asRequest = Try(() => StrictJson.ReadRequest(body, ["state", "certificates"]));
+            var asEntry = Try(() => StrictJson.ReadEntry(body));
+            if (asRequest != c.Valid() || asEntry != c.Valid())
+            {
+                failures.Add($"json {c.Str("name")}: want valid {c.Valid()} (as a request {asRequest}, as an entry {asEntry})");
+            }
+        }
+
+        foreach (var c in TestVectors.Cases("media/v0/base.json", "integers"))
+        {
+            total++;
+            var ok = Try(() => StrictJson.ReadRequest(Encoding.UTF8.GetBytes("{\"n\":" + c.Str("text") + "}"), ["n"]).GetInteger("n"));
+            if (ok != c.Valid())
+            {
+                failures.Add($"integer {c.Str("name")}: want valid {c.Valid()}");
+            }
+        }
+
+        foreach (var c in TestVectors.Cases("media/v0/base.json", "base64url"))
+        {
+            total++;
+            if ((Base64UrlText.Decode(c.Str("text"), c["bytes"]!.GetValue<int>()) is not null) != c.Valid())
+            {
+                failures.Add($"base64url {c.Str("name")}: want valid {c.Valid()}");
+            }
+        }
+
+        TestVectors.NoFailures(failures, total, "base.json json, integers and base64url");
+    }
+
     private static bool Try(Action a)
     {
         try
@@ -421,7 +465,7 @@ public sealed class CoreVectorTests
     public void Rotation()
     {
         var keys = VectorKeys();
-        var v = TestVectors.Load("rotation.json");
+        var v = TestVectors.Load("msfp/v0/rotation.json");
         var r = v["rotation"]!.AsObject();
         MsfpKey old = keys[r.Str("from")], @new = keys[r.Str("to")], next = keys[r.Str("next")];
         var commitment = Keys.Commitment(next.Public());
@@ -449,7 +493,7 @@ public sealed class CoreVectorTests
     public void Revocation()
     {
         var keys = VectorKeys();
-        var v = TestVectors.Load("revocation.json");
+        var v = TestVectors.Load("msfp/v0/revocation.json");
         var r = v["revocation"]!.AsObject();
         var k = keys[r.Str("key")];
         var date = r["date"]!.GetValue<long>();

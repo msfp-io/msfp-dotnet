@@ -68,8 +68,8 @@ public static class Languages
     /// The tag sent for <paramref name="code"/>, a media server's language
     /// code ("fre" and "fra" give "fr", "fre-ca" "fr-CA"); false for one MSFP
     /// doesn't send: not of a tag's form (2 to 12 characters of A–Z a–z 0–9 -), or
-    /// und, mul, zxx or mis. Test cases: languageCodes in
-    /// vectors/v0/strict.json.
+    /// und, mul, zxx or mis. Test cases: languageCodes in MSFP Media's
+    /// vectors/v0/base.json.
     /// </summary>
     /// <param name="code">The media server's code.</param>
     /// <param name="tag">The tag sent; empty when false.</param>

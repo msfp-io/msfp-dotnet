@@ -383,17 +383,19 @@ and once over real TLS. The example host passes msfp-spec's
 as msfp-go's does, run with `--code2`, `--load` and `--end`, and
 `--group-code` for the groups checks; the checks a folder of films can't
 answer (a title in several libraries, preview sheets, PGS subtitles) are
-skipped. The protocol's test vectors under
+skipped. The test vectors under
 [tests/Msfp.Protocol.Tests/testdata](tests/Msfp.Protocol.Tests/testdata)
-come from the spec's
-[vectors/](https://github.com/msfp-io/msfp-spec/tree/main/vectors), copied
-as they are: `testdata/v0/` is the spec's `vectors/v0/`, and
-`testdata/test-draft-strict.json` its `vectors/history/test-draft-strict.json`.
-To refresh them, copy those files from a checkout of msfp-spec and run the
-tests:
+come from the specs' `vectors/`, copied as they are: `testdata/msfp/v0/` is
+[msfp-spec's](https://github.com/msfp-io/msfp-spec/tree/main/vectors)
+`vectors/v0/` (MSFP's own cases), `testdata/media/v0/` is
+[msfp-media's](https://github.com/msfp-io/msfp-media/tree/main/vectors)
+`vectors/v0/` (MSFP Media's), and `testdata/test-draft-strict.json`
+msfp-spec's `vectors/history/test-draft-strict.json`. To refresh them, copy
+those files from checkouts of both and run the tests:
 
 ```sh
-cp ../msfp-spec/vectors/v0/*.json tests/Msfp.Protocol.Tests/testdata/v0/
+cp ../msfp-spec/vectors/v0/*.json tests/Msfp.Protocol.Tests/testdata/msfp/v0/
+cp ../msfp-media/vectors/v0/*.json tests/Msfp.Protocol.Tests/testdata/media/v0/
 cp ../msfp-spec/vectors/history/test-draft-strict.json tests/Msfp.Protocol.Tests/testdata/
 dotnet test
 ```

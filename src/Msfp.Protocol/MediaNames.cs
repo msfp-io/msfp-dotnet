@@ -130,7 +130,7 @@ public static partial class Media
 
                 if (!Number(p[1], scope.Queue.Count, out var n) || scope.Queue[(int)n].Length == 0)
                 {
-                    return Fail("a queue entry the owning server didn't prepare", out why);
+                    return Fail("a queue entry the source didn't prepare", out why);
                 }
 
                 return StreamName(scope, scope.Queue[(int)n], p[2..], out why);

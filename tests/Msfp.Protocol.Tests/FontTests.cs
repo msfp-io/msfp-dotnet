@@ -1,12 +1,12 @@
 namespace Msfp.Protocol.Tests;
 
-/// <summary>wire/media_test.go: the fonts cases of media.json.</summary>
+/// <summary>wire/media_test.go: the fonts cases of video.json (MSFP Media).</summary>
 public class FontTests
 {
     [Fact]
     public void FontVectors()
     {
-        var cases = TestVectors.Cases("media.json", "fonts");
+        var cases = TestVectors.Cases("media/v0/video.json", "fonts");
         var failures = new List<string>();
         foreach (var c in cases)
         {
@@ -17,7 +17,7 @@ public class FontTests
             }
         }
 
-        TestVectors.NoFailures(failures, cases.Count, "media.json fonts");
+        TestVectors.NoFailures(failures, cases.Count, "video.json fonts");
     }
 
     // A font is accepted only with its signature and tables within the
