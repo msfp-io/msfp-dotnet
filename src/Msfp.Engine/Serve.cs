@@ -93,7 +93,7 @@ public sealed record Served
     /// <summary>A transcode's targets; null for another delivery.</summary>
     public TranscodeTargets? Transcode { get; init; }
 
-    /// <summary>A remux's segment format: mp2t or mp4.</summary>
+    /// <summary>A remux's segment format, mp2t or mp4; the baseline's, mp2t (MPEG-TS, MSFP Media playing 2.7).</summary>
     public string Segments { get; init; } = "";
 
     /// <summary>Whether it counts as a transcode in the pool.</summary>
@@ -138,6 +138,7 @@ public sealed partial class MsfpEngine
         return (new Served
         {
             Method = b.Method, Video = b.Video ?? "", Audio = b.Audio, Transcodes = b.Method == Playback.MethodTranscode,
+            Segments = "mp2t", // the baseline's MPEG-TS (MSFP Media playing 2.7)
         }, null);
     }
 }

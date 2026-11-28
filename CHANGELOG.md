@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Changed
+- The baseline is in MPEG-TS segments (MSFP Media playing 2.7):
+  `Served.Segments` says mp2t for it, as for a remux in mp2t.
 - Without delivery, the baseline leaves no stream unchanged when the
   copy's overall rate is above the play's cap: the video (the audio, for
   a copy with no video) is converted (MSFP Media playing 2.7: the cap

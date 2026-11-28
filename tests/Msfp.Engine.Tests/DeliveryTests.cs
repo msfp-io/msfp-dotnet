@@ -34,6 +34,17 @@ public sealed class DeliveryTests
         ErrorOf(() => s.B.Engine.FetchAsync(id, p, range, new MemorySink()));
 
     [Fact]
+    public async Task BaselineInMpegTs()
+    {
+        // The baseline is in MPEG-TS segments (MSFP Media playing 2.7): the host is told mp2t.
+        var h = HostKit.FilmHost();
+        using var s = await Sharing.StartAsync(h);
+        var pb = await s.B.Engine.PlayAsync(s.OnB, new PlayRequest { Title = Film });
+        await s.B.Engine.StopAsync(pb.Id, -1);
+        Assert.Equal("mp2t", h.Starts()[^1].Served.Segments);
+    }
+
+    [Fact]
     public async Task Deliveries()
     {
         var h = HostKit.FilmHost();
